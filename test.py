@@ -1,37 +1,55 @@
-import sqlite3
+import PySimpleGUI as sg
+import db
 
-def query():
-    connection = sqlite3.connect("builder.db")
-    cursor = connection.cursor()
-    cursor.execute("SELECT * FROM RecipeDetails")
-    records = cursor.fetchall()
-    print(records)
-    connection.commit()
-    connection.close()
+data = db.get_eligible_ingredients(2)
+view = [f'{d[2]} ({d[3]})' for d in data]
 
-def recipedetails():
-    connection = sqlite3.connect("builder.db")
-    cursor = connection.cursor()
-    cursor.execute("""
-        SELECT COALESCE(r.Name, i.Name) AS Name 
-        , c.Quantity
-        , COALESCE(i.Unit, r.Unit) AS Unit
-        ,  CASE 
-            WHEN c.ChildRecipe IS NOT NULL THEN 'recipe'
-            ELSE 'ingredient'
-            END AS Type
-        , COALESCE(r.Cost, i.Cost) * c.Quantity AS Cost
-        FROM Connections c
-        LEFT JOIN RecipesWithNutrition r on r.Id=c.ChildRecipe
-        LEFT JOIN Ingredients i on i.Id=c.ChildIngredient
-        WHERE c.ParentRecipe=16
-        ;
-    """)
-    records = cursor.fetchall()
-    connection.commit()
-    connection.close()
-    return(records)
+layout = [
+    [sg.Combo(view, size=20, enable_events=True, key='COMBO')],
+    [sg.Push(), sg.Button('Check')],
+]
+window = sg.Window('Title', layout)
+
+while True:
+
+    event, values = window.read()
+
+    if event == sg.WIN_CLOSED:
+        break
+    elif event in ('COMBO', 'Check'):
+        text = values['COMBO']
+        index1 = window['COMBO'].widget.current()
+        index2 = view.index(text) if text in view else -1
+        print(index1, index2, repr(values['COMBO']))
+        print(data[index2])
+
+window.close()
 
 
+# names = ['Roberta', 'Kylie', 'Jenny', 'Helen',
+#          'Andrea', 'Meredith', 'Deborah', 'Pauline',
+#          'Belinda', 'Wendy']
 
-print (recipedetails())
+# layout = [[sg.Text('Listbox with search')],
+#           [sg.Input(size=(20, 1), enable_events=True, key='-INPUT-')],
+#           [sg.Listbox(names, size=(20, 4), enable_events=True, key='-LIST-')],
+#           [sg.Button('Chrome'), sg.Button('Exit')]]
+
+# window = sg.Window('Listbox with Search', layout)
+# # Event Loop
+# while True:
+#     event, values = window.read()
+#     if event in (sg.WIN_CLOSED, 'Exit'):                # always check for closed window
+#         break
+#     if values['-INPUT-'] != '':                         # if a keystroke entered in search field
+#         search = values['-INPUT-']
+#         new_values = [x for x in names if search in x]  # do the filtering
+#         window['-LIST-'].update(new_values)     # display in the listbox
+#     else:
+#         # display original unfiltered list
+#         window['-LIST-'].update(names)
+#     # if a list item is chosen
+#     if event == '-LIST-' and len(values['-LIST-']):
+#         sg.popup('Selected ', values['-LIST-'])
+
+# window.close()

@@ -27,7 +27,7 @@ layout = [# [sg.Text('Enter something on Row 2'), sg.InputText()],
                     num_rows=20,
                     key='-TABLE-'
                     )],
-            [sg.Button('Setup'), sg.Button('Cancel'), sg.Button('Test')] 
+            [sg.Button('Setup'), sg.Button('Cancel'), sg.Button('Refresh')] 
         ]
 
 # Create the Window
@@ -49,9 +49,8 @@ while True:
         print('running setup script')
         setup.initializeDB()
         reload_table()
-    elif event == 'Test':
-        print('test event - changing some values')
-        db.updaterecipe(2,"test","unit",2)
+    elif event == 'Refresh':
+        print('Refreshing values')
         reload_table()
     else:
         print('Unhandled Event', event, values)

@@ -1,28 +1,35 @@
 import PySimpleGUI as sg
 import db
+import recipe_ingredient
+import recipe_ingredient_new
 
 def recipePopup(id):
-    row = db.recipeinfo(id)[0]
-    id, name, unit, yieldqty, *_ = row
-    data = db.recipedetails(id)
     headings = ['Ingredient', 'Quantity', 'Unit', 'Type', 'Cost']
-    data_format = [(name, qty, unit, type, "${:.2f}".format(cost)) for name, qty, unit, type, cost in data]
+
+    row = db.recipeinfo(id)[0]
+    name, unit, yieldqty, id = row
+    def format_data():
+        data = db.recipedetails(id)
+        return [(name, qty, unit, type, "${:.2f}".format(cost), id) for name, qty, unit, type, cost, id in data]
+
+    def reload_table():
+        window['-TABLE-'].Update(values=format_data())
 
     sg.theme('LightGrey')   # Add a touch of color
     # All the stuff inside your window.
     layout = [  [sg.Push(),sg.Text('Name'), sg.InputText(name, key='-NAME-')],
                 [sg.Push(),sg.Text('Yield Unit'), sg.InputText(unit, key='-UNIT-')],
                 [sg.Push(),sg.Text('Yield Qty'), sg.InputText(yieldqty, key='-YIELDQTY-')],
-                [sg.Table(values=data_format, 
+                [sg.Table(values=format_data(), 
                         headings=headings, 
                         max_col_width=25, 
                         auto_size_columns=True,
                         display_row_numbers=False,
                         justification='right',
-                        bind_return_key=False,
+                        bind_return_key=True,
                         key='-TABLE-'
                         )],
-                [sg.Button('Save', key='-SAVE-'), sg.Button('Cancel')] ]
+                [sg.Button('Save', key='-SAVE-'),sg.Button('New Ingredient', k='-NEW-'), sg.Button('Cancel')] ]
 
     # Create the Window
     window = sg.Window(name, layout)
@@ -39,6 +46,19 @@ def recipePopup(id):
             db.updaterecipe(id,name,unit,qty)
             print('Saving changes to id: {id} name: {name} unit: {unit} yield: {qty}')
             break
+        elif event == '-TABLE-': # Handle clicking on a table row
+            row_index = values['-TABLE-'][0]
+            clicked_row = window['-TABLE-'].get()[row_index]
+            print('Clicked Ingredient', clicked_row)
+            child_id = clicked_row[-1]
+            mode = clicked_row[3]
+            qty = clicked_row[1]
+
+            recipe_ingredient.popup(row, clicked_row)
+            reload_table()
+        elif event == '-NEW-':
+            recipe_ingredient_new.popup(row)
+            reload_table()
         else:
             print('Unhandled Event', event, values)
 
