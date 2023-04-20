@@ -20,3 +20,6 @@ def initializeDB():
     connection.close()
 
     print('Database initialized')
+
+if __name__=="__main__":
+    initializeDB()
