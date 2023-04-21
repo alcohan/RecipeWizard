@@ -23,11 +23,11 @@ def popup(parent,child):
             break
         elif event == '-SAVE-': # save changes to database
             print(f"Update {child_name} on {parent_name} to qty {values['-QTY-']}")
-            db.update_ingredient(parent_id,mode,child_id,values['-QTY-'])
+            db.update_recipe_ingredient(parent_id,mode,child_id,values['-QTY-'])
             break
         elif event == '-DELETE-':
             print(f'Deleted {child_name} from {parent_name}')
-            db.delete_ingredient(parent_id,mode,child_id)
+            db.delete_recipe_ingredient(parent_id,mode,child_id)
             break
         else:
             print('Unhandled Event', event, values)

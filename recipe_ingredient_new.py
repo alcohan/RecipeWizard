@@ -52,7 +52,7 @@ def popup(parent):
                 index = choices.index(value) if value in choices else -1
                 id, mode, selected_ingredient, _ = data[index]
                 print(f"Adding {values['-QTY-']} {selected_ingredient} to {parent_name}")
-                db.add_ingredient(parent_id, mode, id,values['-QTY-'])
+                db.add_recipe_ingredient(parent_id, mode, id,values['-QTY-'])
                 break
 
         # autocomplete combo box handling

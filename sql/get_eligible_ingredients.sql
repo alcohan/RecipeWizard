@@ -1,6 +1,6 @@
 -- Get all eligible recipes (avoiding circular references)
 WITH tree AS (
-    SELECT {id} AS ParentRecipe
+    SELECT ? AS ParentRecipe
     
     UNION ALL
     
