@@ -7,18 +7,12 @@ import ingredients_module as ing
 
 fields = ['Name','Unit','Cost','Calories','Components', 'Id']
 
-def format_component_data(): # Fetch & format the data. Move the ID column to the end so we can access it but not display
-    # nutrition_fields = ['Calories', 'TTLFatGrams', 'SatFatGrams', 'CholesterolMilligrams', 'SodiumMilligrams','CarbGrams','FiberGrams','SugarGrams','ProteinGrams']
-
-    recipedata = db.recipes_overview()
-    for row in recipedata:
-        row['OutputQty'] = "{:0.2g}".format(row['OutputQty'])
-        row['Cost'] = "$ {:0.2f}".format(row['Cost'])
-
+def format_recipes_data(): # Fetch & format the data. Move the ID column to the end so we can access it but not display
+    recipedata = db.recipe_info()
     return [[row[field] for field in fields] for row in recipedata]
 
 def reload_table():
-    window['-RECIPES-TABLE-'].Update(values=format_component_data())
+    window['-RECIPES-TABLE-'].Update(values=format_recipes_data())
 
 sg.theme('LightGrey1')   # Add a touch of color
 
@@ -30,7 +24,7 @@ menu_layout = [['&File', ['[not implemented] import from csv', '[not implemented
 
 layout_ingredients = sg.Frame('Ingredients',[[ing.render()]])
 layout_recipes = sg.Frame('Recipes',[[
-    sg.Table(values=format_component_data(),
+    sg.Table(values=format_recipes_data(),
                     headings=fields[:-1], 
                     max_col_width=25, 
                     auto_size_columns=True,

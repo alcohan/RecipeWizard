@@ -9,8 +9,8 @@ def edit(id):
     info = ['Weight','Cost', 'Components']
 
     def fetch_recipe_data():
-        data = db.recipe_detailedinfo(id)[0]
-        data['Cost'] = "${:.2f}".format(data['Cost'])
+        data = db.recipe_info(id)
+        # data['Cost'] = "${:.2f}".format(data['Cost'])
         return data
 
     this_recipe = fetch_recipe_data()
@@ -86,6 +86,7 @@ def edit(id):
 
     # Create the Window
     window = sg.Window(name, layout, icon="editveggie2.ico")
+
     # Event Loop to process "events" and get the "values" of the inputs
     while True:
         event, values = window.read()

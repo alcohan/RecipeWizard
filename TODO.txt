@@ -1,0 +1,18 @@
+Ingredients
+    - Edit / Save
+    - New
+    - Delete
+
+Recipes
+    - Delete
+    - Tags
+    - Nutrition Label
+    - Scalable prep recipe
+
+Database
+    - Custom column names
+    - Refactor code to use functions
+
+User Settings
+    - Show/Hide fields
+    - Import/Export database
