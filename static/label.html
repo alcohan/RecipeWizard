@@ -1,0 +1,65 @@
+<html>
+    <head>
+        <link rel="stylesheet" type="text/css" href="http://fonts.googleapis.com/css?family=Archivo+Black" />
+        <link rel="stylesheet" href="nutritionLabel.css">
+        <script type="text/javascript" src="jquery.js"></script>
+        <script type="text/javascript" src="jqueryNutritionLabel.js"></script>
+        <script type="text/javascript" src="html2canvas.min.js"></script>
+        <script type="text/javascript" src="data.js"></script>
+</head>
+<body>
+    <div id="nutritionlabel" style="display:inline-block"></div>
+    
+    <script>
+        params = {
+            showServingUnitQuantityTextbox : false,
+            itemName : 'NAME',
+            ingredientList : 'INGREDIENTS',
+        
+            decimalPlacesForQuantityTextbox : 2,
+            valueServingUnitQuantity : 1,
+        
+            allowFDARounding : true,
+            decimalPlacesForNutrition : 2,
+        
+            showPolyFat : false,
+            showMonoFat : false,
+            showTransFat : false,
+            showFibers : true,
+            showVitaminD : false,
+            showPotassium_2018 : false,
+            showCalcium : false,
+            showIron : false,
+            showCaffeine : false,
+        
+            valueCalories : 0,
+            // valueFatCalories : 0,
+            valueTotalFat : 0,
+            valueSatFat : 0,
+            // valueTransFat : 0,
+            valueCholesterol : 0,
+            valueSodium : 0,
+            valueTotalCarb : 0,
+            valueFibers : 0,
+            valueSugars : 0,
+            valueProteins : 0,
+            // valueVitaminD : 0,
+            // valuePotassium_2018 : 0,
+            // valueCalcium : 0,
+            // valueIron : 0,
+            // valueAddedSugars : 0,
+            // valueCaffeine : 0,
+            showLegacyVersion : false
+        };
+        
+        params = {...params, ...data}
+
+        $('#nutritionlabel').nutritionLabel(params);
+
+        html2canvas(document.querySelector("#nutritionlabel")).then(canvas => {
+            document.body.appendChild(canvas)
+        })
+        .then(() => $('#nutritionlabel').remove());
+    </script>
+</body>
+</html>

@@ -1,5 +1,5 @@
 import sqlite3
-import os
+import config
 
 # def deleteDB():
 #     if os.path.exists('builder.db'):
@@ -9,12 +9,14 @@ import os
 #         print('builder.db does not exist')
 
 def initializeDB():
-    connection = sqlite3.connect("builder.db")
+    connection = sqlite3.connect(config.DATABASE)
     cursor = connection.cursor()
 
-    with open('setup.sql','r') as f:
-        sql = f.read()
-    cursor.executescript(sql)
+    for file in ('sql/setup/tables.sql', 'sql/setup/views.sql','sql/setup/sampledata.sql'):
+        with open(file,'r') as f:
+            print(f'Executing script {file}')
+            sql = f.read()
+            cursor.executescript(sql)
 
     connection.commit()
     connection.close()

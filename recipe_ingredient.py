@@ -2,6 +2,9 @@ import PySimpleGUI as sg
 import db
 
 def popup(parent,child):
+    '''
+    Edit ingredient child from recipe parent
+    '''
     parent_id, parent_name, *_ = parent
     child_name, child_qty, child_unit, mode, _, child_id = child
 
