@@ -3,6 +3,7 @@ import db
 import recipe
 import ingredient
 import setup
+import config
 import ingredients_module as ing
 
 fields = ['Name','Unit','Cost','Calories','Components', 'Id']
@@ -11,7 +12,8 @@ def format_recipes_data(): # Fetch & format the data. Move the ID column to the 
     recipedata = db.recipe_info()
     return [[row[field] for field in fields] for row in recipedata]
 
-def reload_table():
+def refresh():
+    window['-INGREDIENT-TABLE-'].Update(values=ing.format_data())
     window['-RECIPES-TABLE-'].Update(values=format_recipes_data())
 
 sg.theme('LightGrey1')   # Add a touch of color
@@ -22,7 +24,7 @@ menu_layout = [['&File', ['[not implemented] import from csv', '[not implemented
               ['&Tools', ['&Refresh::-REFRESH-','Reset Database::-RESET-']],
               ['&Help', ['About']]]
 
-layout_ingredients = sg.Frame('Ingredients',[[ing.render()]])
+layout_ingredients = sg.Frame('Ingredients',[[ing.render()], [ sg.Button('New Ingredient', key='-NEW-INGREDIENT-') ]])
 layout_recipes = sg.Frame('Recipes',[[
     sg.Table(values=format_recipes_data(),
                     headings=fields[:-1], 
@@ -43,7 +45,7 @@ layout = [[sg.Menu(menu_layout, k='-MENU-'),
 
 
 # Create the Window
-window = sg.Window('Recipe Builder', layout, icon="editveggie2.ico")
+window = sg.Window(f'Recipe Builder - {config.DATABASE}', layout, icon="editveggie2.ico")
 
 # Event Loop to process "events" and get the "values" of the inputs
 while True:
@@ -57,7 +59,7 @@ while True:
             id = clicked_row[-1]
             print(f"Popup for {clicked_row[0]}")
             ingredient.edit(id)
-        reload_table()
+        refresh()
 
     elif event == '-RECIPES-TABLE-':
         if(len(values['-RECIPES-TABLE-'])>0):
@@ -67,20 +69,25 @@ while True:
 
             print(f"Popup for {clicked_row[0]}")
             recipe.edit(id)
-        reload_table()
+        refresh()
     elif event == '-NEW-RECIPE-':
         new_id = recipe.create()
         if(new_id):
             recipe.edit(new_id)
-        reload_table()
+        refresh()
+    elif event == '-NEW-INGREDIENT-':
+        new_id = ingredient.create()
+        if(new_id):
+            ingredient.edit(new_id)
+        refresh()
     elif event in ('-RESET-', 'Reset Database::-RESET-'):
         print('running setup script')
         setup.initializeDB()
-        reload_table()
+        refresh()
     elif event in ('Refresh', 'Refresh::-REFRESH-'):
         print('Refreshing values')
         ing.reload_table(window)
-        reload_table()
+        refresh()
     else:
         print('Unhandled Event', event, values)
 

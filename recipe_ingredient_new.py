@@ -2,6 +2,9 @@ import PySimpleGUI as sg
 import db
 
 def popup(parent):
+    '''
+    Window to add an ingredient to parent recipes
+    '''
     parent_id, parent_name, *_ = parent
 
     # autocomplete setup

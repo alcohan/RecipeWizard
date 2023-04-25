@@ -1,12 +1,16 @@
 import PySimpleGUI as sg
 import db
 import config
+import utils
 import recipe_ingredient
 import recipe_ingredient_new
 
 def edit(id):
+    '''
+    Window Popup to edit the Recipe with Id=id
+    '''
     # Config fields to display in the 'info' pane
-    info = ['Weight','Cost', 'Components']
+    info = {'Weight': 'Weight (g)','Cost': 'Cost', 'Components': 'Components'}
 
     def fetch_recipe_data():
         data = db.recipe_info(id)
@@ -44,20 +48,22 @@ def edit(id):
     
     # Weight and Cost info
     layout_info = [sg.Frame(f'Info (per {unit})',[
-        [ sg.Text(field), sg.Push(), sg.Text(this_recipe[field], k=field) ] 
-        for field in info
+        [ sg.Text(name), sg.Push(), sg.Text(this_recipe[key], k=key) ] 
+        for (key, name) in info.items()
     ])]
 
     # Nutrition details info
     layout_nutrition = [sg.Frame(f'Nutrition (per {unit})',[
-        [ sg.Text(field), sg.Push(),sg.Text(this_recipe[field], k=field) ] 
-        for field in config.nutrition_fields
+        [ sg.Text(name), sg.Push(),sg.Text(this_recipe[key], k=key) ] 
+        for (key, name) in config.nutrition_fields.items()
     ])]
 
     # Control buttons
     layout_buttons = [
         sg.Button('Save', key='-SAVE-'),
         sg.Button('Add Ingredient', k='-NEW-'), 
+        sg.Button('Nutrition Label', k='-LABEL-'),
+        sg.Button('Delete', key='-DELETE-', button_color=("white","red")),
         sg.Button('Close', button_color=("white","gray"), k='-CLOSE-')
     ]
     
@@ -93,6 +99,7 @@ def edit(id):
         if event == sg.WIN_CLOSED or event == '-CLOSE-': # if user closes window or clicks cancel
             print('Closing without saving changes')
             break
+
         elif event == '-SAVE-': # save changes to database
             name = values['-NAME-']
             unit = values['-UNIT-']
@@ -100,6 +107,17 @@ def edit(id):
             db.update_recipe_info(id,name,unit,qty)
             print(f'Saving changes to id: {id} name: {name} unit: {unit} yield: {qty}')
             break
+
+        elif event == '-DELETE-':
+            ch = sg.popup_ok_cancel(f'Delete {name}?',title='Delete')
+            if ch == 'OK':
+                try:
+                    db.delete_recipe(id)
+                    break
+                except Exception as err:
+                    sg.popup_ok(err, title="Recipe In Use")
+                
+
         elif event == '-TABLE-': # Handle clicking on a table row
             row_index = values['-TABLE-'][0]
             clicked_row = window['-TABLE-'].get()[row_index]
@@ -110,9 +128,14 @@ def edit(id):
 
             recipe_ingredient.popup([id, name], clicked_row)
             refresh()
+
         elif event == '-NEW-':
             recipe_ingredient_new.popup([id, name])
             refresh()
+
+        elif event == '-LABEL-': # open the nutrition label
+            utils.open_nutrition_label(id)
+
         else:
             print('Unhandled Event', event, values)
 
@@ -120,7 +143,9 @@ def edit(id):
 
 
 def create():
-    # All the stuff inside your window.
+    '''
+    Window popup to create a new recipe. Returns Id of the new row, or 0 otherwise.
+    '''
     layout = [  [sg.Push(),sg.Text('Name'), sg.InputText( key='-NAME-')],
                 [sg.Push(),sg.Text('Yield Unit'), sg.InputText( key='-UNIT-')],
                 [sg.Push(),sg.Text('Recipe Yield'), sg.InputText( key='-YIELDQTY-')],
@@ -143,7 +168,6 @@ def create():
             id = db.create_recipe(name,unit,qty)
             print(f'Created new recipe id: {id} name: {name} unit: {unit} yield: {qty}')
             break
-
         else:
             print('Unhandled Event', event, values)
 
