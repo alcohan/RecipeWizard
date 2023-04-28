@@ -15,7 +15,7 @@ def popup(parent):
     num_items_to_show = 10
     #autocomplete setup
 
-    window_title = f'{parent_name} | > NEW <'
+    window_title = f'{config.APPNAME} | {parent_name} | > NEW <'
     
     layout = [  [sg.Text(f'Add to {parent_name}')],
                 [sg.Input(size=(input_width, 1), enable_events=True, key='-IN-')],

@@ -2,14 +2,15 @@
 import sys
 import os
 from PyQt5 import QtCore, QtWidgets, QtWebEngineWidgets
+from pkg_resources import resource_string
 
 
 class Browser(QtWebEngineWidgets.QWebEngineView):
 
-    def __init__(self):
+    def __init__(self, url):
         super().__init__()
 
-        with open('static/label.html', 'r') as file:
+        with open(url, 'r') as file:
             html = file.read()
 
 
@@ -30,14 +31,14 @@ class Browser(QtWebEngineWidgets.QWebEngineView):
 
 class MainWindow(QtWidgets.QMainWindow):
 
-    def __init__(self):
+    def __init__(self, url):
         super().__init__()
 
-        self.init_widgets()
+        self.init_widgets(url)
         self.init_layout()
 
-    def init_widgets(self):
-        self.browser = Browser()
+    def init_widgets(self, url):
+        self.browser = Browser(url)
         self.browser.loadFinished.connect(self.load_finished)
 
     def init_layout(self):
@@ -52,12 +53,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.msg = QtWidgets.QMessageBox()
         self.msg.setIcon(QtWidgets.QMessageBox.Information)
         self.msg.setWindowTitle('Load Status')
-        # self.msg.setText(f"It is {str(status)} that the page loaded.")
-        # self.msg.show()
 
 
-if __name__ == '__main__':
+
+def render(url):
     app = QtWidgets.QApplication(sys.argv)
-    main_window = MainWindow()
+    main_window = MainWindow(url)
     main_window.show()
     sys.exit(app.exec_())
+
+if __name__ == '__main__':
+    render('static/label.html')

@@ -38,7 +38,7 @@ def edit(id):
                 layout_buttons ]
 
     # Create the Window
-    window = sg.Window(row['Name'], layout, icon=config.ICON)
+    window = sg.Window(f"{config.APPNAME} | {row['Name']}", layout, icon=config.ICON)
     # Event Loop to process "events" and get the "values" of the inputs
     while True:
         event, values = window.read()
@@ -99,7 +99,7 @@ def create():
     # if we don't get a new Id, we'll return 0
     id=0
     # Create the Window
-    window = sg.Window('> NEW INGREDIENT <', layout, icon=config.ICON)
+    window = sg.Window(f'{config.APPNAME} | > NEW INGREDIENT <', layout, icon=config.ICON)
     # Event Loop to process "events" and get the "values" of the inputs
     while True:
         event, values = window.read()

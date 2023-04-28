@@ -1,8 +1,10 @@
-import webbrowser
 import os.path
 import json
 import config
 import db
+import subprocess
+import pkg_resources
+# from utils.render_html import render
 
 def fill_template(id):
     '''
@@ -45,13 +47,21 @@ def fill_template(id):
     output = 'var data = '
     output += json.dumps(values)
 
-    with open(config.resource_path('static\\data.js'), 'w') as f:
+    # with open(config.resource_path('static\\data.js'), 'w') as f:
+    with open(pkg_resources.resource_filename(__name__,'static/data.js'), 'w') as f:
         f.write(output)
 
 def open_nutrition_label(id):
     fill_template(id)
-    webbrowser.open_new('file://' + os.path.realpath(config.resource_path('static\\label.html')))
+    # url = '--app=file:///' + os.path.realpath(config.resource_path('static\\label.html'))
 
+    filename = pkg_resources.resource_filename(__name__,'static/label.html')
+    url = '--app=file:///' + filename
 
+    chrome_path = 'C:\Program Files (x86)\Google\Chrome\Application\Chrome.exe'
+
+    command = [chrome_path, url]
+    subprocess.Popen(command)
+    
 if __name__=="__main__":
     open_nutrition_label(2)

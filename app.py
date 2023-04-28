@@ -26,7 +26,7 @@ layout = [[sg.Menu(menu_layout, k='-MENU-'),
 
 
 # Create the Window
-window = sg.Window(f'Recipe Builder - {config.DATABASE}', layout, icon=config.ICON)
+window = sg.Window(config.APPNAME, layout, icon=config.ICON)
 
 # Event Loop to process "events" and get the "values" of the inputs
 while True:

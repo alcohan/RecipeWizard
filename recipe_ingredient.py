@@ -9,7 +9,7 @@ def popup(parent,child):
     parent_id, parent_name, *_ = parent
     child_name, child_qty, child_unit, mode, _, child_id = child
 
-    window_title = f'{parent_name} | {child_name}'
+    window_title = f'{config.APPNAME} | {parent_name} | {child_name}'
     
     layout = [  [sg.Text(f'Editing {child_name} in {parent_name}')],
                 [sg.Text(f'Qty ({child_unit})'), sg.InputText(child_qty, key='-QTY-')],
