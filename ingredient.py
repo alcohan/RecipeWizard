@@ -14,24 +14,31 @@ def edit(id):
     row = fetch_data()
     name = row['Name']
 
-    layout_demographic = [[
-        [sg.Push(), sg.Text(name), sg.InputText(row[key], k=key, size=(30,1), enable_events=True, disabled=True if key=='Cost' else False)]
-        for (key, name) in config.ingredient_demographic_fields.items()
-    ]]
+    def layout_demographic():
+        '''Generate the demographic info GUI layout for this Ingredient'''
+        fields = []
+        for (key, name) in config.ingredient_demographic_fields.items():
+            if key=='Cost':
+                fields += [[sg.Push(), sg.Text(name), sg.InputText(row[key], k=key, size=(16,1), disabled=True),sg.Button('Change Price', k='-EDITPRICE-')]]
+            else:
+                fields += [[sg.Push(), sg.Text(name), sg.InputText(row[key], k=key, size=(30,1), enable_events=True)]]
+        return [fields]
+    
+
     layout_nutrition = [sg.Frame('Nutrition',[
         [sg.Push(), sg.Text(name), sg.InputText(row[key], k=f'{key}', size=(10,1), enable_events=True)] 
         for (key, name) in config.nutrition_fields.items()
     ])]
-    layout_buttons = [sg.Button('Save', key='-SAVE-'), sg.Button('Change Price', k='-EDITPRICE-'),
-                      sg.Button('Delete', key='-DELETE-', button_color=("white","red")),
+    layout_buttons = [sg.Button('Save', key='-SAVE-'),
+                      sg.Button('Delete Ingredient', key='-DELETE-', button_color=("white","red")),
                       sg.Button('Close', button_color=("white","gray"), k='-CLOSE-')]
 
-    layout = [  layout_demographic,  
+    layout = [  layout_demographic(),  
                 layout_nutrition,
                 layout_buttons ]
 
     # Create the Window
-    window = sg.Window(row['Name'], layout, icon="editveggie2.ico")
+    window = sg.Window(row['Name'], layout, icon=config.ICON)
     # Event Loop to process "events" and get the "values" of the inputs
     while True:
         event, values = window.read()
@@ -92,7 +99,7 @@ def create():
     # if we don't get a new Id, we'll return 0
     id=0
     # Create the Window
-    window = sg.Window('> NEW INGREDIENT <', layout, icon="editveggie2.ico")
+    window = sg.Window('> NEW INGREDIENT <', layout, icon=config.ICON)
     # Event Loop to process "events" and get the "values" of the inputs
     while True:
         event, values = window.read()

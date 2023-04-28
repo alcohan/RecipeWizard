@@ -33,8 +33,9 @@ def query(sql, params=(), one=False, rawdata=False):
     return (data[0] if data else None) if one else results
 
 def query_from_file(file, params=(), one=False,rawdata=False,filter=""):
-    with open(file, 'r') as f:
-        sql = f.read()
+    # with open(config.resource_path(file), 'r') as f:
+    #     sql = f.read()
+    sql = config.get_resource(file)
     return query(sql.format(filter=filter), params, one=one, rawdata=rawdata)
 
 
@@ -47,7 +48,7 @@ def get_ingredients(id=0):
         sql = "SELECT * FROM Ingredients" + filter
         result = query(sql, one=True)
     else:
-        sql = "SELECT * FROM Ingredients"
+        sql = "SELECT * FROM Ingredients ORDER BY Name ASC"
         result = query(sql)['data']
     return(result)
 
@@ -71,7 +72,7 @@ def update_ingredient(id, values):
         values['SugarGrams'],
         values['ProteinGrams'],
     )
-    result = query_from_file('sql/update_ingredient_info.sql',params,filter = f'WHERE Id={id}')
+    result = query_from_file('sql\\update_ingredient_info.sql',params,filter = f'WHERE Id={id}')
     return result
 
 def create_ingredient( values):
@@ -94,7 +95,7 @@ def create_ingredient( values):
         values['SugarGrams'],
         values['ProteinGrams'],
     )
-    result = query_from_file('sql/create_ingredient.sql',params)
+    result = query_from_file('sql\\create_ingredient.sql',params)
     return result['lastrowid']
 
 def ingredient_price_latest(id):
@@ -154,12 +155,12 @@ def delete_recipe(id):
 # Get summmary data for recipes. If no Id is passed, we get all records
 def recipe_info(id=0):
     if id:
-        result = query_from_file('sql/get_recipe_info.sql',one=True, filter=f'WHERE r.Id = {id}')
+        result = query_from_file('sql\\get_recipe_info.sql',one=True, filter=f'WHERE r.Id = {id}')
         # Format the currency
         result['Cost'] = "$ {:.2f}".format(result['Cost'])
         return result
     else:
-        result = query_from_file('sql/get_recipe_info.sql')['data']
+        result = query_from_file('sql\\get_recipe_info.sql')['data']
         for row in result:
             row['Cost'] = "$ {:0.2f}".format(row['Cost'])
         return result
@@ -168,7 +169,7 @@ def recipe_info(id=0):
 recipe_components_fields = ['Name', 'Quantity', 'Unit', 'Type', 'Cost', 'Id']
 # Fetch all components on one recipe
 def recipe_components(id: int):
-    result = query_from_file('sql/get_recipe_components.sql', (id,))['data']
+    result = query_from_file('sql\\get_recipe_components.sql', (id,))['data']
 
     # Format the data
     for row in result:
@@ -179,14 +180,14 @@ def recipe_components(id: int):
     return(result)
 
 def update_recipe_info(id: int, name: str, unit: str, outputqty: float):
-    return query_from_file('sql/update_recipe_info.sql', (name, unit, outputqty, id))
+    return query_from_file('sql\\update_recipe_info.sql', (name, unit, outputqty, id))
 
 def create_recipe(name: str, unit: str, outputqty: float):
-    result = query_from_file('sql/create_recipe.sql', (name, unit, outputqty))
+    result = query_from_file('sql\\create_recipe.sql', (name, unit, outputqty))
     return result['lastrowid']
     
 def get_eligible_ingredients(id: int):
-    return query_from_file('sql/get_eligible_ingredients.sql',(id,), rawdata=True)['data']
+    return query_from_file('sql\\get_eligible_ingredients.sql',(id,), rawdata=True)['data']
 
 
 # Interact with Recipe Ingredients

@@ -1,6 +1,7 @@
 import webbrowser
 import os.path
 import json
+import config
 import db
 
 def fill_template(id):
@@ -44,12 +45,12 @@ def fill_template(id):
     output = 'var data = '
     output += json.dumps(values)
 
-    with open('static/data.js', 'w') as f:
+    with open(config.resource_path('static\\data.js'), 'w') as f:
         f.write(output)
 
 def open_nutrition_label(id):
     fill_template(id)
-    webbrowser.open_new('file://' + os.path.realpath('static/label.html'))
+    webbrowser.open_new('file://' + os.path.realpath(config.resource_path('static\\label.html')))
 
 
 if __name__=="__main__":

@@ -9,14 +9,13 @@ def edit_one(ingredient_id):
     this_ingredient = db.get_ingredients(ingredient_id)
     latest_values = db.ingredient_price_latest(ingredient_id)
 
-    formdata = latest_values if latest_values else {'unit_price': '-', 'case_price': '', 'supplier_id':'', 'units_per_case': ''}
+    formdata = latest_values if latest_values else {'unit_price': 0, 'case_price': 0, 'supplier_id':'', 'units_per_case': ''}
+
     def format_data():
-        display={}
-        for key in formdata:
-            if key == 'case_price' or key=='unit_price':
-                display[key] = '$ ' + str(formdata[key])
-            else:
-                display[key] = formdata[key]
+        display=formdata.copy()
+        display['unit_price'] = "$ {:.4f}".format(formdata['unit_price'])
+        display['case_price'] = f"$ {formdata['case_price']}"
+        
         return display
     display = format_data()
     
@@ -24,17 +23,17 @@ def edit_one(ingredient_id):
                       sg.Button('Close', button_color=("white","gray"), k='-CLOSE-')]
 
     layout = [
-            [sg.Push(), sg.Text('Ingredient:'), sg.InputText( this_ingredient['Name'], disabled=True)],
-            [sg.Push(), sg.Text('Supplier ID:'), sg.InputText(display['supplier_id'], key='supplier_id')],
-            [sg.Push(), sg.Text('Case Price:'), sg.InputText(display['case_price'], key='case_price', enable_events=True)],
-            [sg.Push(), sg.Text('Yield:'), sg.InputText(display['units_per_case'], key='units_per_case', enable_events=True)],
-            [sg.Push(), sg.Text('Unit Price:'), sg.InputText(display['unit_price'], key='unit_price', disabled=True)],
+            [sg.Push(), sg.Text('Ingredient:'), sg.InputText( this_ingredient['Name'], size=(30,1), disabled=True)],
+            [sg.Push(), sg.Text('Supplier ID:'), sg.InputText(display['supplier_id'], size=(30,1), key='supplier_id')],
+            [sg.Push(), sg.Text('Case Price:'), sg.InputText(display['case_price'], size=(30,1), key='case_price', enable_events=True)],
+            [sg.Push(), sg.Text('Yield:'), sg.InputText(display['units_per_case'], size=(30,1), key='units_per_case', enable_events=True)],
+            [sg.Push(), sg.Text('Unit Price:'), sg.InputText(display['unit_price'], size=(30,1), key='unit_price', disabled=True)],
             [sg.Push(), sg.Text('Effective Date:'), sg.Input(date.today(), key='effective_date', size=(20,1)), sg.Button('Select', k='-DATE-POPUP-')],
 
             layout_buttons 
             ]
 
-    window = sg.Window('Price: {name}'.format(name=this_ingredient['Name']), layout, icon="editveggie2.ico")
+    window = sg.Window('Price: {name}'.format(name=this_ingredient['Name']), layout, icon=config.ICON)
 
     # Event Loop 
     while True:
@@ -54,10 +53,10 @@ def edit_one(ingredient_id):
             formdata[event] = new
             # Format the currency
             window[event].update(format_data()[event])
-            try: 
+            try: # Update the calculated Unit Price
                 a, b = float(formdata['case_price']), float(formdata['units_per_case'])
                 window['unit_price'].update('$ ' + str("{:.4f}".format(a / b,4)))
-            except:
+            except: # If error (one field is missing) insert a placeholder
                 window['unit_price'].update('$ -')
 
 

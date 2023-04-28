@@ -63,7 +63,7 @@ def edit(id):
         sg.Button('Save', key='-SAVE-'),
         sg.Button('Add Ingredient', k='-NEW-'), 
         sg.Button('Nutrition Label', k='-LABEL-'),
-        sg.Button('Delete', key='-DELETE-', button_color=("white","red")),
+        sg.Button('Delete Recipe', key='-DELETE-', button_color=("white","red")),
         sg.Button('Close', button_color=("white","gray"), k='-CLOSE-')
     ]
     
@@ -91,7 +91,7 @@ def edit(id):
     ]]
 
     # Create the Window
-    window = sg.Window(name, layout, icon="editveggie2.ico")
+    window = sg.Window(name, layout, icon=config.ICON)
 
     # Event Loop to process "events" and get the "values" of the inputs
     while True:
@@ -154,7 +154,7 @@ def create():
     # if we don't get a new Id, we'll return 0
     id=0
     # Create the Window
-    window = sg.Window('> NEW RECIPE <', layout, icon="editveggie2.ico")
+    window = sg.Window('> NEW RECIPE <', layout, icon=config.ICON)
     # Event Loop to process "events" and get the "values" of the inputs
     while True:
         event, values = window.read()
