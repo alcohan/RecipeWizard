@@ -91,7 +91,7 @@ def edit(id):
     ]]
 
     # Create the Window
-    window = sg.Window(name, layout, icon=config.ICON)
+    window = sg.Window(f'{config.APPNAME} | {name}', layout, icon=config.ICON)
 
     # Event Loop to process "events" and get the "values" of the inputs
     while True:
@@ -154,7 +154,7 @@ def create():
     # if we don't get a new Id, we'll return 0
     id=0
     # Create the Window
-    window = sg.Window('> NEW RECIPE <', layout, icon=config.ICON)
+    window = sg.Window(f'{config.APPNAME} | > NEW RECIPE <', layout, icon=config.ICON)
     # Event Loop to process "events" and get the "values" of the inputs
     while True:
         event, values = window.read()

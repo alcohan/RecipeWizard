@@ -33,7 +33,7 @@ def edit_one(ingredient_id):
             layout_buttons 
             ]
 
-    window = sg.Window('Price: {name}'.format(name=this_ingredient['Name']), layout, icon=config.ICON)
+    window = sg.Window(f"{config.APPNAME} | Price: {this_ingredient['Name']}", layout, icon=config.ICON)
 
     # Event Loop 
     while True:
