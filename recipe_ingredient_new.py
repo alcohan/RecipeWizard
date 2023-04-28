@@ -1,4 +1,5 @@
 import PySimpleGUI as sg
+import config
 import db
 
 def popup(parent):
@@ -26,7 +27,7 @@ def popup(parent):
             ]
 
     # Create the Window
-    window = sg.Window(window_title, layout, return_keyboard_events=True, finalize=True, icon="editveggie2.ico")
+    window = sg.Window(window_title, layout, return_keyboard_events=True, finalize=True, icon=config.ICON)
     # Event Loop to process "events" and get the "values" of the inputs
 
     list_element:sg.Listbox = window.Element('-BOX-')           # store listbox element for easier access and to get to docstrings

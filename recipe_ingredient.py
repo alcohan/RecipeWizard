@@ -1,4 +1,5 @@
 import PySimpleGUI as sg
+import config
 import db
 
 def popup(parent,child):
@@ -16,7 +17,7 @@ def popup(parent,child):
             ]
 
     # Create the Window
-    window = sg.Window(window_title, layout, icon="editveggie2.ico")
+    window = sg.Window(window_title, layout, icon=config.ICON)
     # Event Loop to process "events" and get the "values" of the inputs
 
     while True:
