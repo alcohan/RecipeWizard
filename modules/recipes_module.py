@@ -7,7 +7,6 @@ fields = ['Name','Unit','Cost','Calories','Components', 'Id']
 
 @cache
 def format_recipes_data(): # Fetch & format the data. Move the ID column to the end so we can access it but not display
-    print('fetching recipe data')
     recipedata = db.recipe_info()
     return [[row[field] for field in fields] for row in recipedata]
 
