@@ -1,4 +1,9 @@
+DROP TABLE IF EXISTS tags;
+DROP TABLE IF EXISTS ingredient_tags_mapping;
+DROP TABLE IF EXISTS recipe_tags_mapping;
+
 DROP TABLE IF EXISTS ingredient_prices;
+
 DROP TABLE IF EXISTS Connections;
 DROP TABLE IF EXISTS Recipes;
 DROP TABLE IF EXISTS Ingredients;
@@ -76,6 +81,27 @@ BEGIN
   )
   WHERE id = NEW.ingredient_id;
 END;
+
+CREATE TABLE tags (
+  id INTEGER PRIMARY KEY AUTOINCREMENT
+  , name TEXT
+);
+
+CREATE TABLE ingredient_tags_mapping (
+  id INTEGER PRIMARY KEY AUTOINCREMENT
+  , tag_id INTEGER
+  , ingredient_id INTEGER
+  , FOREIGN KEY (ingredient_id) REFERENCES ingredients(id)
+  , FOREIGN KEY (tag_id) REFERENCES tags(id)
+);
+
+CREATE TABLE recipe_tags_mapping (
+  id INTEGER PRIMARY KEY AUTOINCREMENT
+  , tag_id INTEGER
+  , recipe_id INTEGER
+  , FOREIGN KEY (recipe_id) REFERENCES recipes(id)
+  , FOREIGN KEY (tag_id) REFERENCES tags(id)
+);
 
 -- CREATE TRIGGER update_ingredient_price_before_update
 -- AFTER UPDATE ON ingredients

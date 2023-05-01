@@ -259,3 +259,18 @@ INSERT INTO suppliers (name) VALUES
 -- (ingredient_id, supplier_id, case_price, units_per_case) VALUES
 -- ( 9, 2, 25, 30),
 -- ( 10, 1, 100, 10);
+
+
+INSERT INTO tags (name) VALUES
+('tag1'),
+('tag2'),
+('tag3');
+
+INSERT INTO ingredient_tags_mapping (tag_id, ingredient_id) VALUES
+(1, 9),
+(2, 12);
+
+INSERT INTO recipe_tags_mapping (tag_id, recipe_id) VALUES
+(2, 2),
+(2, 4);
+
