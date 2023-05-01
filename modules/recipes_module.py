@@ -1,14 +1,15 @@
 import PySimpleGUI as sg
 import db
 import modules.recipes.recipe as recipe
+from functools import cache
 
 fields = ['Name','Unit','Cost','Calories','Components', 'Id']
 
+@cache
 def format_recipes_data(): # Fetch & format the data. Move the ID column to the end so we can access it but not display
+    print('fetching recipe data')
     recipedata = db.recipe_info()
     return [[row[field] for field in fields] for row in recipedata]
-
-cache = format_recipes_data()
 
 def render():
     return [
@@ -48,7 +49,7 @@ def loop(event, values, window):
     elif event == '-RECIPES-FILTER-':
         print('Searching for: ', values[event])
         filter_value = values['-RECIPES-FILTER-'].lower()
-        filtered_data = [row for row in cache if filter_value in ' '.join(map(str, row)).lower()]
+        filtered_data = [row for row in format_recipes_data() if filter_value in ' '.join(map(str, row)).lower()]
         window['-RECIPES-TABLE-'].Update(values=filtered_data)
         return 1
     # 0 if we didn't do anything

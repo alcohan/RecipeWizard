@@ -4,9 +4,13 @@ import config
 import modules.ingredients_module as ingredients_module
 import modules.recipes_module as recipes_module
 import modules.about as about
+import modules.suppliers.suppliers as suppliers
+
 
 def refresh():
     print('Refreshing Ingredients & Recipes Data')
+    recipes_module.format_recipes_data.cache_clear()
+    ingredients_module.format_data.cache_clear()
     window['-INGREDIENT-TABLE-'].Update(values=ingredients_module.format_data())
     window['-RECIPES-TABLE-'].Update(values=recipes_module.format_recipes_data())
 
@@ -58,6 +62,8 @@ while True:
         refresh()
     elif event == 'About':
         about.render()
+    elif event == 'Suppliers':
+        suppliers.render()
     else:
         print('Unhandled Event', event, values)
 

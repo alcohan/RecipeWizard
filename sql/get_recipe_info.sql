@@ -5,4 +5,4 @@ FROM RecipeDetails r
 LEFT JOIN Connections c ON r.Id = C.ParentRecipe
 {filter}
 GROUP BY r.Id
-ORDER BY Name ASC
+ORDER BY Name COLLATE NOCASE ASC
