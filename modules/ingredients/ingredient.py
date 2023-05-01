@@ -1,7 +1,7 @@
 import PySimpleGUI as sg
 import db
 import config
-import ingredient_prices
+import modules.ingredients.ingredient_prices as ingredient_prices
 from re import sub
 
 def edit(id):

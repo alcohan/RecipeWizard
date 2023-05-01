@@ -21,6 +21,10 @@ wheels/
 *.egg 
 *.manifest 
 
+# Transient data file
+static/data.js
+builder.db
+
 # Log files
 pip-log.txt
 pip-delete-this-directory.txt
@@ -82,3 +86,4 @@ GitHub.sublime-settings
 !.vscode/launch.json 
 !.vscode/extensions.json 
 .history
+builder.db
