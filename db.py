@@ -108,6 +108,11 @@ def ingredient_price_new(id, values):
     print('Adding new row to price history: ', values)
     return query(f'INSERT INTO ingredient_prices (ingredient_id, supplier_id, case_price, units_per_case, effective_date) VALUES ({id},?,?,?,?)', values)
 
+def get_suppliers():
+    '''
+    Get all of the possible suppliers
+    '''
+    return query('SELECT * FROM suppliers;')['data']
 def delete_ingredient(id):
     '''
     Delete the ingredient Id

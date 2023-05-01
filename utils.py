@@ -58,10 +58,10 @@ def open_nutrition_label(id):
     filename = pkg_resources.resource_filename(__name__,'static/label.html')
     url = '--app=file:///' + filename
 
-    chrome_path = 'C:\Program Files (x86)\Google\Chrome\Application\Chrome.exe'
+    # chrome_path = 'C:\Program Files (x86)\Google\Chrome\Application\Chrome.exe'
 
-    command = [chrome_path, url]
-    subprocess.Popen(command)
+    command = ['start', 'chrome', url]
+    subprocess.Popen(command, shell=True)
     
 if __name__=="__main__":
     open_nutrition_label(2)

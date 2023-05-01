@@ -1,8 +1,9 @@
 import PySimpleGUI as sg
 import setup
 import config
-import ingredients_module
-import recipes_module
+import modules.ingredients_module as ingredients_module
+import modules.recipes_module as recipes_module
+import modules.about as about
 
 def refresh():
     print('Refreshing Ingredients & Recipes Data')
@@ -12,7 +13,8 @@ def refresh():
 sg.theme('LightGrey1')   # Add a touch of color
 
 # All the stuff inside your window.
-menu_layout = [['&File', ['[not implemented] import from csv', '[not implemented] export to csv', '[not implemented] get csv template', '---', 'E&xit']],
+menu_layout = [['&File', ['[todo] import from csv', '[todo] export to csv', '---', 'E&xit']],
+              ['&Manage',['&Suppliers', '---', 'Tags', 'Templates']],
               ['&Tools', ['&Refresh::-REFRESH-','Reset Database::-RESET-']],
               ['&Help', ['About']]]
 
@@ -54,6 +56,8 @@ while True:
     elif event in ('Refresh', 'Refresh::-REFRESH-'):
         print('Refreshing values')
         refresh()
+    elif event == 'About':
+        about.render()
     else:
         print('Unhandled Event', event, values)
 

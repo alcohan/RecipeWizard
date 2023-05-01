@@ -1,12 +1,12 @@
 import PySimpleGUI as sg
 import db
-import ingredient
+import modules.ingredients.ingredient as ingredient
+from functools import cache
 
+@cache
 def format_data():
     data = db.get_ingredients()
     return [(i['Name'], i['Unit'], i['Id']) for i in data]
-
-cache = format_data()
 
 def render():
     headings = ['Name', 'Unit']
@@ -46,7 +46,7 @@ def loop(event, values, window):
     elif event == '-INGREDIENTS-FILTER-':
         print('Searching for: ', values[event])
         filter_value = values['-INGREDIENTS-FILTER-'].lower()
-        filtered_data = [row for row in cache if filter_value in ' '.join(map(str, row)).lower()]
+        filtered_data = [row for row in format_data() if filter_value in ' '.join(map(str, row)).lower()]
         window['-INGREDIENT-TABLE-'].Update(values=filtered_data)
         return 1
     

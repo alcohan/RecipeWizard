@@ -1,6 +1,6 @@
 import PySimpleGUI as sg
 import db
-import recipe
+import modules.recipes.recipe as recipe
 
 fields = ['Name','Unit','Cost','Calories','Components', 'Id']
 

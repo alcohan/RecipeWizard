@@ -3,7 +3,7 @@ import db
 import config
 import utils
 import recipe_ingredient
-import recipe_ingredient_new
+import modules.recipes.recipe_ingredient_new as recipe_ingredient_new
 
 def edit(id):
     '''
