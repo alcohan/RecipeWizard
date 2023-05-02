@@ -4,6 +4,7 @@ import config
 import utils
 import recipe_ingredient
 import modules.recipes.recipe_ingredient_new as recipe_ingredient_new
+from autocomplete import Autocomplete
 
 def edit(id):
     '''
@@ -45,6 +46,13 @@ def edit(id):
         [sg.Push(),sg.Text('Yield Unit'), sg.InputText(unit, key='-UNIT-')],
         [sg.Push(),sg.Text('Recipe Yield'), sg.InputText(yieldqty, key='-YIELDQTY-')]
     ])]
+
+
+    taglist = db.get_recipe_tags(id)
+    layout_tags = [sg.Frame('Tags',[
+        [sg.Checkbox(tag['name'],default=tag['checked'], k=f"-TAG-::{tag['id']}", enable_events=True) for tag in taglist]
+        # [sg.Column([[sg.Listbox(taglist, size=(12,len(taglist)))]]),sg.Column(a.layout)]
+    ])]
     
     # Weight and Cost info
     layout_info = [sg.Frame(f'Info (per {unit})',[
@@ -82,6 +90,7 @@ def edit(id):
     layout = [[
         sg.Column([
             layout_demographic,
+            layout_tags,
             layout_components_table,
             layout_buttons ]),
         sg.Column([
@@ -136,6 +145,9 @@ def edit(id):
         elif event == '-LABEL-': # open the nutrition label
             utils.open_nutrition_label(id)
 
+        elif event.startswith('-REMOVE-TAG-'):
+            tag_id = int(event.split("::")[1])
+            print(db.remove_recipe_tag(tag_id))
         else:
             print('Unhandled Event', event, values)
 

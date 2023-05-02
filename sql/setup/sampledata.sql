@@ -272,5 +272,7 @@ INSERT INTO ingredient_tags_mapping (tag_id, ingredient_id) VALUES
 
 INSERT INTO recipe_tags_mapping (tag_id, recipe_id) VALUES
 (2, 2),
+(1, 2),
+(3, 2),
 (2, 4);
 
