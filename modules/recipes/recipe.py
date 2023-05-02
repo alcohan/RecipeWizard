@@ -4,7 +4,10 @@ import config
 import utils
 import recipe_ingredient
 import modules.recipes.recipe_ingredient_new as recipe_ingredient_new
+<<<<<<< HEAD
 from autocomplete import Autocomplete
+=======
+>>>>>>> 3bfae57e0e03c372581f51e254dacdeb31dd4240
 
 def edit(id):
     '''

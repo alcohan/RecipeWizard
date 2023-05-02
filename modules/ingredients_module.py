@@ -1,7 +1,10 @@
 import PySimpleGUI as sg
 import db
 import modules.ingredients.ingredient as ingredient
+<<<<<<< HEAD
 from functools import cache
+=======
+>>>>>>> 3bfae57e0e03c372581f51e254dacdeb31dd4240
 
 @cache
 def format_data():
