@@ -85,6 +85,7 @@ END;
 CREATE TABLE tags (
   id INTEGER PRIMARY KEY AUTOINCREMENT
   , name TEXT
+  , sortOrder INTEGER
 );
 
 CREATE TABLE ingredient_tags_mapping (

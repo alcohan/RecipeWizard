@@ -262,3 +262,16 @@ def modify_recipe_tag(recipe_id, tag_id, state):
             INSERT INTO recipe_tags_mapping (recipe_id, tag_id) VALUES (? , ? )
         '''
     return query(sql, (recipe_id, tag_id,))
+
+def get_tags():
+    sql = '''
+        SELECT * FROM tags
+    '''
+    return query(sql)['data']
+
+def update_tag(tag_id, new_name):
+    sql = '''
+        UPDATE tags SET name=? WHERE id=?
+    '''
+    return query(sql, (new_name, tag_id))
+    # print('update tag id',tag_id, new_name)
