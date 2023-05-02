@@ -41,10 +41,18 @@ def edit(id):
             window[field].update(new_data[field])
 
 
-    layout_demographic = [sg.Frame('',[
-        [sg.Push(),sg.Text('Name'), sg.InputText(name, key='-NAME-')],
-        [sg.Push(),sg.Text('Yield Unit'), sg.InputText(unit, key='-UNIT-')],
-        [sg.Push(),sg.Text('Recipe Yield'), sg.InputText(yieldqty, key='-YIELDQTY-')]
+    layout_demographic = [sg.Frame('Recipe',[[
+            sg.Column([
+                [sg.Push(),sg.Text('Name'), sg.InputText(name, key='-NAME-')],
+                [sg.Push(),sg.Text('Yield Unit'), sg.InputText(unit, key='-UNIT-')],
+                [sg.Push(),sg.Text('Recipe Yield'), sg.InputText(yieldqty, key='-YIELDQTY-')]
+            ]),
+            # Use VPush() with expand_y=True to align button to the bottom of frame
+            sg.Column([
+                [sg.VPush()],
+                [sg.Button('Update', k='-SAVE-')]
+            ], expand_y=True)
+        ]
     ])]
 
 
@@ -68,15 +76,16 @@ def edit(id):
 
     # Control buttons
     layout_buttons = [
-        sg.Button('Save', key='-SAVE-'),
+        # sg.Button('Save', key='-SAVE-'),
         sg.Button('Add Ingredient', k='-NEW-'), 
         sg.Button('Nutrition Label', k='-LABEL-'),
         sg.Button('Delete Recipe', key='-DELETE-', button_color=("white","red")),
-        sg.Button('Close', button_color=("white","gray"), k='-CLOSE-')
+        # sg.Button('Close', button_color=("white","gray"), k='-CLOSE-')
     ]
     
     # Display the recipe components
-    layout_components_table = [sg.Table(values=format_component_data(), 
+    layout_components_table = [sg.Frame('Components',[
+        [sg.Table(values=format_component_data(), 
                         headings=headings, 
                         max_col_width=25, 
                         auto_size_columns=True,
@@ -85,7 +94,8 @@ def edit(id):
                         bind_return_key=True,
                         key='-TABLE-'
                         )]
-    
+        ]
+    )]
     # All the stuff inside your window.
     layout = [[
         sg.Column([
@@ -115,7 +125,6 @@ def edit(id):
             qty = values['-YIELDQTY-']
             db.update_recipe_info(id,name,unit,qty)
             print(f'Saving changes to id: {id} name: {name} unit: {unit} yield: {qty}')
-            break
 
         elif event == '-DELETE-':
             ch = sg.popup_ok_cancel(f'Delete {name}?',title='Delete')
@@ -146,8 +155,10 @@ def edit(id):
             utils.open_nutrition_label(id)
 
         elif event.startswith('-TAG-'):
+            # Get the ID from the end of the event
             tag_id = int(event.split("::")[1])
-            print('we need to do something with tag id',tag_id, values[event])
+            # print('Updating tag id',tag_id, values[event])
+            db.modify_recipe_tag(id, tag_id, values[event])
         else:
             print('Unhandled Event', event, values)
 
