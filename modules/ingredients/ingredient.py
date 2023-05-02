@@ -2,6 +2,7 @@ import PySimpleGUI as sg
 import db
 import config
 import modules.ingredients.ingredient_prices as ingredient_prices
+import modules.ingredients.pricehistory as pricehistory
 from re import sub
 
 def edit(id):
@@ -19,19 +20,20 @@ def edit(id):
         fields = []
         for (key, name) in config.ingredient_demographic_fields.items():
             if key=='Cost':
-                fields += [[sg.Push(), sg.Text(name), sg.InputText(row[key], k=key, size=(16,1), disabled=True),sg.Button('Change Price', k='-EDITPRICE-')]]
+                fields.append( [[sg.Text(name), sg.Push(), sg.InputText(row[key], k=key, size=(12,1), disabled=True),sg.Button('Change', k='-EDITPRICE-'), sg.Button('History', k='-HISTORY-')]])
             else:
-                fields += [[sg.Push(), sg.Text(name), sg.InputText(row[key], k=key, size=(30,1), enable_events=True)]]
+                fields.append([[sg.Text(name), sg.Push(), sg.InputText(row[key], k=key, size=(30,1), enable_events=True)]])
         return [fields]
     
 
     layout_nutrition = [sg.Frame('Nutrition',[
-        [sg.Push(), sg.Text(name), sg.InputText(row[key], k=f'{key}', size=(10,1), enable_events=True)] 
+        [sg.Text(name), sg.Push(), sg.InputText(row[key], k=f'{key}', size=(10,1), enable_events=True)] 
         for (key, name) in config.nutrition_fields.items()
     ])]
     layout_buttons = [sg.Button('Save', key='-SAVE-'),
                       sg.Button('Delete Ingredient', key='-DELETE-', button_color=("white","red")),
-                      sg.Button('Close', button_color=("white","gray"), k='-CLOSE-')]
+                      sg.Button('Close', button_color=("white","gray"), k='-CLOSE-')
+        ]
 
     layout = [  layout_demographic(),  
                 layout_nutrition,
@@ -73,6 +75,8 @@ def edit(id):
             for key in new:
                 if key in values.keys():
                     window[key].update(new[key])
+        elif event == '-HISTORY-':
+            pricehistory.render(id, name)
         else:
             print('Unhandled Event', event, values, )
 
