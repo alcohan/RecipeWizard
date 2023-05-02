@@ -1,1 +1,0 @@
-var data = {"itemName": "Jalapeno Business", "ingredientList": "Black Beans, Fire Roasted Corn, Grape Tomatoes, Jalapenos, Aged White Cheddar, Brown Rice, Chicken, Chipotle Tomatillo Sauce", "valueCalories": 792, "valueTotalFat": 16, "valueSatFat": 6, "valueCholesterol": 102, "valueSodium": 1555, "valueTotalCarb": 113, "valueFibers": 20, "valueSugars": 10, "valueProteins": 50}
