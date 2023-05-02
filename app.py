@@ -3,12 +3,9 @@ import setup
 import config
 import modules.ingredients_module as ingredients_module
 import modules.recipes_module as recipes_module
-<<<<<<< HEAD
 import modules.about as about
 import modules.suppliers.suppliers as suppliers
 
-=======
->>>>>>> 3bfae57e0e03c372581f51e254dacdeb31dd4240
 
 def refresh():
     print('Refreshing Ingredients & Recipes Data')
