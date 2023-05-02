@@ -239,3 +239,21 @@ def delete_recipe_ingredient(parent: int, mode: str, child: int):
 
     params = (parent, child)
     return query(sql.format(filter=filter), params)
+
+def get_recipe_tags(parent: int):
+    sql = '''
+        SELECT t.name, t.id,
+            CASE WHEN EXISTS (
+                SELECT 1 FROM recipe_tags_mapping rtm 
+                WHERE rtm.tag_id = t.id 
+                AND rtm.recipe_id = ?
+            ) THEN 1 ELSE 0 END AS checked
+        FROM tags t;
+    '''
+    return query(sql, (parent,))['data']
+
+def remove_recipe_tag(tag_id):
+    sql = '''
+        DELETE FROM recipe_tags_mapping WHERE id=?
+    '''
+    return query(sql, (tag_id,))
