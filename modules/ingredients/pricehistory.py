@@ -1,6 +1,6 @@
 import PySimpleGUI as sg
 import matplotlib.pyplot as plt
-# from config import ICON
+from config import ICON
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import PySimpleGUI as sg
 import matplotlib
@@ -44,6 +44,7 @@ def render(id, name='Ingredient', recipeMode=False):
 
         # Set y-axis minimum to 0
         ax.set_ylim([0, max(prices)*1.1])
+        ax.yaxis.set_major_formatter('${x:1.2f}')
 
         # Rotate x-axis tick labels and show labels for fewer dates
         locator = mdates.AutoDateLocator()
@@ -64,23 +65,23 @@ def render(id, name='Ingredient', recipeMode=False):
     if recipeMode:
         price_history = get_recipe_price_history(id)
         # Create table layout
-        table_data = [[row['date'], row['price']] for row in price_history]
+        table_data = [[row['date'], "$ {:.2f}".format(row['price'])] for row in price_history]
         table_headings = ['Date', 'Unit Price']
     else:
         # Create table layout
         price_history = get_price_history(id)
-        table_data = [[row['date'], row['price'], row['supplier']] for row in price_history]
+        table_data = [[row['date'], "$ {:.4f}".format(row['price']), row['supplier']] for row in price_history]
         table_headings = ['Date', 'Unit Price', 'Supplier']
 
 
-    layout_table = [[sg.Table(values=table_data, headings=table_headings, num_rows=10, auto_size_columns=False)],[sg.VPush()]]
+    layout_table = [[sg.Table(values=table_data, headings=table_headings, num_rows=20, auto_size_columns=False)],[sg.VPush()]]
     layout_graph = [[sg.Canvas(key='-CANVAS-', border_width=5, background_color='red')]]
     layout = [
         [sg.Column(layout_table, expand_y=True), sg.Column(layout_graph)]
     ]
 
     # Create window
-    window = sg.Window(f'Price History [{name}]', layout, finalize=True)
+    window = sg.Window(f'Price History [{name}]', layout, finalize=True, icon=ICON)
     if len(price_history)>0:
         fig = generate_figure(price_history)
         tkcanvas = draw_figure(window['-CANVAS-'].TKCanvas, fig)
