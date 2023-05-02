@@ -252,8 +252,13 @@ def get_recipe_tags(parent: int):
     '''
     return query(sql, (parent,))['data']
 
-def remove_recipe_tag(tag_id):
-    sql = '''
-        DELETE FROM recipe_tags_mapping WHERE id=?
-    '''
-    return query(sql, (tag_id,))
+def modify_recipe_tag(recipe_id, tag_id, state):
+    if state == False:
+        sql = '''
+            DELETE FROM recipe_tags_mapping WHERE recipe_id=? AND tag_id=?
+        '''
+    else:
+        sql = '''
+            INSERT INTO recipe_tags_mapping (recipe_id, tag_id) VALUES (? , ? )
+        '''
+    return query(sql, (recipe_id, tag_id,))
