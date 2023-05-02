@@ -1,4 +1,4 @@
-WITH all_ingredients AS (
+WITH prices_by_date AS ( WITH all_ingredients AS (
     WITH tree AS (
       SELECT ParentRecipe as Id, ParentRecipe, ChildRecipe, ChildIngredient, Quantity, 1 AS level
       FROM connections
@@ -27,8 +27,8 @@ WITH all_ingredients AS (
 --SELECT * from all_ingredients ai
 SELECT 
   ai.date
-  , r.Name
-  , COALESCE(SUM(ip.unit_price * ai.Quantity )/r.OutputQty, 0) as Cost
+  , r.Name as name
+  , COALESCE(SUM(ip.unit_price * ai.Quantity )/r.OutputQty, 0) as price
 FROM 
   all_ingredients ai 
   JOIN ingredient_prices ip ON (
@@ -45,3 +45,21 @@ FROM
 JOIN Recipes r on r.id = ai.ParentRecipe
 
 GROUP BY date
+)
+
+SELECT 
+  date, 
+  name, 
+  price
+FROM (
+  SELECT 
+    date, 
+    name, 
+    price, 
+    LAG(price) OVER (
+      PARTITION BY name 
+      ORDER BY date
+    ) AS prev_price
+  FROM prices_by_date
+) sub
+WHERE prev_price IS NULL OR prev_price <> price

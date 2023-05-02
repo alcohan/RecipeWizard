@@ -63,12 +63,15 @@ def render(id, name='Ingredient', recipeMode=False):
     # Retrieve price history data from database
     if recipeMode:
         price_history = get_recipe_price_history(id)
+        # Create table layout
+        table_data = [[row['date'], row['price']] for row in price_history]
+        table_headings = ['Date', 'Unit Price']
     else:
+        # Create table layout
         price_history = get_price_history(id)
+        table_data = [[row['date'], row['price'], row['supplier']] for row in price_history]
+        table_headings = ['Date', 'Unit Price', 'Supplier']
 
-    # Create table layout
-    table_data = [[row['date'], row['price'], row['supplier']] for row in price_history]
-    table_headings = ['Date', 'Unit Price', 'Supplier']
 
     layout_table = [[sg.Table(values=table_data, headings=table_headings, num_rows=10, auto_size_columns=False)],[sg.VPush()]]
     layout_graph = [[sg.Canvas(key='-CANVAS-', border_width=5, background_color='red')]]

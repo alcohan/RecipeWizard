@@ -5,6 +5,7 @@ import utils
 import recipe_ingredient
 import modules.recipes.recipe_ingredient_new as recipe_ingredient_new
 from autocomplete import Autocomplete
+import modules.ingredients.pricehistory as pricehistory
 
 def edit(id):
     '''
@@ -80,7 +81,8 @@ def edit(id):
         sg.Button('+ Add Component', k='-NEW-'), 
         sg.Button('Nutrition Label', k='-LABEL-'),
         sg.Button('Delete Recipe', key='-DELETE-', button_color=("white","red")),
-        # sg.Button('Close', button_color=("white","gray"), k='-CLOSE-')
+        # sg.Button('Close', button_color=("white","gray"), k='-CLOSE-'),
+        sg.Button('Price History', k='-PRICEHISTORY-')
     ]
     
     # Display the recipe components
@@ -153,6 +155,8 @@ def edit(id):
 
         elif event == '-LABEL-': # open the nutrition label
             utils.open_nutrition_label(id)
+        elif event == '-PRICEHISTORY-':
+            pricehistory.render(id, name, recipeMode=True)
 
         elif event.startswith('-TAG-'):
             # Get the ID from the end of the event
