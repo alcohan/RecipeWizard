@@ -25,12 +25,9 @@ wheels/
 static/data.js
 builder.db
 
-<<<<<<< HEAD
 # Sandbox / testing file
 sandbox.py
 
-=======
->>>>>>> 3bfae57e0e03c372581f51e254dacdeb31dd4240
 # Log files
 pip-log.txt
 pip-delete-this-directory.txt
@@ -92,7 +89,3 @@ GitHub.sublime-settings
 !.vscode/launch.json 
 !.vscode/extensions.json 
 .history
-<<<<<<< HEAD
-=======
-builder.db
->>>>>>> 3bfae57e0e03c372581f51e254dacdeb31dd4240
