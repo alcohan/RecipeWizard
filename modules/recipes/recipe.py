@@ -77,7 +77,7 @@ def edit(id):
     # Control buttons
     layout_buttons = [
         # sg.Button('Save', key='-SAVE-'),
-        sg.Button('Add Ingredient', k='-NEW-'), 
+        sg.Button('+ Add Component', k='-NEW-'), 
         sg.Button('Nutrition Label', k='-LABEL-'),
         sg.Button('Delete Recipe', key='-DELETE-', button_color=("white","red")),
         # sg.Button('Close', button_color=("white","gray"), k='-CLOSE-')
