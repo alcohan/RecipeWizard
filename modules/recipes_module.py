@@ -1,10 +1,7 @@
 import PySimpleGUI as sg
 import db
 import modules.recipes.recipe as recipe
-<<<<<<< HEAD
 from functools import cache
-=======
->>>>>>> 3bfae57e0e03c372581f51e254dacdeb31dd4240
 
 fields = ['Name','Unit','Cost','Calories','Components', 'Id']
 
