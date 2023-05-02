@@ -25,6 +25,9 @@ wheels/
 static/data.js
 builder.db
 
+# Sandbox / testing file
+sandbox.py
+
 # Log files
 pip-log.txt
 pip-delete-this-directory.txt
