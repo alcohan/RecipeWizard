@@ -145,9 +145,9 @@ def edit(id):
         elif event == '-LABEL-': # open the nutrition label
             utils.open_nutrition_label(id)
 
-        elif event.startswith('-REMOVE-TAG-'):
+        elif event.startswith('-TAG-'):
             tag_id = int(event.split("::")[1])
-            print(db.remove_recipe_tag(tag_id))
+            print('we need to do something with tag id',tag_id, values[event])
         else:
             print('Unhandled Event', event, values)
 
