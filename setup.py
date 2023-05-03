@@ -8,11 +8,15 @@ import config
 #     else:
 #         print('builder.db does not exist')
 
-def initializeDB():
+def initializeDB(includeSampleData=True):
     connection = sqlite3.connect(config.DATABASE)
     cursor = connection.cursor()
 
-    for file in ('sql/setup/tables.sql', 'sql/setup/views.sql','sql/setup/sampledata.sql'):
+    files = ('sql/setup/tables.sql', 'sql/setup/views.sql')
+    if includeSampleData:
+        files += ('sql/setup/sampledata.sql',)
+
+    for file in files:
         print(f'Executing script {file}')
         sql = config.get_resource(file)
         cursor.executescript(sql)

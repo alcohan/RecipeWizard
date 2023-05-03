@@ -20,7 +20,7 @@ sg.theme('LightGrey1')   # Add a touch of color
 # All the stuff inside your window.
 menu_layout = [['&File', ['[todo] import from csv', '[todo] export to csv', '---', 'E&xit']],
               ['&Manage',['&Suppliers', '---', 'Tags', 'Templates']],
-              ['&Tools', ['&Refresh::-REFRESH-','Reset Database::-RESET-']],
+              ['&Tools', ['&Refresh::-REFRESH-','Reset Database::-CLEAN-RESET-','Reset With Sample Data::-SAMPLE-RESET-']],
               ['&Help', ['About']]]
 
 layout_ingredients = sg.Frame('Ingredients',ingredients_module.render())
@@ -54,9 +54,13 @@ while True:
             refresh()
         pass
 
-    elif event in ('-RESET-', 'Reset Database::-RESET-'):
-        print('running setup script')
+    elif event in ('-RESET-', 'Reset With Sample Data::-SAMPLE-RESET-'):
+        print('Starting fresh with sample data')
         setup.initializeDB()
+        refresh()
+    elif event in ('-CLEAN-', 'Reset Database::-CLEAN-RESET-'):
+        print('Starting fresh with a clean database')
+        setup.initializeDB(includeSampleData=False)
         refresh()
     elif event in ('Refresh', 'Refresh::-REFRESH-'):
         print('Refreshing values')
