@@ -48,7 +48,7 @@ def get_ingredients(id=0):
         sql = "SELECT * FROM Ingredients" + filter
         result = query(sql, one=True)
     else:
-        sql = "SELECT * FROM Ingredients ORDER BY Name ASC"
+        sql = "SELECT * FROM Ingredients ORDER BY Name COLLATE NOCASE ASC"
         result = query(sql)['data']
     return(result)
 

@@ -50,6 +50,8 @@ def loop(event, values, window):
         if input:
             result = api.nutritionix.get_simple(input)
             ingredient.create(result)
+            return 2
+        return 1
     elif event == '-INGREDIENTS-FILTER-':
         print('Searching for: ', values[event])
         filter_value = values['-INGREDIENTS-FILTER-'].lower()
