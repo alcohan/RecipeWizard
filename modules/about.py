@@ -1,5 +1,6 @@
 import PySimpleGUI as sg
 from config import ICON
+from config import get_image
 
 def render():
     '''
@@ -7,7 +8,8 @@ def render():
     '''
     # Define the layout for the popup window
     layout = [[sg.Text('RecipeWizard v0.10')],
-            [sg.Text('Author: Adrian Cohan')]]
+            [sg.Text('by Adrian Cohan')],
+            [sg.Image(get_image('static/NutritionixAPI_hires_flat.png'))]]
 
     # Create the popup window
     window = sg.Window('About', layout,icon=ICON)

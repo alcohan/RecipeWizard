@@ -7,6 +7,9 @@ import modules.about as about
 import modules.suppliers.suppliers as suppliers
 import modules.tags.tags as tags
 
+from dotenv import load_dotenv
+load_dotenv()
+
 
 def refresh():
     print('Refreshing Ingredients & Recipes Data')

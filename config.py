@@ -21,6 +21,10 @@ def get_resource(relative_path):
     data = resource.decode('utf-8')
     return data
 
+def get_image(relative_path):
+    image = pkg_resources.resource_string(__name__, relative_path)
+    return image
+
 config = configparser.ConfigParser()
 config.read(resource_path('config.ini'))
 APPNAME = 'RecipeWizard'
