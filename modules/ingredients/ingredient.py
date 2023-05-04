@@ -83,14 +83,21 @@ def edit(id):
     window.close()
 
 
-def create():
+def create(params={}):
+    def value_from_params(key):
+        try:
+            value = params[key]
+        except:
+            value = ''
+        return value
+
     # All the stuff inside your window.
     layout_demographic = [[
-        [sg.Push(), sg.Text(name), sg.InputText('$ 0' if key=='Cost' else '',k=key, size=(30,1), enable_events=True)]
+        [sg.Push(), sg.Text(name), sg.InputText('$ 0' if key=='Cost' else value_from_params(key),k=key, size=(30,1), enable_events=True)]
         for (key, name) in config.ingredient_demographic_fields.items()
     ]]
     layout_nutrition = [sg.Frame('Nutrition',[
-        [sg.Push(), sg.Text(name), sg.InputText('',k=key, size=(10,1), enable_events=True)] 
+        [sg.Push(), sg.Text(name), sg.InputText(value_from_params(key),k=key, size=(10,1), enable_events=True)] 
         for (key, name) in config.nutrition_fields.items()
     ])]
     layout_buttons = [sg.Button('Save', key='-SAVE-'), 

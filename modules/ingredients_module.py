@@ -3,6 +3,8 @@ import db
 import modules.ingredients.ingredient as ingredient
 from functools import cache
 
+import api.nutritionix
+
 @cache
 def format_data():
     data = db.get_ingredients()
@@ -22,7 +24,7 @@ def render():
                         bind_return_key=True,
                         key='-INGREDIENT-TABLE-'
                         )],
-        [sg.Button('New Ingredient', key='-NEW-INGREDIENT-')]
+        [sg.Button('New (Search Database)', key='-NEW-FROM-SEARCH-'),sg.Button('New From Blank', key='-NEW-INGREDIENT-')]
     ]
 
 def loop(event, values, window):
@@ -43,6 +45,11 @@ def loop(event, values, window):
         # Edit the newly created ingredient
         ingredient.edit(new_id)
         return 2
+    elif event == '-NEW-FROM-SEARCH-':
+        input = sg.popup_get_text('What is the ingredient? (e.g. "Warm Brown Rice, 2oz cooked")')
+        if input:
+            result = api.nutritionix.get_simple(input)
+            ingredient.create(result)
     elif event == '-INGREDIENTS-FILTER-':
         print('Searching for: ', values[event])
         filter_value = values['-INGREDIENTS-FILTER-'].lower()
