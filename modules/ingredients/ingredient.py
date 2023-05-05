@@ -5,7 +5,7 @@ import modules.ingredients.ingredient_prices as ingredient_prices
 import modules.ingredients.pricehistory as pricehistory
 from re import sub
 
-def edit(id):
+def edit(id, location=None):
     def fetch_data():
         row = db.get_ingredients(id)
         # Format the cost field as currency with accuracy to 0.01 cents
@@ -40,7 +40,7 @@ def edit(id):
                 layout_buttons ]
 
     # Create the Window
-    window = sg.Window(f"{config.APPNAME} | {row['Name']}", layout, icon=config.ICON)
+    window = sg.Window(f"{config.APPNAME} | {row['Name']}", layout, icon=config.ICON, location=location, finalize=True)
     # Event Loop to process "events" and get the "values" of the inputs
     while True:
         event, values = window.read()
