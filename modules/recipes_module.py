@@ -1,6 +1,6 @@
 import PySimpleGUI as sg
 import db
-import modules.recipes.recipe as recipe
+import modules.recipes as recipe
 from functools import cache
 
 fields = ['Name','Unit','Cost','Calories','Components', 'Id']
