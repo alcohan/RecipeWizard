@@ -2,6 +2,9 @@ import configparser
 import os, sys
 import pkg_resources
 
+from dotenv import load_dotenv
+
+
 # https://stackoverflow.com/questions/31836104/pyinstaller-and-onefile-how-to-include-an-image-in-the-exe-file
 def resource_path(relative_path):
     try:
@@ -15,10 +18,16 @@ def get_resource(relative_path):
     resource = pkg_resources.resource_string(__name__,relative_path)
     data = resource.decode('utf-8')
     return data
+def get_resource_path(relative_path):
+    path = pkg_resources.resource_filename(__name__,relative_path)
+    return path
 
 def get_image(relative_path):
     image = pkg_resources.resource_string(__name__, relative_path)
     return image
+
+envfile = get_resource_path('.env')
+load_dotenv(envfile)
 
 config = configparser.ConfigParser()
 config.read(resource_path('config.ini'))
