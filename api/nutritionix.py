@@ -3,7 +3,6 @@ import json
 from os import getenv
 
 api_key = getenv('API_KEY')
-print('Got API key', api_key)
 
 # API endpoint URL
 url = 'https://trackapi.nutritionix.com/v2/natural/nutrients'
