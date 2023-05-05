@@ -36,7 +36,10 @@ def loop(event, values, window):
             clicked_row = window['-INGREDIENT-TABLE-'].get()[row_index]
             id = clicked_row[-1]
             print(f"Popup for {clicked_row[0]}")
-            ingredient.edit(id)
+
+            current = window.CurrentLocation()
+            new = (current[0]+ 32, current[1]+32)
+            ingredient.edit(id, location=new)
         return 2
     elif event == '-NEW-INGREDIENT-':
         new_id = ingredient.create()
