@@ -7,7 +7,7 @@ def render():
     Popup window for "About" this application
     '''
     # Define the layout for the popup window
-    layout = [[sg.Text('RecipeWizard v0.10')],
+    layout = [[sg.Text('RecipeWizard v0.0.1')],
             [sg.Text('by Adrian Cohan')],
             [sg.Image(get_image('static/NutritionixAPI_hires_flat.png'))]]
 

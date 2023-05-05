@@ -12,11 +12,6 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 def get_resource(relative_path):
-    # try:
-    #     with open(resource_path(relative_path), 'r') as f:
-    #         data = f.read()
-    # except Exception:
-    print('Fetching resource from package ',relative_path)
     resource = pkg_resources.resource_string(__name__,relative_path)
     data = resource.decode('utf-8')
     return data

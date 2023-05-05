@@ -3,11 +3,15 @@ import json
 from os import getenv
 
 api_key = getenv('API_KEY')
+print('Got API key', api_key)
 
 # API endpoint URL
 url = 'https://trackapi.nutritionix.com/v2/natural/nutrients'
 
 def get_nutrition(query: str):
+    if api_key==None:
+        raise RuntimeError('API Key not found in the environment') 
+    
     # Request headers
     headers = {
         'Content-Type': 'application/json',
