@@ -8,7 +8,7 @@ a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
-    datas=[('sql/*','sql'),('static/*','static'),('sql/setup/sampledata.sql','sql/setup'),('sql/setup/tables.sql','sql/setup'),('sql/setup/views.sql','sql/setup')],
+    datas=[('sql/*','sql'),('static/*','static'),('sql/setup/sampledata.sql','sql/setup'),('sql/setup/tables.sql','sql/setup'),('sql/setup/views.sql','sql/setup'),('.env','.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
