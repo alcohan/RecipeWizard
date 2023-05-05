@@ -51,8 +51,11 @@ def edit_one(ingredient_id):
         
         elif event == '-SAVE-':
             # Get supplier id from the dropdown
-            sel = suppliers_display.index(values['supplier']) if values['supplier'] in suppliers_display else -1
-            supplier_id = suppliers[sel]['id']
+            try:
+                sel = suppliers_display.index(values['supplier']) if values['supplier'] in suppliers_display else -1
+                supplier_id = suppliers[sel]['id']
+            except:
+                supplier_id =  None
             
             db.ingredient_price_new(ingredient_id, (supplier_id,formdata['case_price'],formdata['units_per_case'],values['effective_date']))
             break

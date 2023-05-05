@@ -1,16 +1,15 @@
 import PySimpleGUI as sg
-import matplotlib.pyplot as plt
 from config import ICON
+
+import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import PySimpleGUI as sg
-import matplotlib
-
+from matplotlib import use as muse
 import matplotlib.dates as mdates
-from datetime import datetime
 
+from datetime import datetime
 from db import get_price_history, get_recipe_price_history
 
-matplotlib.use('TkAgg')
+muse('TkAgg')
 
 def render(id, name='Ingredient', recipeMode=False):
     '''
