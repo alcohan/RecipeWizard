@@ -276,6 +276,18 @@ def update_tag(tag_id, new_name):
     return query(sql, (new_name, tag_id))
     # print('update tag id',tag_id, new_name)
 
+def create_tag(new_name):
+    sql = '''
+        INSERT INTO tags (name) VALUES (?);
+    '''
+    return query(sql, (new_name,))['lastrowid']
+
+def delete_tag(tag_id):
+    sql = '''
+        DELETE FROM tags WHERE id=?;
+    '''
+    return query(sql, (tag_id,))['rowcount']
+
 def get_price_history(id):
     '''
     Get price history for an ingredient {id}
