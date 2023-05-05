@@ -47,12 +47,14 @@ def loop(event, values, window):
         ingredient.edit(new_id)
         return 2
     elif event == '-NEW-FROM-SEARCH-':
-        sg.Popup(f'API key is: {api.nutritionix.api_key}')
         input = sg.popup_get_text('What is the ingredient? (e.g. "Warm Brown Rice, 2oz cooked")', 'New From Database',icon=ICON)
         if input:
-            result = api.nutritionix.get_simple(input)
-            ingredient.create(result)
-            return 2
+            try:
+                result = api.nutritionix.get_simple(input)
+                ingredient.create(result)
+                return 2
+            except:
+                sg.Popup('No results')
         return 1
     elif event == '-INGREDIENTS-FILTER-':
         print('Searching for: ', values[event])

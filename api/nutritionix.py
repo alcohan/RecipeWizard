@@ -25,6 +25,8 @@ def get_nutrition(query: str):
 
     # Send API request
     response = requests.post(url, headers=headers, data=json.dumps(body))
+    if response.ok == False:
+        raise Exception(f'{response.status_code} {response.reason}')
 
     # Unpack response JSON into a variable
     data = json.loads(response.text)
