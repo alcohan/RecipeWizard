@@ -4,7 +4,6 @@ import config
 import utils
 import recipe_ingredient
 import modules.recipes.recipe_ingredient_new as recipe_ingredient_new
-from autocomplete import Autocomplete
 import modules.ingredients.pricehistory as pricehistory
 
 def edit(id):
