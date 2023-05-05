@@ -4,8 +4,8 @@ import config
 import modules.ingredients_module as ingredients_module
 import modules.recipes_module as recipes_module
 import modules.about as about
-import modules.suppliers.suppliers as suppliers
-import modules.tags.tags as tags
+import modules.suppliers as suppliers
+import modules.tags as tags
 
 def refresh():
     print('Refreshing Ingredients & Recipes Data')

@@ -1,6 +1,6 @@
 import PySimpleGUI as sg
 import db
-import modules.ingredients.ingredient as ingredient
+import modules.ingredients as ingredient
 from functools import cache
 from config import ICON
 
