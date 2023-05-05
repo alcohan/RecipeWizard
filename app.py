@@ -8,7 +8,7 @@ import modules.suppliers.suppliers as suppliers
 import modules.tags.tags as tags
 
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(verbose=True)
 
 
 def refresh():
@@ -22,8 +22,8 @@ sg.theme('LightGrey1')   # Add a touch of color
 
 # All the stuff inside your window.
 menu_layout = [['&File', ['[todo] import from csv', '[todo] export to csv', '---', 'E&xit']],
-              ['&Manage',['&Suppliers', '---', 'Tags', 'Templates']],
-              ['&Tools', ['&Refresh::-REFRESH-','Reset Database::-CLEAN-RESET-','Reset With Sample Data::-SAMPLE-RESET-']],
+              ['&Manage',['[todo] &Suppliers', '---', 'Tags', '[todo] Templates', '[todo] Units of Measure']],
+              ['&Tools', ['&Refresh::-REFRESH-','Reset Database::-CLEAN-RESET-','Reset With Sample Data::-SAMPLE-RESET-', '---', '[todo] Bulk Price Update']],
               ['&Help', ['About']]]
 
 layout_ingredients = sg.Frame('Ingredients',ingredients_module.render())
