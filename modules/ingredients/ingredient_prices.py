@@ -11,7 +11,7 @@ def edit_one(ingredient_id):
     suppliers = db.get_suppliers()
     suppliers_display = [f"{s['name']} [{s['id']}]" for s in suppliers]
 
-    formdata = latest_values if latest_values else {'unit_price': 0, 'case_price': 0, 'supplier_id':None, 'units_per_case': ''}
+    formdata = latest_values if latest_values else {'unit_price': 0, 'case_price': 0, 'supplier_id':None, 'units_per_case': '', 'notes':''}
 
     def format_data():
         display=formdata.copy()
@@ -34,6 +34,7 @@ def edit_one(ingredient_id):
             [sg.Push(), sg.Text('Supplier'), sg.DropDown(suppliers_display, k='supplier',default_value=display['supplier'], size=(28,1))],
             [sg.Push(), sg.Text('Case Price'), sg.InputText(display['case_price'], size=(30,1), key='case_price', enable_events=True)],
             [sg.Push(), sg.Text('Yield'), sg.InputText(display['units_per_case'], size=(30,1), key='units_per_case', enable_events=True)],
+            [sg.Push(), sg.Text('Yield Calc Notes'), sg.InputText(display['notes'], size=(30,3), key='notes')],
             [sg.Push(), sg.Text('Unit Price'), sg.InputText(display['unit_price'], size=(30,1), key='unit_price', disabled=True)],
             [sg.Push(), sg.Text('Effective Date'), sg.Input(date.today(), key='effective_date', size=(20,1)), sg.Button('Select', k='-DATE-POPUP-')],
 
@@ -57,7 +58,7 @@ def edit_one(ingredient_id):
             except:
                 supplier_id =  None
             
-            db.ingredient_price_new(ingredient_id, (supplier_id,formdata['case_price'],formdata['units_per_case'],values['effective_date']))
+            db.ingredient_price_new(ingredient_id, (supplier_id,formdata['case_price'],formdata['units_per_case'],values['effective_date'], values['notes']))
             break
 
         elif event in ('case_price', 'units_per_case'):
