@@ -33,7 +33,7 @@ def edit_one(ingredient_id):
             [sg.Push(), sg.Text('Ingredient'), sg.InputText( this_ingredient['Name'], size=(30,1), disabled=True)],
             [sg.Push(), sg.Text('Supplier'), sg.DropDown(suppliers_display, k='supplier',default_value=display['supplier'], size=(28,1))],
             [sg.Push(), sg.Text('Case Price'), sg.InputText(display['case_price'], size=(30,1), key='case_price', enable_events=True)],
-            [sg.Push(), sg.Text('Yield'), sg.InputText(display['units_per_case'], size=(30,1), key='units_per_case', enable_events=True)],
+            [sg.Push(), sg.Text('Yield'), sg.InputText(display['units_per_case'], size=(10,1), key='units_per_case', enable_events=True), sg.Text(f"× {this_ingredient['Unit']}", size=(17,1), pad=(0,0))],
             [sg.Push(), sg.Text('Yield Calc Notes'), sg.InputText(display['notes'], size=(30,3), key='notes')],
             [sg.Push(), sg.Text('Unit Price'), sg.InputText(display['unit_price'], size=(30,1), key='unit_price', disabled=True)],
             [sg.Push(), sg.Text('Effective Date'), sg.Input(date.today(), key='effective_date', size=(20,1)), sg.Button('Select', k='-DATE-POPUP-')],
