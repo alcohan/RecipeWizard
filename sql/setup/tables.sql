@@ -61,6 +61,7 @@ CREATE TABLE ingredient_prices (
   , units_per_case NUMERIC
   , unit_price NUMERIC GENERATED ALWAYS AS (1.0*case_price / units_per_case) STORED
   , effective_date DATE NOT NULL
+  , notes TEXT
   , end_date DATE
   , is_auto_generated BOOL DEFAULT False
   , FOREIGN KEY (ingredient_id) REFERENCES ingredients(id)
