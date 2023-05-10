@@ -105,11 +105,11 @@ CREATE TABLE recipe_tags_mapping (
   , FOREIGN KEY (tag_id) REFERENCES tags(id)
 );
 
--- CREATE TRIGGER update_ingredient_price_before_update
--- AFTER UPDATE ON ingredients
--- FOR EACH ROW
--- WHEN NEW.Cost <> OLD.Cost
--- BEGIN
---   INSERT INTO ingredient_prices (ingredient_id, case_price, units_per_case, supplier_id, effective_date, is_auto_generated)
---   VALUES (OLD.id, NEW.Cost, 1, NULL, datetime('now'), True);
--- END;
+-- Create a basic entry to ingredient_prices for new ingredients
+CREATE TRIGGER insert_ingredient_price
+AFTER INSERT ON ingredients
+FOR EACH ROW
+BEGIN
+  INSERT INTO ingredient_prices (ingredient_id, case_price, units_per_case, effective_date)
+  VALUES (NEW.id, NEW.cost, 1, date('now'));
+END;
