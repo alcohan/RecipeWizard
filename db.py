@@ -300,3 +300,9 @@ def get_recipe_price_history(id):
     Get price history for a recipe {id}
     '''
     return query_from_file('sql\\get_recipe_price_history.sql', (id,))['data']
+
+def get_recipe_price_history_details(id, date):
+    '''
+    Get price by component for a recipe {id} and date {date}
+    '''
+    return query_from_file('sql\\get_recipe_price_history_details.sql', (id,date))['data']
