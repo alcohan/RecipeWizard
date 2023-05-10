@@ -28,7 +28,7 @@ def render(id, name='Ingredient', recipeMode=False):
         plot_widget.pack(side='top', fill='both', expand=1)
         return plot_widget
         
-    def generate_figure(data):
+    def generate_figure(data, highlight_index=None):
         '''
         Generate the figure. Expects a dictionary with values 'date' and 'price'
         '''
@@ -65,7 +65,10 @@ def render(id, name='Ingredient', recipeMode=False):
 
         # Add labels to data points
         for i, price in enumerate(prices):
-            ax.text(dates[i], price, f"${price:.2f}", ha='center', va='bottom')
+            if highlight_index is not None and i==highlight_index:
+                ax.text(dates[i], price, f"${price:.2f}", ha='center', va='bottom', fontweight='bold')
+            else:
+                ax.text(dates[i], price, f"${price:.2f}", ha='center', va='bottom')
 
         fig.canvas.draw()
     
@@ -105,17 +108,23 @@ def render(id, name='Ingredient', recipeMode=False):
         table_data = [[row['date'], "$ {:.4f}".format(row['price']), row['supplier']] for row in price_history]
         table_headings = ['Date', 'Unit Price', 'Supplier']
 
+    element_table = sg.Table(values=table_data, headings=table_headings, num_rows=20, auto_size_columns=False, k='-TABLE-', enable_events = True)
+    element_history_graph = sg.Graph((640, 480),(0,0),(640,480),key='-CANVAS-', border_width=5)
+    element_pie_chart = sg.Graph((640, 480),(0,0),(640,480),key='-CANVAS2-', border_width=5)
 
-    layout_table = [[sg.Table(values=table_data, headings=table_headings, num_rows=20, auto_size_columns=False, k='-TABLE-')],[sg.VPush()]]
+    layout_table = [[element_table],[sg.VPush()]]
     layout_graph = [ 
-                    [sg.Graph((640, 480),(0,0),(640,480),key='-CANVAS-', border_width=5),
-                    sg.Graph((640, 480),(0,0),(640,480),key='-CANVAS2-', border_width=5, visible=False)]
+                    # [element_history_graph, element_pie_chart]
+                    [sg.TabGroup([[
+                        sg.Tab('History Over Time', [[element_history_graph]]),
+                        sg.Tab('Ingredient Breakdown', [[element_pie_chart]], visible=recipeMode)
+                    ]])]
     ]
-    if recipeMode:
-        buttons = [
-                    [sg.Button('Ingredient Breakdown', k='-SHOW-PIE-PLOT-')],
-                    [sg.Button('Cost History', k='-SHOW-LINE-CHART-')]]
-        layout_graph = buttons + layout_graph
+    # if recipeMode:
+    #     buttons = [
+    #                 [sg.Button('Ingredient Breakdown', k='-SHOW-PIE-PLOT-')],
+    #                 [sg.Button('Cost History', k='-SHOW-LINE-CHART-')]]
+    #     layout_graph = buttons + layout_graph
 
     layout = [
         [sg.Column(layout_table, expand_y=True), sg.Column(layout_graph)]
@@ -134,27 +143,23 @@ def render(id, name='Ingredient', recipeMode=False):
         pack_figure(graph1, fig1)
         pack_figure(graph2,fig2)
         generate_figure(price_history)
+        plot_pieplot(price_history[-1]['date'])
 
     # Event loop
     while True:
         event, values = window.read()
         if event == sg.WINDOW_CLOSED or event == 'Exit':
             break
-        if event == '-SHOW-PIE-PLOT-':
+        if event == '-TABLE-':
             if len(values['-TABLE-']) > 0:
                 selected_row = values['-TABLE-'][-1]
             else:
                 selected_row = -1
             date_to_query = price_history[selected_row]['date']
-            plot_pieplot(date_to_query)
+            if recipeMode:
+                plot_pieplot(date_to_query)
+            generate_figure(price_history, selected_row)
 
-            graph1.update(visible=False)
-            graph2.update(visible=True)
-
-        if event == '-SHOW-LINE-CHART-':
-            generate_figure(price_history)
-            graph1.update(visible=True)
-            graph2.update(visible=False)
     # Close window
     window.close()
 
