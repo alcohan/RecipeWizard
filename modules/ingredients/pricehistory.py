@@ -9,28 +9,24 @@ import matplotlib.dates as mdates
 from datetime import datetime
 from db import get_price_history, get_recipe_price_history, get_recipe_price_history_details
 
+from functools import cache
+
 use_agg('TkAgg')
 
 def render(id, name='Ingredient', recipeMode=False):
     '''
     Render the price history popup for ingredient id {id}
     '''
-    # Draw the figure on the canvas
-    def draw_figure(canvas, figure):
-        tkcanvas = FigureCanvasTkAgg(figure, canvas)
-        tkcanvas.draw()
-        tkcanvas.get_tk_widget().pack(side='top', fill='both', expand=1)
-        return tkcanvas
-    
+    # Draw the figure on the canvas  
     def pack_figure(graph, figure):
         canvas = FigureCanvasTkAgg(figure, graph.Widget)
         plot_widget = canvas.get_tk_widget()
         plot_widget.pack(side='top', fill='both', expand=1)
         return plot_widget
         
-    def generate_figure(data, highlight_index=None):
+    def plot_price_over_time(data, highlight_index=None):
         '''
-        Generate the figure. Expects a dictionary with values 'date' and 'price'
+        Generate the line chart. Expects a dictionary with values 'date' and 'price'
         '''
         # Extract the dates and prices
         dates = [datetime.strptime(d['date'], '%Y-%m-%d') for d in data]
@@ -61,6 +57,7 @@ def render(id, name='Ingredient', recipeMode=False):
         ax.xaxis.set_major_locator(locator)
         ax.xaxis.set_major_formatter(formatter)
         plt.xticks(rotation=45, ha='right')
+        # Add padding to the bottom to fit the labels
         fig.subplots_adjust(bottom=0.2)
 
         # Add labels to data points
@@ -72,30 +69,37 @@ def render(id, name='Ingredient', recipeMode=False):
 
         fig.canvas.draw()
     
-    def generate_pie_plot(data, date):
+    def plot_ingredients_pieplot(data, date):
         '''Create a pie plot with ingredient breakdown. Expects a dictionary with values 'Name' and 'price'
         '''
         labels = [f"{item['Name']} ${item['price']:.2f}" for item in data]
         values = [item['price'] for item in data]
 
+        # Select the relevant figure
         fig = plt.figure(2)
         ax = plt.gca()
+
         # Clear the plot
         ax.cla()
         
         ax.set_title(f"{name} {date}")
         # Creating the pie chart
         ax.pie(values, labels=labels, autopct='%1.1f%%')
+
         # Setting aspect ratio to be equal so that pie is drawn as a circle
         ax.axis('equal')
         fig.canvas.draw()
 
-    def plot_pieplot(date):
-        data = get_recipe_price_history_details(id, date)
-        generate_pie_plot(data, date)
-
-
+    @cache
+    def get_ingredients_price_data(id, date):
+        '''Call database function to retrieve price breakdown. Wrapping function so that we can cache the result
+        '''
+        return get_recipe_price_history_details(id, date)
     
+    def plot_pieplot(date):
+        data = get_ingredients_price_data(id, date)
+        plot_ingredients_pieplot(data, date)
+
     # Retrieve price history data from database
     if recipeMode:
         price_history = get_recipe_price_history(id)
@@ -103,28 +107,22 @@ def render(id, name='Ingredient', recipeMode=False):
         table_data = [[row['date'], "$ {:.2f}".format(row['price'])] for row in price_history]
         table_headings = ['Date', 'Unit Price']
     else:
-        # Create table layout
         price_history = get_price_history(id)
+        # Create table layout
         table_data = [[row['date'], "$ {:.4f}".format(row['price']), row['supplier']] for row in price_history]
         table_headings = ['Date', 'Unit Price', 'Supplier']
 
     element_table = sg.Table(values=table_data, headings=table_headings, num_rows=20, auto_size_columns=False, k='-TABLE-', enable_events = True)
-    element_history_graph = sg.Graph((640, 480),(0,0),(640,480),key='-CANVAS-', border_width=5)
-    element_pie_chart = sg.Graph((640, 480),(0,0),(640,480),key='-CANVAS2-', border_width=5)
+    element_history_graph = sg.Graph((640, 480),(0,0),(640,480),key='-LINE-CHART-', border_width=5)
+    element_pie_chart = sg.Graph((640, 480),(0,0),(640,480),key='-PIE-PLOT-', border_width=5)
 
     layout_table = [[element_table],[sg.VPush()]]
     layout_graph = [ 
-                    # [element_history_graph, element_pie_chart]
                     [sg.TabGroup([[
                         sg.Tab('History Over Time', [[element_history_graph]]),
                         sg.Tab('Ingredient Breakdown', [[element_pie_chart]], visible=recipeMode)
                     ]])]
     ]
-    # if recipeMode:
-    #     buttons = [
-    #                 [sg.Button('Ingredient Breakdown', k='-SHOW-PIE-PLOT-')],
-    #                 [sg.Button('Cost History', k='-SHOW-LINE-CHART-')]]
-    #     layout_graph = buttons + layout_graph
 
     layout = [
         [sg.Column(layout_table, expand_y=True), sg.Column(layout_graph)]
@@ -133,8 +131,8 @@ def render(id, name='Ingredient', recipeMode=False):
     # Create window
     window = sg.Window(f'Price History [{name}]', layout, finalize=True, icon=ICON)
     if len(price_history)>0:
-        graph1 = window['-CANVAS-']
-        graph2 = window['-CANVAS2-']
+        graph1 = window['-LINE-CHART-']
+        graph2 = window['-PIE-PLOT-']
         plt.ioff()
         fig1 = plt.figure(1)
         ax1 = plt.subplot(111)
@@ -142,7 +140,7 @@ def render(id, name='Ingredient', recipeMode=False):
         ax2 = plt.subplot(111)
         pack_figure(graph1, fig1)
         pack_figure(graph2,fig2)
-        generate_figure(price_history)
+        plot_price_over_time(price_history)
         plot_pieplot(price_history[-1]['date'])
 
     # Event loop
@@ -158,7 +156,7 @@ def render(id, name='Ingredient', recipeMode=False):
             date_to_query = price_history[selected_row]['date']
             if recipeMode:
                 plot_pieplot(date_to_query)
-            generate_figure(price_history, selected_row)
+            plot_price_over_time(price_history, selected_row)
 
     # Close window
     window.close()
