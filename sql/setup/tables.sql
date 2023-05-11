@@ -1,3 +1,4 @@
+DROP VIEW IF EXISTS recipe_ingredients_expanded;
 DROP TABLE IF EXISTS tags;
 DROP TABLE IF EXISTS ingredient_tags_mapping;
 DROP TABLE IF EXISTS recipe_tags_mapping;
@@ -68,21 +69,6 @@ CREATE TABLE ingredient_prices (
   , FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
 );
 
-CREATE TRIGGER update_ingredient_price AFTER INSERT ON ingredient_prices
-BEGIN
-  UPDATE ingredients
-  SET Cost = (
-    SELECT unit_price
-    FROM ingredient_prices
-    WHERE ingredient_id = NEW.ingredient_id AND effective_date<=Date('now')
-    ORDER BY 
-      effective_date DESC,
-      id DESC
-    LIMIT 1
-  )
-  WHERE id = NEW.ingredient_id;
-END;
-
 CREATE TABLE tags (
   id INTEGER PRIMARY KEY AUTOINCREMENT
   , name TEXT
@@ -104,6 +90,22 @@ CREATE TABLE recipe_tags_mapping (
   , FOREIGN KEY (recipe_id) REFERENCES recipes(id)
   , FOREIGN KEY (tag_id) REFERENCES tags(id)
 );
+
+-- When we add a new price history, check if we need to update the current ingredient price
+CREATE TRIGGER update_ingredient_price AFTER INSERT ON ingredient_prices
+BEGIN
+  UPDATE ingredients
+  SET Cost = (
+    SELECT unit_price
+    FROM ingredient_prices
+    WHERE ingredient_id = NEW.ingredient_id AND effective_date<=Date('now')
+    ORDER BY 
+      effective_date DESC,
+      id DESC
+    LIMIT 1
+  )
+  WHERE id = NEW.ingredient_id;
+END;
 
 -- Create a basic entry to ingredient_prices for new ingredients
 CREATE TRIGGER insert_ingredient_price
