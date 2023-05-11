@@ -250,16 +250,9 @@ INSERT INTO CONNECTIONS Values
 ,(18,2,NULL,1)
 ;
 
-
 INSERT INTO suppliers (name) VALUES
 ('Sysco'),
 ('Charlies');
-
--- INSERT INTO ingredient_prices 
--- (ingredient_id, supplier_id, case_price, units_per_case) VALUES
--- ( 9, 2, 25, 30),
--- ( 10, 1, 100, 10);
-
 
 INSERT INTO tags (name) VALUES
 ('tag1'),
