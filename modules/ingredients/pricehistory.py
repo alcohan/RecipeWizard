@@ -7,7 +7,7 @@ from matplotlib import use as use_agg
 import matplotlib.dates as mdates
 
 from datetime import datetime
-from db import get_price_history, get_recipe_price_history, get_recipe_price_history_details
+from db import get_price_history, get_recipe_price_history, get_recipe_price_history_details, get_recipe_price_history_dates
 
 from functools import cache
 
@@ -117,6 +117,15 @@ def render(id, name='Ingredient', recipeMode=False):
     element_pie_chart = sg.Graph((640, 480),(0,0),(640,480),key='-PIE-PLOT-', border_width=5)
 
     layout_table = [[element_table],[sg.VPush()]]
+
+    if recipeMode:
+        ingredient_limiting_dates = get_recipe_price_history_dates(id)
+        max_date = max(i['earliest_date'] for i in ingredient_limiting_dates)
+        callout_string = f"Price data starting from {max_date} \ndue to history available on ingredients.\nTo extend, check the following:"
+        limits = [f"{ing['Name']}" for ing in ingredient_limiting_dates if ing['earliest_date'] == max_date]
+        limits_elements = [[sg.Text(callout_string)],[sg.Listbox(limits, no_scrollbar=True,size=(30, len(limits)))]]
+        layout_table += limits_elements
+
     layout_graph = [ 
                     [sg.TabGroup([[
                         sg.Tab('History Over Time', [[element_history_graph]]),
@@ -125,7 +134,7 @@ def render(id, name='Ingredient', recipeMode=False):
     ]
 
     layout = [
-        [sg.Column(layout_table, expand_y=True), sg.Column(layout_graph)]
+        [sg.Column(layout_table, expand_y=True), sg.Column(layout_graph,)]
     ]
 
     # Create window
