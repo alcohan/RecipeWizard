@@ -3,6 +3,7 @@ import json
 from os import getenv
 
 api_key = getenv('API_KEY')
+app_id = getenv('APP_ID')
 
 # API endpoint URL
 url = 'https://trackapi.nutritionix.com/v2/natural/nutrients'
@@ -14,7 +15,7 @@ def get_nutrition(query: str):
     # Request headers
     headers = {
         'Content-Type': 'application/json',
-        'x-app-id': '84b9244e',
+        'x-app-id': app_id, 
         'x-app-key': api_key
     }
 
