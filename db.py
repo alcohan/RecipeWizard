@@ -106,6 +106,8 @@ def ingredient_price_new(id, values):
     Add a new row to the ingredient_prices table
     '''
     print('Adding new row to price history: ', values)
+
+    print(query (f'DELETE FROM ingredient_prices WHERE ingredient_id={id} AND effective_date={values[-2]}'))
     return query(f'INSERT INTO ingredient_prices (ingredient_id, supplier_id, case_price, units_per_case, effective_date, notes) VALUES ({id},?,?,?,?,?)', values)
 
 def get_suppliers():

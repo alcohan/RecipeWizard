@@ -108,10 +108,10 @@ BEGIN
 END;
 
 -- Create a basic entry to ingredient_prices for new ingredients
-CREATE TRIGGER insert_ingredient_price
-AFTER INSERT ON ingredients
-FOR EACH ROW
-BEGIN
-  INSERT INTO ingredient_prices (ingredient_id, case_price, units_per_case, effective_date)
-  VALUES (NEW.id, NEW.cost, 1, date('now'));
-END;
+-- CREATE TRIGGER insert_ingredient_price
+-- AFTER INSERT ON ingredients
+-- FOR EACH ROW
+-- BEGIN
+--   INSERT INTO ingredient_prices (ingredient_id, case_price, units_per_case, effective_date)
+--   VALUES (NEW.id, NEW.cost, 1, date('now'));
+-- END;
