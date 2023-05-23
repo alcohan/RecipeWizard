@@ -1,14 +1,9 @@
 import PySimpleGUI as sg
 import setup
 import config
-import modules.ingredients_module as ingredients_module
-import modules.recipes_module as recipes_module
-import modules.about as about
-import modules.suppliers as suppliers
-import modules.tags as tags
+from modules import ingredients_module, recipes_module, about, suppliers, tags
 
-from utilities import export_tables_to_file
-from utilities import import_data_to_tables
+from utilities import export_tables_to_file, import_data_to_tables
 
 def refresh():
     print('Refreshing Ingredients & Recipes Data')
