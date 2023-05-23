@@ -20,10 +20,12 @@ wheels/
 .installed.cfg 
 *.egg 
 *.manifest 
+export/
 
 # Transient data file
 static/data.js
 builder.db
+builder.db.demo
 
 # Sandbox / testing file
 sandbox.py
