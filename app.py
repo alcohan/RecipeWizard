@@ -16,7 +16,7 @@ sg.theme('LightGrey1')   # Add a touch of color
 
 # All the stuff inside your window.
 menu_layout = [['&File', ['&Import from CSV', '&Export to CSV', '---', 'E&xit']],
-              ['&Manage',['[todo] &Suppliers', '---', 'Tags', '[todo] Templates', '[todo] Units of Measure']],
+              ['&Manage',['&Suppliers', '---', 'Tags', '[todo] Templates', '[todo] Units of Measure']],
               ['&Tools', ['&Refresh::-REFRESH-','Reset Database::-CLEAN-RESET-','Reset With Sample Data::-SAMPLE-RESET-', '---', '[todo] Bulk Price Update']],
               ['&Help', ['About']]]
 

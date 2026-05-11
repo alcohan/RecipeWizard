@@ -110,11 +110,44 @@ def ingredient_price_new(id, values):
     print(query (f'DELETE FROM ingredient_prices WHERE ingredient_id={id} AND effective_date={values[-2]}'))
     return query(f'INSERT INTO ingredient_prices (ingredient_id, supplier_id, case_price, units_per_case, effective_date, notes) VALUES ({id},?,?,?,?,?)', values)
 
-def get_suppliers():
+def get_suppliers(id=0):
     '''
-    Get all of the possible suppliers
+    Get all suppliers, or a single supplier when id is supplied.
     '''
-    return query('SELECT * FROM suppliers;')['data']
+    if id:
+        return query('SELECT * FROM suppliers WHERE id=?;', (id,), one=True)
+    return query('SELECT * FROM suppliers ORDER BY name COLLATE NOCASE ASC;')['data']
+
+def create_supplier(values):
+    '''
+    Create a new supplier row. Returns the new id.
+    '''
+    params = (values['name'], values['address'], values['city'], values['state'], values['zip'])
+    result = query('INSERT INTO suppliers (name, address, city, state, zip) VALUES (?, ?, ?, ?, ?);', params)
+    return result['lastrowid']
+
+def update_supplier(id, values):
+    '''
+    Update an existing supplier.
+    '''
+    params = (values['name'], values['address'], values['city'], values['state'], values['zip'], id)
+    return query('UPDATE suppliers SET name=?, address=?, city=?, state=?, zip=? WHERE id=?;', params)
+
+def delete_supplier(id):
+    '''
+    Delete a supplier. Raises Exception if any ingredient_prices rows reference it.
+    '''
+    number_of_references = query('SELECT COUNT(*) AS Count FROM ingredient_prices WHERE supplier_id=?;', (id,), one=True)['Count']
+    if number_of_references == 0:
+        return query('DELETE FROM suppliers WHERE id=?;', (id,))
+    used_on = query('''
+        SELECT DISTINCT i.Name FROM ingredient_prices ip
+        JOIN Ingredients i ON ip.ingredient_id = i.Id
+        WHERE ip.supplier_id = ?
+        ORDER BY i.Name COLLATE NOCASE ASC;
+    ''', (id,))['data']
+    readable = ', '.join(row['Name'] for row in used_on)
+    raise Exception(f'Unable to delete. Supplier referenced by {number_of_references} price record(s) on: {readable}')
 def delete_ingredient(id):
     '''
     Delete the ingredient Id
