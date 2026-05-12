@@ -304,6 +304,37 @@ def get_tags():
     '''
     return query(sql)['data']
 
+def get_ingredient_allergens(ingredient_id):
+    '''
+    Per-allergen rows for one ingredient, with a `checked` flag indicating
+    whether the ingredient-allergen mapping exists. Mirrors get_recipe_tags.
+    '''
+    sql = '''
+        SELECT a.name, a.id,
+            CASE WHEN EXISTS (
+                SELECT 1 FROM ingredient_allergens ia
+                WHERE ia.allergen_id = a.id
+                AND ia.ingredient_id = ?
+            ) THEN 1 ELSE 0 END AS checked
+        FROM allergens a
+        ORDER BY a.sortOrder, a.id;
+    '''
+    return query(sql, (ingredient_id,))['data']
+
+def modify_ingredient_allergen(ingredient_id, allergen_id, state):
+    if state:
+        sql = 'INSERT INTO ingredient_allergens (ingredient_id, allergen_id) VALUES (?, ?)'
+    else:
+        sql = 'DELETE FROM ingredient_allergens WHERE ingredient_id=? AND allergen_id=?'
+    return query(sql, (ingredient_id, allergen_id))
+
+def get_recipe_allergens(recipe_id):
+    '''
+    Allergen names present anywhere in this recipe's expanded ingredient tree.
+    '''
+    rows = query('SELECT DISTINCT name FROM RecipeAllergens WHERE recipe_id=? ORDER BY name;', (recipe_id,))['data']
+    return [row['name'] for row in rows]
+
 def update_tag(tag_id, new_name):
     sql = '''
         UPDATE tags SET name=? WHERE id=?

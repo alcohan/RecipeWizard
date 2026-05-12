@@ -39,6 +39,7 @@ def edit(id):
             window[field].update(new_data[field])
         for field in info:
             window[field].update(new_data[field])
+        window['-ALLERGENS-'].update(', '.join(db.get_recipe_allergens(id)) or '(none)')
 
     layout_demographic = [sg.Frame('Recipe',[[
             sg.Column([
@@ -69,8 +70,14 @@ def edit(id):
 
     # Nutrition details info
     layout_nutrition = [sg.Frame(f'Nutrition (per {unit})',[
-        [ sg.Text(name), sg.Push(),sg.Text(this_recipe[key], k=key) ] 
+        [ sg.Text(name), sg.Push(),sg.Text(this_recipe[key], k=key) ]
         for (key, name) in config.nutrition_fields.items()
+    ])]
+
+    # Aggregated allergens from all (expanded) ingredients
+    allergens_str = ', '.join(db.get_recipe_allergens(id)) or '(none)'
+    layout_contains = [sg.Frame('Contains', [
+        [sg.Text(allergens_str, k='-ALLERGENS-', size=(40, None))]
     ])]
 
     # Control buttons
@@ -105,7 +112,8 @@ def edit(id):
             layout_buttons ]),
         sg.Column([
             layout_info,
-            layout_nutrition
+            layout_nutrition,
+            layout_contains,
         ])
     ]]
 

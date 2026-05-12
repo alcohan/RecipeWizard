@@ -61,3 +61,11 @@ AS SELECT Id
  , CAST(SugarGrams AS Int) AS SugarGrams
  , CAST(ProteinGrams AS Int) AS ProteinGrams
 FROM RecipesWithNutrition;
+
+-- Aggregate allergens up to recipes by walking the expanded ingredient tree.
+DROP VIEW IF EXISTS RecipeAllergens;
+CREATE VIEW RecipeAllergens AS
+SELECT DISTINCT rx.recipe_id, ia.allergen_id, a.name
+FROM recipe_ingredients_expanded rx
+JOIN ingredient_allergens ia ON rx.ingredient_id = ia.ingredient_id
+JOIN allergens a ON ia.allergen_id = a.id;
