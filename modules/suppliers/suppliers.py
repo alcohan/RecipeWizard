@@ -1,6 +1,7 @@
 import PySimpleGUI as sg
 import db
 import config
+import window_utils
 
 FIELDS = [('name', 'Name'), ('address', 'Address'), ('city', 'City'), ('state', 'State'), ('zip', 'Zip')]
 TABLE_HEADINGS = ['Name', 'City', 'State']
@@ -10,7 +11,7 @@ def _format_data():
     return [(s['name'] or '', s['city'] or '', s['state'] or '', s['id']) for s in db.get_suppliers()]
 
 
-def _edit(supplier_id=None, location=(None, None)):
+def _edit(supplier_id=None):
     '''
     Popup to create (supplier_id=None) or edit an existing supplier.
     Returns True if the suppliers list was modified.
@@ -33,7 +34,7 @@ def _edit(supplier_id=None, location=(None, None)):
     close_button = sg.Button('Cancel' if is_new else 'Close', button_color=('white', 'gray'), k='-CLOSE-')
     layout = layout_fields + [[save_button, delete_button, close_button]]
 
-    window = sg.Window(f'{config.APPNAME} | Supplier | {title_suffix}', layout, icon=config.ICON, location=location)
+    window = window_utils.subwindow(f'{config.APPNAME} | Supplier | {title_suffix}', layout, icon=config.ICON)
     modified = False
 
     while True:
@@ -59,6 +60,7 @@ def _edit(supplier_id=None, location=(None, None)):
                 except Exception as err:
                     sg.popup_ok(err, title='Supplier In Use', icon=config.ICON)
 
+    window_utils.unregister_active(window)
     window.close()
     return modified
 
@@ -82,7 +84,7 @@ def render():
         [table],
         [sg.Button('New Supplier', k='-NEW-'), sg.Push(), sg.Button('Close', button_color=('white', 'gray'), k='-CLOSE-')],
     ]
-    window = sg.Window(f'{config.APPNAME} | Suppliers', layout, icon=config.ICON)
+    window = window_utils.subwindow(f'{config.APPNAME} | Suppliers', layout, icon=config.ICON)
 
     def refresh():
         window['-SUPPLIERS-TABLE-'].Update(values=_format_data())
@@ -97,12 +99,11 @@ def render():
             row_index = values['-SUPPLIERS-TABLE-'][0]
             clicked_row = window['-SUPPLIERS-TABLE-'].get()[row_index]
             supplier_id = clicked_row[-1]
-            current = window.CurrentLocation()
-            popup_location = (current[0] + 32, current[1] + 32)
-            if _edit(supplier_id, location=popup_location):
+            if _edit(supplier_id):
                 refresh()
         elif event == '-NEW-':
             if _edit():
                 refresh()
 
+    window_utils.unregister_active(window)
     window.close()

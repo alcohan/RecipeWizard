@@ -1,6 +1,7 @@
 import PySimpleGUI as sg
 import db
 import config
+import window_utils
 from datetime import date
 from re import sub
 
@@ -41,7 +42,7 @@ def edit_one(ingredient_id):
             layout_buttons 
             ]
 
-    window = sg.Window(f"{config.APPNAME} | Price: {this_ingredient['Name']}", layout, icon=config.ICON)
+    window = window_utils.subwindow(f"{config.APPNAME} | Price: {this_ingredient['Name']}", layout, icon=config.ICON)
 
     # Event Loop 
     while True:
@@ -86,4 +87,5 @@ def edit_one(ingredient_id):
         else:
             print('Unhandled Event', event, values, )
 
+    window_utils.unregister_active(window)
     window.close()
