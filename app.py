@@ -1,11 +1,9 @@
 import PySimpleGUI as sg
 import setup
 import config
-import modules.ingredients_module as ingredients_module
-import modules.recipes_module as recipes_module
-import modules.about as about
-import modules.suppliers as suppliers
-import modules.tags as tags
+from modules import ingredients_module, recipes_module, about, suppliers, tags
+
+from utilities import export_tables_to_file, import_data_to_tables
 
 def refresh():
     print('Refreshing Ingredients & Recipes Data')
@@ -17,8 +15,8 @@ def refresh():
 sg.theme('LightGrey1')   # Add a touch of color
 
 # All the stuff inside your window.
-menu_layout = [['&File', ['[todo] import from csv', '[todo] export to csv', '---', 'E&xit']],
-              ['&Manage',['[todo] &Suppliers', '---', 'Tags', '[todo] Templates', '[todo] Units of Measure']],
+menu_layout = [['&File', ['&Import from CSV', '&Export to CSV', '---', 'E&xit']],
+              ['&Manage',['&Suppliers', '---', 'Tags', '[todo] Templates', '[todo] Units of Measure']],
               ['&Tools', ['&Refresh::-REFRESH-','Reset Database::-CLEAN-RESET-','Reset With Sample Data::-SAMPLE-RESET-', '---', '[todo] Bulk Price Update']],
               ['&Help', ['About']]]
 
@@ -70,6 +68,14 @@ while True:
         suppliers.render()
     elif event == 'Tags':
         tags.render()
+    
+    elif event == 'Import from CSV':
+        setup.initializeDB(includeSampleData=False)
+        import_data_to_tables('builder.db')
+        refresh()
+    elif event == 'Export to CSV':
+        export_tables_to_file('builder.db')
+    
     else:
         print('Unhandled Event', event, values)
 

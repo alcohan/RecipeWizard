@@ -106,13 +106,48 @@ def ingredient_price_new(id, values):
     Add a new row to the ingredient_prices table
     '''
     print('Adding new row to price history: ', values)
+
+    print(query (f'DELETE FROM ingredient_prices WHERE ingredient_id={id} AND effective_date={values[-2]}'))
     return query(f'INSERT INTO ingredient_prices (ingredient_id, supplier_id, case_price, units_per_case, effective_date, notes) VALUES ({id},?,?,?,?,?)', values)
 
-def get_suppliers():
+def get_suppliers(id=0):
     '''
-    Get all of the possible suppliers
+    Get all suppliers, or a single supplier when id is supplied.
     '''
-    return query('SELECT * FROM suppliers;')['data']
+    if id:
+        return query('SELECT * FROM suppliers WHERE id=?;', (id,), one=True)
+    return query('SELECT * FROM suppliers ORDER BY name COLLATE NOCASE ASC;')['data']
+
+def create_supplier(values):
+    '''
+    Create a new supplier row. Returns the new id.
+    '''
+    params = (values['name'], values['address'], values['city'], values['state'], values['zip'])
+    result = query('INSERT INTO suppliers (name, address, city, state, zip) VALUES (?, ?, ?, ?, ?);', params)
+    return result['lastrowid']
+
+def update_supplier(id, values):
+    '''
+    Update an existing supplier.
+    '''
+    params = (values['name'], values['address'], values['city'], values['state'], values['zip'], id)
+    return query('UPDATE suppliers SET name=?, address=?, city=?, state=?, zip=? WHERE id=?;', params)
+
+def delete_supplier(id):
+    '''
+    Delete a supplier. Raises Exception if any ingredient_prices rows reference it.
+    '''
+    number_of_references = query('SELECT COUNT(*) AS Count FROM ingredient_prices WHERE supplier_id=?;', (id,), one=True)['Count']
+    if number_of_references == 0:
+        return query('DELETE FROM suppliers WHERE id=?;', (id,))
+    used_on = query('''
+        SELECT DISTINCT i.Name FROM ingredient_prices ip
+        JOIN Ingredients i ON ip.ingredient_id = i.Id
+        WHERE ip.supplier_id = ?
+        ORDER BY i.Name COLLATE NOCASE ASC;
+    ''', (id,))['data']
+    readable = ', '.join(row['Name'] for row in used_on)
+    raise Exception(f'Unable to delete. Supplier referenced by {number_of_references} price record(s) on: {readable}')
 def delete_ingredient(id):
     '''
     Delete the ingredient Id
@@ -268,6 +303,37 @@ def get_tags():
         SELECT * FROM tags
     '''
     return query(sql)['data']
+
+def get_ingredient_allergens(ingredient_id):
+    '''
+    Per-allergen rows for one ingredient, with a `checked` flag indicating
+    whether the ingredient-allergen mapping exists. Mirrors get_recipe_tags.
+    '''
+    sql = '''
+        SELECT a.name, a.id,
+            CASE WHEN EXISTS (
+                SELECT 1 FROM ingredient_allergens ia
+                WHERE ia.allergen_id = a.id
+                AND ia.ingredient_id = ?
+            ) THEN 1 ELSE 0 END AS checked
+        FROM allergens a
+        ORDER BY a.sortOrder, a.id;
+    '''
+    return query(sql, (ingredient_id,))['data']
+
+def modify_ingredient_allergen(ingredient_id, allergen_id, state):
+    if state:
+        sql = 'INSERT INTO ingredient_allergens (ingredient_id, allergen_id) VALUES (?, ?)'
+    else:
+        sql = 'DELETE FROM ingredient_allergens WHERE ingredient_id=? AND allergen_id=?'
+    return query(sql, (ingredient_id, allergen_id))
+
+def get_recipe_allergens(recipe_id):
+    '''
+    Allergen names present anywhere in this recipe's expanded ingredient tree.
+    '''
+    rows = query('SELECT DISTINCT name FROM RecipeAllergens WHERE recipe_id=? ORDER BY name;', (recipe_id,))['data']
+    return [row['name'] for row in rows]
 
 def update_tag(tag_id, new_name):
     sql = '''

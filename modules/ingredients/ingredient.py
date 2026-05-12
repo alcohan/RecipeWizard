@@ -27,16 +27,26 @@ def edit(id, location=None):
     
 
     layout_nutrition = [sg.Frame('Nutrition',[
-        [sg.Text(name), sg.Push(), sg.InputText(row[key], k=f'{key}', size=(10,1), enable_events=True)] 
+        [sg.Text(name), sg.Push(), sg.InputText(row[key], k=f'{key}', size=(10,1), enable_events=True)]
         for (key, name) in config.nutrition_fields.items()
     ])]
+
+    allergens_list = db.get_ingredient_allergens(id)
+    # 6 per row keeps the frame within the existing window width
+    allergen_rows = [allergens_list[i:i+6] for i in range(0, len(allergens_list), 6)]
+    layout_allergens = [sg.Frame('Allergens', [
+        [sg.Checkbox(a['name'], default=bool(a['checked']), k=f"-ALLERGEN-::{a['id']}", enable_events=True) for a in row_]
+        for row_ in allergen_rows
+    ])]
+
     layout_buttons = [sg.Button('Save', key='-SAVE-'),
                       sg.Button('Delete Ingredient', key='-DELETE-', button_color=("white","red")),
                       sg.Button('Close', button_color=("white","gray"), k='-CLOSE-')
         ]
 
-    layout = [  layout_demographic(),  
+    layout = [  layout_demographic(),
                 layout_nutrition,
+                layout_allergens,
                 layout_buttons ]
 
     # Create the Window
@@ -77,6 +87,9 @@ def edit(id, location=None):
                     window[key].update(new[key])
         elif event == '-HISTORY-':
             pricehistory.render(id, name)
+        elif event.startswith('-ALLERGEN-'):
+            allergen_id = int(event.split('::')[1])
+            db.modify_ingredient_allergen(id, allergen_id, values[event])
         else:
             print('Unhandled Event', event, values, )
 
