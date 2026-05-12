@@ -95,29 +95,22 @@ for ing in ingredients:
 print(f'{len(connections)} connections')
 
 categories = sorted({ing['category'] for ing in ingredients if ing['category']})
-allergens = ['Meat', 'Coconut', 'Fish', 'Shellfish', 'Dairy', 'Eggs', 'Gluten', 'Tree Nuts', 'Peanuts', 'Soy', 'Sesame']
-all_tags = list(categories) + allergens
-tag_id_map = {tag: i + 1 for i, tag in enumerate(all_tags)}
-print(f'{len(all_tags)} tags ({len(categories)} categories + {len(allergens)} allergens)')
+tag_id_map = {tag: i + 1 for i, tag in enumerate(categories)}
+print(f'{len(categories)} tags (categories only — allergens now go in their own table)')
 
 ing_tags = []
 for ing in ingredients:
     if ing['category']:
         ing_tags.append((tag_id_map[ing['category']], ing['id']))
+
+allergen_names = ['Meat', 'Coconut', 'Fish', 'Shellfish', 'Dairy', 'Eggs', 'Gluten', 'Tree Nuts', 'Peanuts', 'Soy', 'Sesame']
+allergen_id_map = {name: i + 1 for i, name in enumerate(allergen_names)}
+ing_allergens = []
+for ing in ingredients:
     for allergen, flag in ing['allergens'].items():
         if flag:
-            ing_tags.append((tag_id_map[allergen], ing['id']))
-
-recipe_allergens = {i + 1: set() for i in range(len(recipe_names))}
-for ing in ingredients:
-    for rname, qty in ing['recipe_qtys'].items():
-        if qty is None or (isinstance(qty, float) and qty != qty):
-            continue
-        rid = recipe_names.index(rname) + 1
-        for allergen, flag in ing['allergens'].items():
-            if flag:
-                recipe_allergens[rid].add(allergen)
-recipe_tag_rows = [(tag_id_map[a], rid) for rid, allergens_set in recipe_allergens.items() for a in sorted(allergens_set)]
+            ing_allergens.append((allergen_id_map[allergen], ing['id']))
+print(f'{len(allergen_names)} allergens, {len(ing_allergens)} ingredient_allergens links')
 
 ph_sheet = wb['Price History']
 # Unit conversion: case_yield in yd_unit -> portion_unit. Derived from the workbook's Units sheet.
@@ -129,10 +122,18 @@ CONVERSIONS = {
     ('g', 'g'): 1,
     ('ea', 'ea'): 1,
     ('lb', 'lb'): 1,
+    ('ea', '1/6 wedge'): 6,
 }
+# Undated rows in the workbook represent the original baseline data import —
+# treat them as the oldest entry by stamping them with the earliest dated
+# effective_date found in the sheet. Any later dated row wins via the
+# update_ingredient_price trigger's `ORDER BY effective_date DESC` tiebreaker.
+ph_rows = list(ph_sheet.iter_rows(min_row=2, values_only=True))
+dated_values = [r[1] for r in ph_rows if r and len(r) > 1 and r[1] is not None]
+ORIGINAL_DATE = min(dated_values).date() if dated_values else date.today()
 prices = []
 skipped_prices = 0
-for row in ph_sheet.iter_rows(min_row=2, values_only=True):
+for row in ph_rows:
     if len(row) < 11:
         skipped_prices += 1
         continue
@@ -140,7 +141,9 @@ for row in ph_sheet.iter_rows(min_row=2, values_only=True):
     if not ing_name or ing_name not in name_to_id:
         skipped_prices += 1
         continue
-    if dt is None or case_price is None or case_yield is None or not portion:
+    if dt is None:
+        dt = ORIGINAL_DATE
+    if case_price is None or case_yield is None or not portion:
         skipped_prices += 1
         continue
     factor = CONVERSIONS.get((yd_unit, portion_unit))
@@ -191,10 +194,11 @@ lines.append('')
 lines.append("INSERT INTO suppliers (name) VALUES ('Sysco'),('Charlies');")
 lines.append('')
 
-lines.append('INSERT INTO tags (name) VALUES')
-lines.append(',\n'.join(f"({sql_str(t)})" for t in all_tags))
-lines.append(';')
-lines.append('')
+if categories:
+    lines.append('INSERT INTO tags (name) VALUES')
+    lines.append(',\n'.join(f"({sql_str(t)})" for t in categories))
+    lines.append(';')
+    lines.append('')
 
 if ing_tags:
     lines.append('INSERT INTO ingredient_tags_mapping (tag_id, ingredient_id) VALUES')
@@ -202,9 +206,14 @@ if ing_tags:
     lines.append(';')
     lines.append('')
 
-if recipe_tag_rows:
-    lines.append('INSERT INTO recipe_tags_mapping (tag_id, recipe_id) VALUES')
-    lines.append(',\n'.join(f"({t},{r})" for t, r in recipe_tag_rows))
+lines.append('INSERT INTO allergens (name, sortOrder) VALUES')
+lines.append(',\n'.join(f"({sql_str(name)},{i + 1})" for i, name in enumerate(allergen_names)))
+lines.append(';')
+lines.append('')
+
+if ing_allergens:
+    lines.append('INSERT INTO ingredient_allergens (allergen_id, ingredient_id) VALUES')
+    lines.append(',\n'.join(f"({a},{i})" for a, i in ing_allergens))
     lines.append(';')
     lines.append('')
 
