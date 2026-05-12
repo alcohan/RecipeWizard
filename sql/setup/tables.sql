@@ -1,7 +1,10 @@
+DROP VIEW IF EXISTS RecipeAllergens;
 DROP VIEW IF EXISTS recipe_ingredients_expanded;
 DROP TABLE IF EXISTS tags;
 DROP TABLE IF EXISTS ingredient_tags_mapping;
 DROP TABLE IF EXISTS recipe_tags_mapping;
+DROP TABLE IF EXISTS allergens;
+DROP TABLE IF EXISTS ingredient_allergens;
 
 DROP TABLE IF EXISTS ingredient_prices;
 
@@ -91,6 +94,20 @@ CREATE TABLE recipe_tags_mapping (
   , FOREIGN KEY (tag_id) REFERENCES tags(id)
 );
 
+CREATE TABLE allergens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT
+  , name TEXT
+  , sortOrder INTEGER
+);
+
+CREATE TABLE ingredient_allergens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT
+  , allergen_id INTEGER
+  , ingredient_id INTEGER
+  , FOREIGN KEY (ingredient_id) REFERENCES ingredients(id)
+  , FOREIGN KEY (allergen_id) REFERENCES allergens(id)
+);
+
 -- When we add a new price history, check if we need to update the current ingredient price
 CREATE TRIGGER update_ingredient_price AFTER INSERT ON ingredient_prices
 BEGIN
@@ -108,10 +125,10 @@ BEGIN
 END;
 
 -- Create a basic entry to ingredient_prices for new ingredients
-CREATE TRIGGER insert_ingredient_price
-AFTER INSERT ON ingredients
-FOR EACH ROW
-BEGIN
-  INSERT INTO ingredient_prices (ingredient_id, case_price, units_per_case, effective_date)
-  VALUES (NEW.id, NEW.cost, 1, date('now'));
-END;
+-- CREATE TRIGGER insert_ingredient_price
+-- AFTER INSERT ON ingredients
+-- FOR EACH ROW
+-- BEGIN
+--   INSERT INTO ingredient_prices (ingredient_id, case_price, units_per_case, effective_date)
+--   VALUES (NEW.id, NEW.cost, 1, date('now'));
+-- END;
