@@ -1,6 +1,30 @@
+import os
+import sqlite3
 import PySimpleGUI as sg
 import setup
 import config
+import window_utils
+
+
+def _db_initialized():
+    '''True if the database file exists and has the expected schema.'''
+    if not os.path.exists(config.DATABASE):
+        return False
+    try:
+        conn = sqlite3.connect(config.DATABASE)
+        try:
+            cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='Ingredients'")
+            return cursor.fetchone() is not None
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False
+
+
+if not _db_initialized():
+    print('Database not initialized — running first-time setup')
+    setup.initializeDB()
+
 from modules import ingredients_module, recipes_module, about, suppliers, tags
 
 from utilities import export_tables_to_file, import_data_to_tables
@@ -30,7 +54,8 @@ layout = [[sg.Menu(menu_layout, k='-MENU-'),
 
 
 # Create the Window
-window = sg.Window(config.APPNAME, layout, icon=config.ICON)
+window = sg.Window(config.APPNAME, layout, icon=config.ICON, finalize=True)
+window_utils.register_active(window)
 
 # Event Loop to process "events" and get the "values" of the inputs
 while True:

@@ -1,4 +1,5 @@
 import PySimpleGUI as sg
+import window_utils
 from config import ICON
 
 import matplotlib.pyplot as plt
@@ -138,7 +139,7 @@ def render(id, name='Ingredient', recipeMode=False):
     ]
 
     # Create window
-    window = sg.Window(f'Price History [{name}]', layout, finalize=True, icon=ICON)
+    window = window_utils.subwindow(f'Price History [{name}]', layout, icon=ICON)
     if len(price_history)>0:
         graph1 = window['-LINE-CHART-']
         graph2 = window['-PIE-PLOT-']
@@ -168,6 +169,7 @@ def render(id, name='Ingredient', recipeMode=False):
             plot_price_over_time(price_history, selected_row)
 
     # Close window
+    window_utils.unregister_active(window)
     window.close()
 
 if __name__=='__main__':

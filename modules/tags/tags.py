@@ -1,5 +1,6 @@
 import PySimpleGUI as sg
 import db  # assuming you have a db module with a get_tags() and update_tag() function
+import window_utils
 
 def render():
     # Define the PySimpleGUI layout
@@ -26,7 +27,7 @@ def render():
     layout.append([sg.Button('New', k='-NEW-')])
 
     # Create the PySimpleGUI window
-    window = sg.Window('Edit Tags', layout)
+    window = window_utils.subwindow('Edit Tags', layout)
 
     # Event loop
     while True:
@@ -66,4 +67,5 @@ def render():
             window.extend_layout(window['-TAGSCOL-'], rows=[render_tag(input, new_id)])
 
     # Close the window
+    window_utils.unregister_active(window)
     window.close()
