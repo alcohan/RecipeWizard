@@ -1,11 +1,12 @@
 import PySimpleGUI as sg
 import db
 import config
+import window_utils
 import modules.ingredients.ingredient_prices as ingredient_prices
 import modules.ingredients.pricehistory as pricehistory
 from re import sub
 
-def edit(id, location=None):
+def edit(id):
     def fetch_data():
         row = db.get_ingredients(id)
         # Format the cost field as currency with accuracy to 0.01 cents
@@ -50,7 +51,7 @@ def edit(id, location=None):
                 layout_buttons ]
 
     # Create the Window
-    window = sg.Window(f"{config.APPNAME} | {row['Name']}", layout, icon=config.ICON, location=location, finalize=True)
+    window = window_utils.subwindow(f"{config.APPNAME} | {row['Name']}", layout, icon=config.ICON)
     # Event Loop to process "events" and get the "values" of the inputs
     while True:
         event, values = window.read()
@@ -93,6 +94,7 @@ def edit(id, location=None):
         else:
             print('Unhandled Event', event, values, )
 
+    window_utils.unregister_active(window)
     window.close()
 
 
@@ -123,7 +125,7 @@ def create(params={}):
     # if we don't get a new Id, we'll return 0
     id=0
     # Create the Window
-    window = sg.Window(f'{config.APPNAME} | > NEW INGREDIENT <', layout, icon=config.ICON)
+    window = window_utils.subwindow(f'{config.APPNAME} | > NEW INGREDIENT <', layout, icon=config.ICON)
     # Event Loop to process "events" and get the "values" of the inputs
     while True:
         event, values = window.read()
@@ -146,5 +148,6 @@ def create(params={}):
         else:
             print('Unhandled Event', event, values)
 
+    window_utils.unregister_active(window)
     window.close()
     return(id)

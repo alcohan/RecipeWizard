@@ -1,6 +1,7 @@
 import PySimpleGUI as sg
 import config
 import db
+import window_utils
 
 def popup(parent,child):
     '''
@@ -17,7 +18,7 @@ def popup(parent,child):
             ]
 
     # Create the Window
-    window = sg.Window(window_title, layout, icon=config.ICON)
+    window = window_utils.subwindow(window_title, layout, icon=config.ICON)
     # Event Loop to process "events" and get the "values" of the inputs
 
     while True:
@@ -36,4 +37,5 @@ def popup(parent,child):
         else:
             print('Unhandled Event', event, values)
 
+    window_utils.unregister_active(window)
     window.close()

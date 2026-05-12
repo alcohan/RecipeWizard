@@ -2,6 +2,7 @@ import PySimpleGUI as sg
 import db
 import config
 import utils
+import window_utils
 import recipe_ingredient
 import modules.recipes.recipe_ingredient_new as recipe_ingredient_new
 import modules.ingredients.pricehistory as pricehistory
@@ -118,7 +119,7 @@ def edit(id):
     ]]
 
     # Create the Window
-    window = sg.Window(f'{config.APPNAME} | {name}', layout, icon=config.ICON)
+    window = window_utils.subwindow(f'{config.APPNAME} | {name}', layout, icon=config.ICON)
 
     # Event Loop to process "events" and get the "values" of the inputs
     while True:
@@ -172,6 +173,7 @@ def edit(id):
         else:
             print('Unhandled Event', event, values)
 
+    window_utils.unregister_active(window)
     window.close()
 
 
@@ -187,7 +189,7 @@ def create():
     # if we don't get a new Id, we'll return 0
     id=0
     # Create the Window
-    window = sg.Window(f'{config.APPNAME} | > NEW RECIPE <', layout, icon=config.ICON)
+    window = window_utils.subwindow(f'{config.APPNAME} | > NEW RECIPE <', layout, icon=config.ICON)
     # Event Loop to process "events" and get the "values" of the inputs
     while True:
         event, values = window.read()
@@ -204,5 +206,6 @@ def create():
         else:
             print('Unhandled Event', event, values)
 
+    window_utils.unregister_active(window)
     window.close()
     return(id)

@@ -1,4 +1,5 @@
 import PySimpleGUI as sg
+import window_utils
 from config import ICON
 from config import get_image
 
@@ -12,10 +13,11 @@ def render():
             [sg.Image(get_image('static/NutritionixAPI_hires_flat.png'))]]
 
     # Create the popup window
-    window = sg.Window('About', layout,icon=ICON)
+    window = window_utils.subwindow('About', layout, icon=ICON)
 
     # Display the popup window and wait for a button press
     event, values = window.read()
 
     # Close the popup window
+    window_utils.unregister_active(window)
     window.close()
