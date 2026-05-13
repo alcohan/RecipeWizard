@@ -7,8 +7,10 @@ Requires USDA_API_KEY in the environment. Falls back to DEMO_KEY (capped
 at 30 req/hour per IP) so the feature works without setup; users can get
 a free unlimited key at https://fdc.nal.usda.gov/api-key-signup.html
 """
-import requests
+from functools import lru_cache
 from os import getenv
+
+import requests
 
 api_key = getenv('USDA_API_KEY') or 'DEMO_KEY'
 
@@ -29,12 +31,18 @@ NUTRIENT_FIELDS = {
 }
 
 
+@lru_cache(maxsize=128)
 def search(query):
     """Hit FDC /foods/search. Returns the list of food hits.
 
     Uses POST + JSON body since FDC rejects multi-valued dataType query
     params over GET, and unfiltered queries return only Branded results
     (which use per-serving rather than per-100g nutrition).
+
+    Cached: repeat queries within the session don't re-hit the API.
+    DEMO_KEY caps at 30 req/hour per IP, so this matters — clicking
+    through 5 results triggers 5 detail fetches, and re-running a
+    search would otherwise burn the search budget too.
     """
     response = requests.post(
         f'{BASE_URL}/foods/search',
@@ -55,8 +63,10 @@ def search(query):
     return foods
 
 
+@lru_cache(maxsize=128)
 def get_food_details(fdc_id):
-    """Fetch full nutrient data for a single FDC food."""
+    """Fetch full nutrient data for a single FDC food. Cached per session —
+    re-selecting the same result in the picker is a free lookup."""
     response = requests.get(f'{BASE_URL}/food/{fdc_id}', params={'api_key': api_key})
     if not response.ok:
         raise Exception(f'{response.status_code} {response.reason}')
