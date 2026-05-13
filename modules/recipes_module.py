@@ -26,6 +26,17 @@ def render():
             [ sg.Button('New Recipe', key='-NEW-RECIPE-') ]
     ]
 
+def refresh_table(window):
+    '''Re-fetch data and re-apply the current filter so coming back from an
+    edit dialog doesn't wipe the active search.'''
+    format_recipes_data.cache_clear()
+    data = format_recipes_data()
+    filter_value = window['-RECIPES-FILTER-'].get().lower()
+    if filter_value:
+        data = [row for row in data if filter_value in ' '.join(map(str, row)).lower()]
+    window['-RECIPES-TABLE-'].Update(values=data)
+
+
 def loop(event, values, window):
     '''Run the event loop for Recipes. Return values: 0=nothing, 1=event processed, 2=event processed + refresh needed'''
 

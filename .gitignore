@@ -27,6 +27,9 @@ static/data.js
 builder.db
 builder.db.demo
 
+# Proprietary ingredient photo archive
+static/ingredients/
+
 # Sandbox / testing file
 sandbox.py
 

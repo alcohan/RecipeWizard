@@ -28,6 +28,17 @@ def render():
         [sg.Button('New (Search Database)', key='-NEW-FROM-SEARCH-'),sg.Button('New From Blank', key='-NEW-INGREDIENT-')]
     ]
 
+def refresh_table(window):
+    '''Re-fetch data and re-apply the current filter so coming back from an
+    edit dialog doesn't wipe the active search.'''
+    format_data.cache_clear()
+    data = format_data()
+    filter_value = window['-INGREDIENTS-FILTER-'].get().lower()
+    if filter_value:
+        data = [row for row in data if filter_value in ' '.join(map(str, row)).lower()]
+    window['-INGREDIENT-TABLE-'].Update(values=data)
+
+
 def loop(event, values, window):
     '''Run the event loop for Ingredients. Return values: 0=nothing, 1=event processed, 2=event processed + refresh needed'''
     if event == '-INGREDIENT-TABLE-':

@@ -34,6 +34,7 @@ config.read(resource_path('config.ini'))
 APPNAME = 'RecipeWizard'
 DATABASE = resource_path(config.get('database','location'))
 ICON = resource_path('icon.ico')
+INGREDIENTS_PATH = resource_path(config.get('images','ingredients_path'))
 
 ingredient_demographic_fields = ['Name','Unit','Portion','Cost','Weight']
 ingredient_demographic_fields = {

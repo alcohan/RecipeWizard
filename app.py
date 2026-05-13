@@ -24,24 +24,25 @@ def _db_initialized():
 if not _db_initialized():
     print('Database not initialized — running first-time setup')
     setup.initializeDB()
+else:
+    setup.migrateDB()
 
 from modules import ingredients_module, recipes_module, about, suppliers, tags
+from modules.ingredients import bulk_image_assign
 
 from utilities import export_tables_to_file, import_data_to_tables
 
 def refresh():
     print('Refreshing Ingredients & Recipes Data')
-    recipes_module.format_recipes_data.cache_clear()
-    ingredients_module.format_data.cache_clear()
-    window['-INGREDIENT-TABLE-'].Update(values=ingredients_module.format_data())
-    window['-RECIPES-TABLE-'].Update(values=recipes_module.format_recipes_data())
+    ingredients_module.refresh_table(window)
+    recipes_module.refresh_table(window)
 
 sg.theme('LightGrey1')   # Add a touch of color
 
 # All the stuff inside your window.
 menu_layout = [['&File', ['&Import from CSV', '&Export to CSV', '---', 'E&xit']],
               ['&Manage',['&Suppliers', '---', 'Tags', '[todo] Templates', '[todo] Units of Measure']],
-              ['&Tools', ['&Refresh::-REFRESH-','Reset Database::-CLEAN-RESET-','Reset With Sample Data::-SAMPLE-RESET-', '---', '[todo] Bulk Price Update']],
+              ['&Tools', ['&Refresh::-REFRESH-','Reset Database::-CLEAN-RESET-','Reset With Sample Data::-SAMPLE-RESET-', '---', 'Auto-assign Images::-AUTOASSIGN-', 'Bulk Assign Images::-BULK-ASSIGN-IMAGES-', '---', '[todo] Bulk Price Update']],
               ['&Help', ['About']]]
 
 layout_ingredients = sg.Frame('Ingredients',ingredients_module.render())
@@ -79,6 +80,7 @@ while True:
     elif event in ('-RESET-', 'Reset With Sample Data::-SAMPLE-RESET-'):
         print('Starting fresh with sample data')
         setup.initializeDB()
+        setup.auto_assign_images()
         refresh()
     elif event in ('-CLEAN-', 'Reset Database::-CLEAN-RESET-'):
         print('Starting fresh with a clean database')
@@ -87,16 +89,28 @@ while True:
     elif event in ('Refresh', 'Refresh::-REFRESH-'):
         print('Refreshing values')
         refresh()
+    elif event == 'Auto-assign Images::-AUTOASSIGN-':
+        counts = setup.auto_assign_images()
+        sg.popup_ok(
+            f"Assigned: {counts['assigned']}\nAmbiguous (skipped): {counts['ambiguous']}\nNo match: {counts['unmatched']}",
+            title='Auto-assign Images',
+            icon=config.ICON,
+        )
+        refresh()
+    elif event == 'Bulk Assign Images::-BULK-ASSIGN-IMAGES-':
+        bulk_image_assign.render()
+        refresh()
     elif event == 'About':
         about.render()
     elif event == 'Suppliers':
         suppliers.render()
     elif event == 'Tags':
         tags.render()
-    
+
     elif event == 'Import from CSV':
         setup.initializeDB(includeSampleData=False)
         import_data_to_tables('builder.db')
+        setup.auto_assign_images()
         refresh()
     elif event == 'Export to CSV':
         export_tables_to_file('builder.db')

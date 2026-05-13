@@ -30,6 +30,7 @@ CREATE TABLE Ingredients (
 	, FiberGrams NUMERIC (6,2)
 	, SugarGrams NUMERIC (6,2)
 	, ProteinGrams NUMERIC (6,2)
+	, ImageFilename TEXT
 );
 
 CREATE TABLE Recipes (
