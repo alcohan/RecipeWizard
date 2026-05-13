@@ -3,7 +3,8 @@ recipe-wedge cards below. New future widgets/sections should slot into
 HomeTab's vertical layout the same way.'''
 from PySide6.QtCore import Qt, QThreadPool, Signal
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget,
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QScrollArea,
+    QVBoxLayout, QWidget,
 )
 
 import db
@@ -20,6 +21,7 @@ class _RecipeCard(QFrame):
     def __init__(self, recipe_id, name, parent=None):
         super().__init__(parent)
         self.recipe_id = recipe_id
+        self.name = name or ''
         self.setObjectName('RecipeCard')
         self.setStyleSheet('''
             QFrame#RecipeCard {
@@ -84,8 +86,20 @@ class _RecipeGallery(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(scroll)
 
+        self._filter = ''
+
         self._model.modelReset.connect(self.refresh)
         self.refresh()
+
+    def setFilterText(self, text):
+        self._filter = (text or '').strip().lower()
+        self._apply_filter()
+
+    def _apply_filter(self):
+        for i in range(self.grid.count()):
+            card = self.grid.itemAt(i).widget()
+            if isinstance(card, _RecipeCard):
+                card.setVisible(not self._filter or self._filter in card.name.lower())
 
     def refresh(self):
         # Take down all cards. For 28 recipes this is cheap; if the gallery
@@ -110,6 +124,9 @@ class _RecipeGallery(QWidget):
             cards.append(card)
         for card in cards:
             card.start_render(pool)
+        # Re-apply any active filter so a refresh doesn't reveal cards
+        # the user has filtered out.
+        self._apply_filter()
 
 
 class HomeTab(QWidget):
@@ -136,13 +153,24 @@ class HomeTab(QWidget):
         section_label = QLabel('Recipes')
         section_label.setStyleSheet('font-size: 13pt; font-weight: bold; padding: 4px 0;')
 
+        self.filter_edit = QLineEdit()
+        self.filter_edit.setPlaceholderText('\U0001F50D  Filter recipes…')
+        self.filter_edit.setClearButtonEnabled(True)
+        self.filter_edit.setMaximumWidth(280)
+
+        section_row = QHBoxLayout()
+        section_row.addWidget(section_label)
+        section_row.addStretch()
+        section_row.addWidget(self.filter_edit)
+
         self.gallery = _RecipeGallery(recipes_model)
         self.gallery.recipeClicked.connect(self.recipeClicked.emit)
+        self.filter_edit.textChanged.connect(self.gallery.setFilterText)
 
         layout = QVBoxLayout(self)
         layout.addLayout(cards_row)
         layout.addSpacing(8)
-        layout.addWidget(section_label)
+        layout.addLayout(section_row)
         layout.addWidget(self.gallery, stretch=1)
 
         ingredients_model.modelReset.connect(self._refresh_counts)
@@ -155,3 +183,8 @@ class HomeTab(QWidget):
         # Suppliers don't have a top-level model in MainWindow; query directly.
         # Cheap (small table) and runs only on a model reset.
         self.suppliers_card.set_value(len(db.get_suppliers()))
+
+    def focus_filter(self):
+        '''Called by the main window's Ctrl+F shortcut when Home is active.'''
+        self.filter_edit.setFocus()
+        self.filter_edit.selectAll()
