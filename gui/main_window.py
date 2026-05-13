@@ -230,12 +230,19 @@ class MainWindow(QMainWindow):
 
     # --- ingredient / recipe handlers ---
 
+    def _flash_status(self, msg):
+        '''Show a toast in the status bar for ~3s. Centralized so handlers
+        all use the same dwell time.'''
+        if msg:
+            self.statusBar().showMessage(msg, 3000)
+
     def _on_ingredient_edit(self, src_row):
         ing_id = self.ingredients_model.id_at_row(src_row)
         dlg = IngredientEditDialog(ing_id, parent=self)
         dlg.exec()
         if dlg.modified:
             self.refresh()
+        self._flash_status(dlg.status_message)
 
     def _on_ingredient_delete(self, src_row):
         row = self.ingredients_model.row_dict(src_row)
@@ -250,6 +257,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, 'Ingredient In Use', str(exc))
             return
         self.refresh()
+        self._flash_status(f"Deleted '{row['Name']}'")
 
     def _on_new_ingredient_search(self):
         dlg = IngredientCreateFromUsdaDialog(parent=self)
@@ -258,6 +266,8 @@ class MainWindow(QMainWindow):
         edit_dlg = IngredientEditDialog(dlg.new_id, parent=self)
         edit_dlg.exec()
         self.refresh()
+        # Edit-stage message wins (most recent action), else fall back to "Created"
+        self._flash_status(edit_dlg.status_message or dlg.status_message)
 
     def _on_new_ingredient_blank(self):
         create_dlg = IngredientCreateDialog(parent=self)
@@ -266,6 +276,7 @@ class MainWindow(QMainWindow):
         edit_dlg = IngredientEditDialog(create_dlg.new_id, parent=self)
         edit_dlg.exec()
         self.refresh()
+        self._flash_status(edit_dlg.status_message or create_dlg.status_message)
 
     def _on_recipe_edit(self, src_row):
         self._on_recipe_edit_by_id(self.recipes_model.id_at_row(src_row))
@@ -278,6 +289,7 @@ class MainWindow(QMainWindow):
         dlg.exec()
         if dlg.modified:
             self.refresh()
+        self._flash_status(dlg.status_message)
 
     def _on_recipe_delete(self, src_row):
         row = self.recipes_model.row_dict(src_row)
@@ -292,6 +304,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, 'Recipe In Use', str(exc))
             return
         self.refresh()
+        self._flash_status(f"Deleted '{row['Name']}'")
 
     def _on_new_recipe(self):
         create_dlg = RecipeCreateDialog(parent=self)
@@ -300,6 +313,7 @@ class MainWindow(QMainWindow):
         edit_dlg = RecipeEditDialog(create_dlg.new_id, parent=self)
         edit_dlg.exec()
         self.refresh()
+        self._flash_status(edit_dlg.status_message or create_dlg.status_message)
 
     # --- functional handlers wired to existing business layer ---
 
@@ -320,7 +334,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, 'Import Failed', str(exc))
             return
         self.refresh()
-        self.statusBar().showMessage('Imported from CSV', 3000)
+        self._flash_status('Imported from CSV')
 
     def _on_export_csv(self):
         from utilities import export_tables_to_file
@@ -329,7 +343,7 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, 'Export Failed', str(exc))
             return
-        self.statusBar().showMessage('Exported to export/*.csv', 3000)
+        self._flash_status('Exported to export/*.csv')
 
     def _on_reset_clean(self):
         confirm = QMessageBox.warning(
@@ -341,6 +355,7 @@ class MainWindow(QMainWindow):
             return
         setup.initializeDB(includeSampleData=False)
         self.refresh()
+        self._flash_status('Database reset')
 
     def _on_reset_sample(self):
         confirm = QMessageBox.warning(
@@ -353,6 +368,7 @@ class MainWindow(QMainWindow):
         setup.initializeDB()
         setup.auto_assign_images()
         self.refresh()
+        self._flash_status('Sample data loaded')
 
     def _on_auto_assign_images(self):
         counts = setup.auto_assign_images()
@@ -363,6 +379,7 @@ class MainWindow(QMainWindow):
             f"No match: {counts['unmatched']}",
         )
         self.refresh()
+        self._flash_status(f"Auto-assigned {counts['assigned']} image(s)")
 
     def _on_bulk_assign_images(self):
         BulkImageAssignDialog(parent=self).exec()

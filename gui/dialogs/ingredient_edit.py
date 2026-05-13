@@ -39,6 +39,7 @@ class IngredientEditDialog(QDialog):
         super().__init__(parent)
         self.ingredient_id = ingredient_id
         self.modified = False  # parent should refresh if True after exec()
+        self.status_message = ''
 
         row = db.get_ingredients(ingredient_id)
         self.setWindowTitle(f"{config.APPNAME} | {row['Name']}")
@@ -154,8 +155,10 @@ class IngredientEditDialog(QDialog):
     # --- handlers ---
 
     def _on_save(self):
-        db.update_ingredient(self.ingredient_id, self._collect_values())
+        values = self._collect_values()
+        db.update_ingredient(self.ingredient_id, values)
         self.modified = True
+        self.status_message = f"Saved '{values.get('Name', '') or 'ingredient'}'"
         self.accept()
 
     def _on_delete(self):
@@ -171,6 +174,7 @@ class IngredientEditDialog(QDialog):
             QMessageBox.warning(self, 'Ingredient In Use', str(exc))
             return
         self.modified = True
+        self.status_message = f"Deleted '{name}'"
         self.accept()
 
     def _on_change_cost(self):

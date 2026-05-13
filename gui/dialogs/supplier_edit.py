@@ -20,6 +20,7 @@ class SupplierEditDialog(QDialog):
         super().__init__(parent)
         self.supplier_id = supplier_id
         self.modified = False
+        self.status_message = ''
         is_new = supplier_id is None
 
         if is_new:
@@ -63,11 +64,13 @@ class SupplierEditDialog(QDialog):
         if not values['name'].strip():
             QMessageBox.warning(self, 'Missing Name', 'Supplier name is required.')
             return
+        verb = 'Created' if self.supplier_id is None else 'Saved'
         if self.supplier_id is None:
             db.create_supplier(values)
         else:
             db.update_supplier(self.supplier_id, values)
         self.modified = True
+        self.status_message = f"{verb} '{values['name']}'"
         self.accept()
 
     def _on_delete(self):
@@ -83,4 +86,5 @@ class SupplierEditDialog(QDialog):
             QMessageBox.warning(self, 'Supplier In Use', str(exc))
             return
         self.modified = True
+        self.status_message = f"Deleted '{name}'"
         self.accept()
