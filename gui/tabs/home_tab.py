@@ -62,71 +62,97 @@ class _RecipeCard(QFrame):
 
 
 class _RecipeGallery(QWidget):
-    '''Scrollable grid of _RecipeCard widgets, refreshed whenever the source
-    RecipesModel resets. 4 columns by default.'''
+    '''Scrollable, responsive grid of _RecipeCard widgets. Column count is
+    derived from the current viewport width — resizing the window reflows
+    the cards into more or fewer columns without rebuilding any widgets.
+    Filtered-out cards are removed from the grid (not just hidden) so the
+    remaining ones pack tight.'''
+
+    CARD_WIDTH = 220
+    CARD_SPACING = 12
+    SCROLLBAR_RESERVE = 24  # avoid column-count oscillation at the threshold
 
     recipeClicked = Signal(int)
 
-    def __init__(self, recipes_model, columns=4, parent=None):
+    def __init__(self, recipes_model, parent=None):
         super().__init__(parent)
         self._model = recipes_model
-        self._columns = columns
+        self._cards = []
+        self._current_columns = 1
+        self._filter = ''
 
         self.grid_container = QWidget()
         self.grid = QGridLayout(self.grid_container)
-        self.grid.setSpacing(12)
+        self.grid.setSpacing(self.CARD_SPACING)
         self.grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
 
-        scroll = QScrollArea()
-        scroll.setWidget(self.grid_container)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll = QScrollArea()
+        self.scroll.setWidget(self.grid_container)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(scroll)
-
-        self._filter = ''
+        layout.addWidget(self.scroll)
 
         self._model.modelReset.connect(self.refresh)
         self.refresh()
 
     def setFilterText(self, text):
         self._filter = (text or '').strip().lower()
-        self._apply_filter()
+        self._relayout()
 
-    def _apply_filter(self):
-        for i in range(self.grid.count()):
-            card = self.grid.itemAt(i).widget()
-            if isinstance(card, _RecipeCard):
-                card.setVisible(not self._filter or self._filter in card.name.lower())
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        new_cols = self._columns_for_width(self.scroll.viewport().width())
+        if new_cols != self._current_columns:
+            self._current_columns = new_cols
+            self._relayout()
+
+    def _columns_for_width(self, width):
+        usable = max(self.CARD_WIDTH, width - self.SCROLLBAR_RESERVE)
+        return max(1, (usable + self.CARD_SPACING) // (self.CARD_WIDTH + self.CARD_SPACING))
+
+    def _relayout(self):
+        '''Re-place existing _RecipeCard widgets in the grid for the current
+        column count and active filter. No widgets are destroyed.'''
+        for card in self._cards:
+            self.grid.removeWidget(card)
+        visible_index = 0
+        for card in self._cards:
+            matches = not self._filter or self._filter in card.name.lower()
+            card.setVisible(matches)
+            if matches:
+                self.grid.addWidget(
+                    card,
+                    visible_index // self._current_columns,
+                    visible_index % self._current_columns,
+                )
+                visible_index += 1
 
     def refresh(self):
-        # Take down all cards. For 28 recipes this is cheap; if the gallery
-        # ever scales past a few hundred, switch to an incremental diff.
-        while self.grid.count():
-            item = self.grid.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                w.deleteLater()
+        # Tear down old cards entirely (model has been replaced).
+        for card in self._cards:
+            self.grid.removeWidget(card)
+            card.deleteLater()
+        self._cards = []
 
-        # First pass: place all cards with placeholder wedges (instant).
+        self._current_columns = self._columns_for_width(self.scroll.viewport().width())
+
+        # First pass: construct all cards with placeholder wedges (instant).
         # Second pass: queue background renders. PIL's C operations release
         # the GIL so workers actually parallelize. Cache hits from prior
         # renders return immediately; only changed/new recipes do real work.
         pool = QThreadPool.globalInstance()
-        cards = []
         for i in range(self._model.rowCount()):
             row = self._model.row_dict(i)
             card = _RecipeCard(row['Id'], row['Name'])
             card.clicked.connect(self.recipeClicked.emit)
-            self.grid.addWidget(card, i // self._columns, i % self._columns)
-            cards.append(card)
-        for card in cards:
+            self._cards.append(card)
+
+        self._relayout()
+        for card in self._cards:
             card.start_render(pool)
-        # Re-apply any active filter so a refresh doesn't reveal cards
-        # the user has filtered out.
-        self._apply_filter()
 
 
 class HomeTab(QWidget):
