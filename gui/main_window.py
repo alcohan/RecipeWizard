@@ -9,8 +9,8 @@ import config
 import db
 import setup
 from gui.dialogs.ingredient_create import IngredientCreateDialog
+from gui.dialogs.ingredient_create_from_usda import IngredientCreateFromUsdaDialog
 from gui.dialogs.ingredient_edit import IngredientEditDialog
-from gui.dialogs.usda_search import UsdaSearchDialog
 from gui.models.filter_proxy import MultiColumnFilterProxy
 from gui.models.ingredients_model import IngredientsModel
 from gui.models.recipes_model import RecipesModel
@@ -191,16 +191,15 @@ class MainWindow(QMainWindow):
         self.refresh()
 
     def _on_new_ingredient_search(self):
-        search_dlg = UsdaSearchDialog(parent=self)
-        if search_dlg.exec() != QDialog.Accepted or not search_dlg.selected_prefill:
+        dlg = IngredientCreateFromUsdaDialog(parent=self)
+        if dlg.exec() != QDialog.Accepted or not dlg.new_id:
             return
-        self._create_then_edit(prefill=search_dlg.selected_prefill)
+        edit_dlg = IngredientEditDialog(dlg.new_id, parent=self)
+        edit_dlg.exec()
+        self.refresh()
 
     def _on_new_ingredient_blank(self):
-        self._create_then_edit(prefill=None)
-
-    def _create_then_edit(self, prefill):
-        create_dlg = IngredientCreateDialog(parent=self, prefill=prefill)
+        create_dlg = IngredientCreateDialog(parent=self)
         if create_dlg.exec() != QDialog.Accepted or not create_dlg.new_id:
             return
         edit_dlg = IngredientEditDialog(create_dlg.new_id, parent=self)
