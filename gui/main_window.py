@@ -8,11 +8,15 @@ from PySide6.QtWidgets import (
 import config
 import db
 import setup
+from gui.dialogs.about import AboutDialog
+from gui.dialogs.bulk_image_assign import BulkImageAssignDialog
 from gui.dialogs.ingredient_create import IngredientCreateDialog
 from gui.dialogs.ingredient_create_from_usda import IngredientCreateFromUsdaDialog
 from gui.dialogs.ingredient_edit import IngredientEditDialog
 from gui.dialogs.recipe_create import RecipeCreateDialog
 from gui.dialogs.recipe_edit import RecipeEditDialog
+from gui.dialogs.suppliers_manager import SuppliersManagerDialog
+from gui.dialogs.tags_manager import TagsManagerDialog
 from gui.models.filter_proxy import MultiColumnFilterProxy
 from gui.models.ingredients_model import IngredientsModel
 from gui.models.recipes_model import RecipesModel
@@ -144,8 +148,8 @@ class MainWindow(QMainWindow):
         file_menu.addAction('E&xit', self.close)
 
         manage_menu = bar.addMenu('&Manage')
-        manage_menu.addAction('&Suppliers', lambda: self._stub_log('Suppliers', phase=4))
-        manage_menu.addAction('&Tags', lambda: self._stub_log('Tags', phase=4))
+        manage_menu.addAction('&Suppliers', self._on_suppliers)
+        manage_menu.addAction('&Tags', self._on_tags)
 
         tools_menu = bar.addMenu('&Tools')
         refresh_action = tools_menu.addAction('&Refresh', self.refresh)
@@ -154,10 +158,10 @@ class MainWindow(QMainWindow):
         tools_menu.addAction('Reset With Sample Data', self._on_reset_sample)
         tools_menu.addSeparator()
         tools_menu.addAction('Auto-assign Images', self._on_auto_assign_images)
-        tools_menu.addAction('Bulk Assign Images', lambda: self._stub_log('Bulk Assign Images', phase=4))
+        tools_menu.addAction('Bulk Assign Images', self._on_bulk_assign_images)
 
         help_menu = bar.addMenu('&Help')
-        help_menu.addAction('&About', lambda: self._stub_log('About', phase=4))
+        help_menu.addAction('&About', self._on_about)
 
     # --- refresh ---
 
@@ -166,10 +170,7 @@ class MainWindow(QMainWindow):
         self.recipes_model.refresh()
         self.statusBar().showMessage('Refreshed', 2000)
 
-    # --- stub handlers (filled in by later phases) ---
-
-    def _stub_log(self, name, phase):
-        print(f'[stub] {name} — Phase {phase} will implement this')
+    # --- ingredient / recipe handlers ---
 
     def _on_ingredient_edit(self, src_row):
         ing_id = self.ingredients_model.id_at_row(src_row)
@@ -299,3 +300,21 @@ class MainWindow(QMainWindow):
             f"No match: {counts['unmatched']}",
         )
         self.refresh()
+
+    def _on_bulk_assign_images(self):
+        BulkImageAssignDialog(parent=self).exec()
+        self.refresh()
+
+    def _on_suppliers(self):
+        SuppliersManagerDialog(parent=self).exec()
+        # Suppliers don't affect the ingredient/recipe browse lists directly,
+        # but a refresh is cheap and keeps the model consistent if anything
+        # downstream (like price-history dialogs) re-reads.
+        self.refresh()
+
+    def _on_tags(self):
+        TagsManagerDialog(parent=self).exec()
+        self.refresh()
+
+    def _on_about(self):
+        AboutDialog(parent=self).exec()

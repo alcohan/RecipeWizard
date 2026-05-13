@@ -15,20 +15,11 @@ import config
 import db
 from gui.dialogs.ingredient_price_edit import IngredientPriceEditDialog
 from gui.dialogs.price_history import PriceHistoryDialog
+from gui.images import available_images
 from gui.widgets.allergen_checkbox_grid import AllergenCheckboxGrid
 
 
-IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp')
 PREVIEW_SIZE = 200
-
-
-def _available_images():
-    os.makedirs(config.INGREDIENTS_PATH, exist_ok=True)
-    files = sorted(
-        n for n in os.listdir(config.INGREDIENTS_PATH)
-        if os.path.splitext(n)[1].lower() in IMAGE_EXTENSIONS
-    )
-    return [''] + files
 
 
 def _image_pixmap(filename):
@@ -116,7 +107,7 @@ class IngredientEditDialog(QDialog):
     def _build_image(self, current_filename):
         box = QGroupBox('Image')
         self.image_combo = QComboBox()
-        self.image_combo.addItems(_available_images())
+        self.image_combo.addItems(available_images())
         idx = self.image_combo.findText(current_filename)
         if idx >= 0:
             self.image_combo.setCurrentIndex(idx)
@@ -197,7 +188,7 @@ class IngredientEditDialog(QDialog):
         current = self.image_combo.currentText()
         self.image_combo.blockSignals(True)
         self.image_combo.clear()
-        self.image_combo.addItems(_available_images())
+        self.image_combo.addItems(available_images())
         idx = self.image_combo.findText(current)
         if idx >= 0:
             self.image_combo.setCurrentIndex(idx)
