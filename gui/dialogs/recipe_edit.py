@@ -10,7 +10,7 @@ Layout: three columns separated by a QSplitter.
   Left:    demographic + Update button, tag grid, components table, action row
   Middle:  read-only info / nutrition / contains panels
   Right:   wedge preview'''
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSettings
 from PySide6.QtGui import QDoubleValidator, QKeySequence, QUndoStack
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QDialogButtonBox, QFormLayout, QGroupBox,
@@ -75,19 +75,29 @@ class RecipeEditDialog(QDialog):
             btn.setAutoDefault(False)
             btn.setDefault(False)
 
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(left_col)
-        splitter.addWidget(middle_col)
-        splitter.addWidget(right_col)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
-        splitter.setStretchFactor(2, 1)
+        self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.addWidget(left_col)
+        self.splitter.addWidget(middle_col)
+        self.splitter.addWidget(right_col)
+        self.splitter.setStretchFactor(0, 3)
+        self.splitter.setStretchFactor(1, 2)
+        self.splitter.setStretchFactor(2, 1)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(splitter, stretch=1)
+        layout.addWidget(self.splitter, stretch=1)
         layout.addWidget(button_box)
 
+        # Restore splitter ratios from the previous session if we have them.
+        settings = QSettings()
+        state = settings.value('recipeEditDialog/splitter')
+        if state is not None:
+            self.splitter.restoreState(state)
+
         self._refresh()
+
+    def done(self, result):
+        QSettings().setValue('recipeEditDialog/splitter', self.splitter.saveState())
+        super().done(result)
 
     # --- layout builders ---
 
