@@ -78,7 +78,10 @@ class _RecipeGallery(QWidget):
         super().__init__(parent)
         self._model = recipes_model
         self._cards = []
-        self._current_columns = 1
+        # Reasonable starting guess: the viewport has no width yet on construction,
+        # so this avoids a visible 1-column flash that snaps to N columns once
+        # the first resizeEvent fires with the actual size.
+        self._current_columns = 4
         self._filter = ''
 
         self.grid_container = QWidget()
@@ -115,20 +118,28 @@ class _RecipeGallery(QWidget):
 
     def _relayout(self):
         '''Re-place existing _RecipeCard widgets in the grid for the current
-        column count and active filter. No widgets are destroyed.'''
-        for card in self._cards:
-            self.grid.removeWidget(card)
-        visible_index = 0
-        for card in self._cards:
-            matches = not self._filter or self._filter in card.name.lower()
-            card.setVisible(matches)
-            if matches:
-                self.grid.addWidget(
-                    card,
-                    visible_index // self._current_columns,
-                    visible_index % self._current_columns,
-                )
-                visible_index += 1
+        column count and active filter. No widgets are destroyed.
+
+        Updates are suppressed during the rearrangement so the brief
+        "everything removed from the layout" intermediate state never
+        reaches the screen.'''
+        self.grid_container.setUpdatesEnabled(False)
+        try:
+            for card in self._cards:
+                self.grid.removeWidget(card)
+            visible_index = 0
+            for card in self._cards:
+                matches = not self._filter or self._filter in card.name.lower()
+                card.setVisible(matches)
+                if matches:
+                    self.grid.addWidget(
+                        card,
+                        visible_index // self._current_columns,
+                        visible_index % self._current_columns,
+                    )
+                    visible_index += 1
+        finally:
+            self.grid_container.setUpdatesEnabled(True)
 
     def refresh(self):
         # Tear down old cards entirely (model has been replaced).
@@ -137,7 +148,9 @@ class _RecipeGallery(QWidget):
             card.deleteLater()
         self._cards = []
 
-        self._current_columns = self._columns_for_width(self.scroll.viewport().width())
+        # Don't recompute _current_columns here — at construction time the
+        # scroll viewport has no real width, and during a later refresh the
+        # value is already correct from the most recent resizeEvent.
 
         # First pass: construct all cards with placeholder wedges (instant).
         # Second pass: queue background renders. PIL's C operations release
