@@ -74,8 +74,8 @@ class IngredientEditDialog(QDialog):
         right_col = QVBoxLayout()
         right_col.addWidget(self.allergen_grid)
         right_col.addWidget(image_box)
-        right_col.addWidget(used_in_box)
-        right_col.addStretch()
+        # Used-in absorbs the remaining vertical space (no trailing stretch).
+        right_col.addWidget(used_in_box, stretch=1)
 
         columns = QHBoxLayout()
         columns.addLayout(left_col, stretch=1)
@@ -125,15 +125,17 @@ class IngredientEditDialog(QDialog):
     def _build_used_in(self):
         '''List of recipes that directly use this ingredient. Double-click
         opens that recipe's edit dialog (the panel re-fetches on return so
-        removing the ingredient from a recipe is reflected immediately).'''
+        removing the ingredient from a recipe is reflected immediately).
+        Grows to fill the right column's remaining space.'''
         box = QGroupBox('Used in recipes')
         self.used_in_list = QListWidget()
-        self.used_in_list.setMaximumHeight(120)
         self.used_in_list.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.used_in_list.itemActivated.connect(self._on_used_in_activated)
 
         self.used_in_empty = QLabel('(not used in any recipes)')
         self.used_in_empty.setEnabled(False)
+        # Center the empty message when the box is tall.
+        self.used_in_empty.setAlignment(Qt.AlignCenter)
 
         self.used_in_stack = QStackedWidget()
         self.used_in_stack.addWidget(self.used_in_list)   # index 0
