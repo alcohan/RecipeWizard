@@ -6,9 +6,9 @@ import os
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QDoubleValidator, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox,
-    QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout,
-    QWidget,
+    QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 import config
@@ -51,6 +51,7 @@ class IngredientEditDialog(QDialog):
         self.allergen_grid = AllergenCheckboxGrid(ingredient_id)
         self.allergen_grid.changed.connect(self._mark_modified)
         image_box = self._build_image(row.get('ImageFilename') or '')
+        used_in_box = self._build_used_in()
 
         button_box = QDialogButtonBox()
         save_btn = button_box.addButton('Save', QDialogButtonBox.AcceptRole)
@@ -67,6 +68,7 @@ class IngredientEditDialog(QDialog):
         layout.addWidget(nutrition_box)
         layout.addWidget(self.allergen_grid)
         layout.addWidget(image_box)
+        layout.addWidget(used_in_box)
         layout.addWidget(button_box)
 
     def _build_demographic(self, row):
@@ -105,6 +107,55 @@ class IngredientEditDialog(QDialog):
             self._inputs[key] = edit
             form.addRow(label, edit)
         return box
+
+    def _build_used_in(self):
+        '''List of recipes that directly use this ingredient. Double-click
+        opens that recipe's edit dialog (the panel re-fetches on return so
+        removing the ingredient from a recipe is reflected immediately).'''
+        box = QGroupBox('Used in recipes')
+        self.used_in_list = QListWidget()
+        self.used_in_list.setMaximumHeight(120)
+        self.used_in_list.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.used_in_list.itemActivated.connect(self._on_used_in_activated)
+
+        self.used_in_empty = QLabel('(not used in any recipes)')
+        self.used_in_empty.setEnabled(False)
+
+        self.used_in_stack = QStackedWidget()
+        self.used_in_stack.addWidget(self.used_in_list)   # index 0
+        self.used_in_stack.addWidget(self.used_in_empty)  # index 1
+
+        layout = QVBoxLayout(box)
+        layout.addWidget(self.used_in_stack)
+
+        self._refresh_used_in()
+        return box
+
+    def _refresh_used_in(self):
+        recipes = db.get_recipes_using_ingredient(self.ingredient_id)
+        self.used_in_list.clear()
+        if not recipes:
+            self.used_in_stack.setCurrentIndex(1)
+            return
+        self.used_in_stack.setCurrentIndex(0)
+        for r in recipes:
+            item = QListWidgetItem(r['Name'])
+            item.setData(Qt.UserRole, r['Id'])
+            self.used_in_list.addItem(item)
+
+    def _on_used_in_activated(self, item):
+        recipe_id = item.data(Qt.UserRole)
+        # Lazy import: ingredient_edit and recipe_edit would otherwise risk
+        # a cycle if recipe_edit ever needed to open an ingredient.
+        from gui.dialogs.recipe_edit import RecipeEditDialog
+        dlg = RecipeEditDialog(recipe_id, parent=self)
+        dlg.exec()
+        if dlg.modified:
+            # The recipe may have removed this ingredient — re-query so the
+            # list reflects current state. Also bubble up so the main window
+            # refreshes after this dialog closes.
+            self.modified = True
+            self._refresh_used_in()
 
     def _build_image(self, current_filename):
         box = QGroupBox('Image')
