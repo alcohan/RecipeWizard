@@ -143,6 +143,7 @@ def render_nutrition_label(recipe, ingredients_str, width=LABEL_WIDTH):
     def gap(px=GAP):
         state['y'] += px
 
+    name_font = QFont('Arial', 14); name_font.setBold(True)
     title_font = QFont('Arial', 28); title_font.setWeight(QFont.Black)
     serving_font = QFont('Arial', 11)
     bold_font = QFont('Arial', 11); bold_font.setBold(True)
@@ -151,6 +152,20 @@ def render_nutrition_label(recipe, ingredients_str, width=LABEL_WIDTH):
     row_bold = QFont('Arial', 11); row_bold.setBold(True)
     small_bold = QFont('Arial', 10); small_bold.setBold(True)
     small_font = QFont('Arial', 10)
+
+    recipe_name = recipe.get('Name') or ''
+    if recipe_name:
+        p.setFont(name_font)
+        fm = QFontMetrics(name_font)
+        name_rect = fm.boundingRect(
+            PADDING, state['y'], inner_w, 200,
+            Qt.TextWordWrap | Qt.AlignHCenter, recipe_name,
+        )
+        p.drawText(
+            PADDING, state['y'], inner_w, name_rect.height(),
+            Qt.TextWordWrap | Qt.AlignHCenter, recipe_name,
+        )
+        state['y'] += name_rect.height() + GAP
 
     draw_text(title_font, 'Nutrition Facts')
     rule('thick')
