@@ -36,7 +36,21 @@ from PySide6.QtWidgets import QApplication
 from gui.main_window import MainWindow
 
 
+def _set_windows_app_user_model_id(app_id):
+    '''Tell Windows this process has its own taskbar grouping. Without this,
+    Windows reuses the python.exe AppUserModelID and our setWindowIcon()
+    call is overridden by the generic Python interpreter icon in the taskbar.'''
+    if sys.platform != 'win32':
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+    except Exception as exc:
+        print(f'Could not set AppUserModelID: {exc}')
+
+
 def main():
+    _set_windows_app_user_model_id('AdrianCohan.RecipeWizard')
     app = QApplication(sys.argv)
     app.setApplicationName(config.APPNAME)
     app.setWindowIcon(QIcon(config.ICON))
