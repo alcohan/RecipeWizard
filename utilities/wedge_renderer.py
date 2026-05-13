@@ -5,6 +5,7 @@ with an assigned image have their wedge filled with a zoomed center crop of
 that image (composited on a pastel fallback so transparent PNG edges still
 read as filled). Wedges without an image show just the pastel.
 '''
+from functools import lru_cache
 from io import BytesIO
 from math import pi, cos, sin
 import os
@@ -40,8 +41,12 @@ def _palette_color(key):
     return PALETTE[hash(key) % len(PALETTE)]
 
 
+@lru_cache(maxsize=256)
 def _zoomed_square(path, size):
-    '''Load image, center-square-crop, zoom in, resize to (size, size). Returns RGBA Image or None.'''
+    '''Load image, center-square-crop, zoom in, resize to (size, size). Returns RGBA Image or None.
+
+    Cached: ingredients are reused across many recipes, so the gallery's
+    cold render goes from "open+resize the same PNG 5x" to once.'''
     try:
         img = Image.open(path).convert('RGBA')
     except Exception as exc:
@@ -60,10 +65,28 @@ def _zoomed_square(path, size):
 def render_recipe(components, size=300):
     '''Render a wedge preview. `components` is a list of dicts with keys
     Name, Type ('ingredient'|'recipe'), and ImageFilename (may be None).
-    Returns PNG bytes, or None if PIL is unavailable.'''
+    Returns PNG bytes, or None if PIL is unavailable.
+
+    Results are cached: only Name / Type / ImageFilename affect the rendered
+    image (wedge sectors are equal-sized regardless of quantity), so an
+    unchanged recipe never re-renders. After editing one recipe, the home
+    gallery refresh only re-renders the one that changed.'''
     if Image is None:
         return None
+    key = tuple((c.get('Name'), c.get('Type'), c.get('ImageFilename')) for c in components)
+    return _render_cached(key, size)
 
+
+@lru_cache(maxsize=512)
+def _render_cached(components_key, size):
+    components = [
+        {'Name': name, 'Type': type_, 'ImageFilename': fname}
+        for (name, type_, fname) in components_key
+    ]
+    return _render_uncached(components, size)
+
+
+def _render_uncached(components, size):
     render_size = size * SUPERSAMPLE
     canvas = Image.new('RGBA', (render_size, render_size), (255, 255, 255, 0))
     draw = ImageDraw.Draw(canvas)
