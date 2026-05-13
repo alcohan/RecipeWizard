@@ -1,5 +1,5 @@
 from PySide6.QtCore import QObject, QRectF, QRunnable, Qt, QThreadPool, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QLabel
 
 import db
@@ -7,13 +7,16 @@ from utilities.wedge_renderer import render_recipe
 
 
 class _WedgeRenderSignals(QObject):
-    completed = Signal(bytes)
+    completed = Signal(QImage)
 
 
 class _WedgeRenderTask(QRunnable):
     '''Background wedge render. Components are captured on the main thread
-    (cheap SQLite query) and the heavy PIL work runs on a pool worker. Qt
-    queues the completed signal back to the main thread.'''
+    (cheap SQLite query) and the heavy PIL work + PNG decode run on a pool
+    worker — including decoding the PNG bytes into a QImage. The main
+    thread then just does a cheap QPixmap.fromImage on the queued signal,
+    so the 28-card gallery cold load doesn't block paint events while
+    decoding sprites one-by-one.'''
 
     def __init__(self, components, size):
         super().__init__()
@@ -22,13 +25,15 @@ class _WedgeRenderTask(QRunnable):
         self.signals = _WedgeRenderSignals()
 
     def run(self):
+        image = QImage()
         try:
             png = render_recipe(self.components, size=self.size)
+            if png:
+                image.loadFromData(png)  # PNG decode happens on the worker
         except Exception as exc:
             print(f'wedge render failed: {exc}')
-            png = None
         try:
-            self.signals.completed.emit(png or b'')
+            self.signals.completed.emit(image)
         except RuntimeError:
             # Signal source got torn down (e.g. app exiting mid-render).
             # The receiver is gone too, so there's nothing to deliver.
@@ -58,7 +63,10 @@ class WedgeView(QLabel):
         (recipe edit dialog) — there's no perceived stutter for a single
         ~100ms PIL render.'''
         png = render_recipe(db.get_recipe_wedge_components(self.recipe_id), size=self._size)
-        self._apply_png(png or b'')
+        image = QImage()
+        if png:
+            image.loadFromData(png)
+        self._apply_image(image)
 
     def render_async(self, pool=None):
         '''Background render. Use when rendering many wedges at once
@@ -69,7 +77,7 @@ class WedgeView(QLabel):
         # signals object lives on the task; the connection is auto-removed if
         # this WedgeView gets destroyed before the worker emits, so a late
         # callback never lands on a deleted widget.
-        task.signals.completed.connect(self._apply_png)
+        task.signals.completed.connect(self._apply_image)
         pool.start(task)
 
     def _show_placeholder(self):
@@ -87,9 +95,10 @@ class WedgeView(QLabel):
         painter.end()
         self.setPixmap(pixmap)
 
-    def _apply_png(self, png_bytes):
-        if not png_bytes:
+    def _apply_image(self, image):
+        '''QImage was decoded on a worker (or main, for sync refresh). Building
+        the QPixmap is cheap — just GPU upload — so this stays fast even if
+        all 28 callbacks land in quick succession.'''
+        if image.isNull():
             return  # leave the placeholder visible
-        pixmap = QPixmap()
-        pixmap.loadFromData(png_bytes)
-        self.setPixmap(pixmap)
+        self.setPixmap(QPixmap.fromImage(image))
