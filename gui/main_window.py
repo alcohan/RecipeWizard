@@ -11,6 +11,8 @@ import setup
 from gui.dialogs.ingredient_create import IngredientCreateDialog
 from gui.dialogs.ingredient_create_from_usda import IngredientCreateFromUsdaDialog
 from gui.dialogs.ingredient_edit import IngredientEditDialog
+from gui.dialogs.recipe_create import RecipeCreateDialog
+from gui.dialogs.recipe_edit import RecipeEditDialog
 from gui.models.filter_proxy import MultiColumnFilterProxy
 from gui.models.ingredients_model import IngredientsModel
 from gui.models.recipes_model import RecipesModel
@@ -208,14 +210,32 @@ class MainWindow(QMainWindow):
 
     def _on_recipe_edit(self, src_row):
         rec_id = self.recipes_model.id_at_row(src_row)
-        print(f'[stub] Edit recipe id={rec_id} — Phase 3 will implement this')
+        dlg = RecipeEditDialog(rec_id, parent=self)
+        dlg.exec()
+        if dlg.modified:
+            self.refresh()
 
     def _on_recipe_delete(self, src_row):
-        rec_id = self.recipes_model.id_at_row(src_row)
-        print(f'[stub] Delete recipe id={rec_id} — Phase 3 will implement this')
+        row = self.recipes_model.row_dict(src_row)
+        if QMessageBox.question(
+            self, 'Delete', f"Delete {row['Name']}?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+        try:
+            db.delete_recipe(row['Id'])
+        except Exception as exc:
+            QMessageBox.warning(self, 'Recipe In Use', str(exc))
+            return
+        self.refresh()
 
     def _on_new_recipe(self):
-        self._stub_log('New Recipe', phase=3)
+        create_dlg = RecipeCreateDialog(parent=self)
+        if create_dlg.exec() != QDialog.Accepted or not create_dlg.new_id:
+            return
+        edit_dlg = RecipeEditDialog(create_dlg.new_id, parent=self)
+        edit_dlg.exec()
+        self.refresh()
 
     # --- functional handlers wired to existing business layer ---
 
