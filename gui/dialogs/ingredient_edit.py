@@ -43,12 +43,14 @@ class IngredientEditDialog(QDialog):
 
         row = db.get_ingredients(ingredient_id)
         self.setWindowTitle(f"{config.APPNAME} | {row['Name']}")
+        self.resize(940, 680)
 
         self._inputs = {}
 
         demographic_box = self._build_demographic(row)
         nutrition_box = self._build_nutrition(row)
-        self.allergen_grid = AllergenCheckboxGrid(ingredient_id)
+        # 4-column allergen grid fits the narrower right-hand column better.
+        self.allergen_grid = AllergenCheckboxGrid(ingredient_id, columns=4)
         self.allergen_grid.changed.connect(self._mark_modified)
         image_box = self._build_image(row.get('ImageFilename') or '')
         used_in_box = self._build_used_in()
@@ -63,12 +65,24 @@ class IngredientEditDialog(QDialog):
         delete_btn.clicked.connect(self._on_delete)
         close_btn.clicked.connect(self.reject)
 
+        # Two-column layout: facts on the left, associations on the right.
+        left_col = QVBoxLayout()
+        left_col.addWidget(demographic_box)
+        left_col.addWidget(nutrition_box)
+        left_col.addStretch()
+
+        right_col = QVBoxLayout()
+        right_col.addWidget(self.allergen_grid)
+        right_col.addWidget(image_box)
+        right_col.addWidget(used_in_box)
+        right_col.addStretch()
+
+        columns = QHBoxLayout()
+        columns.addLayout(left_col, stretch=1)
+        columns.addLayout(right_col, stretch=1)
+
         layout = QVBoxLayout(self)
-        layout.addWidget(demographic_box)
-        layout.addWidget(nutrition_box)
-        layout.addWidget(self.allergen_grid)
-        layout.addWidget(image_box)
-        layout.addWidget(used_in_box)
+        layout.addLayout(columns, stretch=1)
         layout.addWidget(button_box)
 
     def _build_demographic(self, row):
