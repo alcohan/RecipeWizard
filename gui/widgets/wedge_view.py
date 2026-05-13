@@ -46,7 +46,14 @@ class WedgeView(QLabel):
     Construction always shows a placeholder circle. Callers then choose:
       - `.refresh()`  — synchronous render (blocking, simple).
       - `.render_async()` — background render via QThreadPool; the
-        placeholder stays visible until the worker finishes.'''
+        placeholder stays visible until the worker finishes.
+
+    Emits renderComplete() once the actual wedge has replaced the
+    placeholder — callers (e.g. the home gallery) can wait on this to
+    show the surrounding card only when it's actually ready, so the user
+    sees cards pop in fully formed instead of placeholder→wedge churn.'''
+
+    renderComplete = Signal()
 
     def __init__(self, recipe_id, size=220, defer=False, parent=None):
         super().__init__(parent)
@@ -102,3 +109,4 @@ class WedgeView(QLabel):
         if image.isNull():
             return  # leave the placeholder visible
         self.setPixmap(QPixmap.fromImage(image))
+        self.renderComplete.emit()

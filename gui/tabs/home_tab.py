@@ -22,6 +22,9 @@ class _RecipeCard(QFrame):
         super().__init__(parent)
         self.recipe_id = recipe_id
         self.name = name or ''
+        # Hidden until the wedge actually renders, so cold-load shows a
+        # quiet progressive populate instead of 28 placeholder→wedge swaps.
+        self._wedge_ready = False
         self.setObjectName('RecipeCard')
         self.setStyleSheet('''
             QFrame#RecipeCard {
@@ -40,6 +43,7 @@ class _RecipeCard(QFrame):
 
         self.wedge = WedgeView(recipe_id, size=140, defer=True)
         self.wedge.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.wedge.renderComplete.connect(self._on_wedge_ready)
 
         name_label = QLabel(name)
         name_label.setAlignment(Qt.AlignCenter)
@@ -54,6 +58,18 @@ class _RecipeCard(QFrame):
 
     def start_render(self, pool):
         self.wedge.render_async(pool)
+
+    def _on_wedge_ready(self):
+        '''Worker finished — the card can show its final, populated state.
+        _RecipeGallery._relayout consults _wedge_ready to decide whether
+        to make this card visible.'''
+        self._wedge_ready = True
+        # Only show now if the card isn't being filtered out.
+        gallery = self.parent()
+        while gallery is not None and not isinstance(gallery, _RecipeGallery):
+            gallery = gallery.parent()
+        if gallery is not None:
+            gallery._reveal_if_ready(self)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -120,6 +136,10 @@ class _RecipeGallery(QWidget):
         '''Re-place existing _RecipeCard widgets in the grid for the current
         column count and active filter. No widgets are destroyed.
 
+        Cards stay hidden until their wedge has rendered (see
+        _wedge_ready) so cold load doesn't show a sea of placeholders
+        churning into wedges; instead, cards pop in fully-formed.
+
         Updates are suppressed during the rearrangement so the brief
         "everything removed from the layout" intermediate state never
         reaches the screen.'''
@@ -129,9 +149,11 @@ class _RecipeGallery(QWidget):
                 self.grid.removeWidget(card)
             visible_index = 0
             for card in self._cards:
-                matches = not self._filter or self._filter in card.name.lower()
-                card.setVisible(matches)
-                if matches:
+                matches_filter = not self._filter or self._filter in card.name.lower()
+                # Even if the card matches the filter, keep it hidden until
+                # its wedge is actually painted.
+                card.setVisible(matches_filter and card._wedge_ready)
+                if matches_filter:
                     self.grid.addWidget(
                         card,
                         visible_index // self._current_columns,
@@ -140,6 +162,13 @@ class _RecipeGallery(QWidget):
                     visible_index += 1
         finally:
             self.grid_container.setUpdatesEnabled(True)
+
+    def _reveal_if_ready(self, card):
+        '''Called by a card when its wedge has finished rendering. Show the
+        card now (if filter allows) without touching anyone else's
+        position — its grid cell was already reserved in _relayout.'''
+        if not self._filter or self._filter in card.name.lower():
+            card.setVisible(True)
 
     def refresh(self):
         # Tear down old cards entirely (model has been replaced).
