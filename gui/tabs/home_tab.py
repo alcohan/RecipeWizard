@@ -1,7 +1,7 @@
 '''Home dashboard tab: summary count cards on top, a clickable grid of
 recipe-wedge cards below. New future widgets/sections should slot into
 HomeTab's vertical layout the same way.'''
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QThreadPool, Signal
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget,
 )
@@ -36,8 +36,8 @@ class _RecipeCard(QFrame):
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedSize(220, 220)
 
-        wedge = WedgeView(recipe_id, size=140)
-        wedge.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.wedge = WedgeView(recipe_id, size=140, defer=True)
+        self.wedge.setAttribute(Qt.WA_TransparentForMouseEvents)
 
         name_label = QLabel(name)
         name_label.setAlignment(Qt.AlignCenter)
@@ -47,8 +47,11 @@ class _RecipeCard(QFrame):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
-        layout.addWidget(wedge, alignment=Qt.AlignCenter)
+        layout.addWidget(self.wedge, alignment=Qt.AlignCenter)
         layout.addWidget(name_label)
+
+    def start_render(self, pool):
+        self.wedge.render_async(pool)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -93,11 +96,20 @@ class _RecipeGallery(QWidget):
             if w is not None:
                 w.deleteLater()
 
+        # First pass: place all cards with placeholder wedges (instant).
+        # Second pass: queue background renders. PIL's C operations release
+        # the GIL so workers actually parallelize. Cache hits from prior
+        # renders return immediately; only changed/new recipes do real work.
+        pool = QThreadPool.globalInstance()
+        cards = []
         for i in range(self._model.rowCount()):
             row = self._model.row_dict(i)
             card = _RecipeCard(row['Id'], row['Name'])
             card.clicked.connect(self.recipeClicked.emit)
             self.grid.addWidget(card, i // self._columns, i % self._columns)
+            cards.append(card)
+        for card in cards:
+            card.start_render(pool)
 
 
 class HomeTab(QWidget):
