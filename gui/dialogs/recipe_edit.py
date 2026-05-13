@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 import config
 import db
+from gui.dialogs.nutrition_label import NutritionLabelDialog
 from gui.dialogs.price_history import PriceHistoryDialog
 from gui.dialogs.recipe_component_add import RecipeComponentAddDialog
 from gui.dialogs.recipe_component_edit import RecipeComponentEditDialog
@@ -293,10 +294,7 @@ class RecipeEditDialog(QDialog):
             ))
 
     def _on_nutrition_label(self):
-        QMessageBox.information(
-            self, 'Nutrition Label',
-            'Phase 5 will implement the native nutrition label renderer.',
-        )
+        NutritionLabelDialog(self.recipe_id, parent=self).exec()
 
     def _on_price_history(self):
         dlg = PriceHistoryDialog(self.recipe_id, self.name_edit.text(), recipe_mode=True, parent=self)
