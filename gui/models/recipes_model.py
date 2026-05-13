@@ -55,3 +55,6 @@ class RecipesModel(QAbstractTableModel):
 
     def id_at_row(self, row):
         return self._rows[row]['Id']
+
+    def row_dict(self, row):
+        return self._rows[row]

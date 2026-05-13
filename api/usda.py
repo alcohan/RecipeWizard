@@ -63,19 +63,14 @@ def get_food_details(fdc_id):
     return response.json()
 
 
-def get_simple(query):
-    """Take the top USDA hit and return a prefill dict for ingredient.create().
+def build_prefill(food, fallback_description=None):
+    """Convert a USDA food-detail payload into a prefill dict for ingredient.create().
 
-    The search endpoint truncates foodNutrients per food, so we follow up
-    with a /food/{fdcId} call to get the complete set. All Foundation /
-    SR Legacy / FNDDS nutrients are per-100g, so our 100g default portion
-    needs no further scaling.
+    All Foundation / SR Legacy / FNDDS nutrients are per-100g, so the default
+    100g portion needs no further scaling. Missing nutrients default to 0.
     """
-    hits = search(query)
-    food = get_food_details(hits[0]['fdcId'])
-
     result = {
-        'Name': food.get('description', hits[0]['description']),
+        'Name': food.get('description', fallback_description or ''),
         'Unit': '100 g',
         'Weight': 100,
     }
@@ -90,3 +85,14 @@ def get_simple(query):
             result[NUTRIENT_FIELDS[nut_id]] = round(value or 0, 2)
 
     return result
+
+
+def get_simple(query):
+    """Take the top USDA hit and return a prefill dict for ingredient.create().
+
+    The search endpoint truncates foodNutrients per food, so we follow up
+    with a /food/{fdcId} call to get the complete set.
+    """
+    hits = search(query)
+    food = get_food_details(hits[0]['fdcId'])
+    return build_prefill(food, fallback_description=hits[0]['description'])
