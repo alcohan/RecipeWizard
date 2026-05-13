@@ -6,6 +6,9 @@ import window_utils
 import recipe_ingredient
 import modules.recipes.recipe_ingredient_new as recipe_ingredient_new
 import modules.ingredients.pricehistory as pricehistory
+from utilities.wedge_renderer import render_recipe
+
+WEDGE_SIZE = 220
 
 def edit(id):
     '''
@@ -30,6 +33,9 @@ def edit(id):
         data = db.recipe_components(id)
         return [[row[field] for field in db.recipe_components_fields] for row in data]
 
+    def fetch_wedge_image():
+        return render_recipe(db.get_recipe_wedge_components(id), size=WEDGE_SIZE)
+
     def refresh():
         # update the components table
         window['-TABLE-'].Update(values=format_component_data())
@@ -41,6 +47,7 @@ def edit(id):
         for field in info:
             window[field].update(new_data[field])
         window['-ALLERGENS-'].update(', '.join(db.get_recipe_allergens(id)) or '(none)')
+        window['-WEDGE-'].update(data=fetch_wedge_image())
 
     layout_demographic = [sg.Frame('Recipe',[[
             sg.Column([
@@ -81,6 +88,10 @@ def edit(id):
         [sg.Text(allergens_str, k='-ALLERGENS-', size=(40, None))]
     ])]
 
+    layout_preview = [sg.Frame('Preview', [
+        [sg.Image(data=fetch_wedge_image(), k='-WEDGE-', size=(WEDGE_SIZE, WEDGE_SIZE))]
+    ])]
+
     # Control buttons
     layout_buttons = [
         # sg.Button('Save', key='-SAVE-'),
@@ -115,7 +126,12 @@ def edit(id):
             layout_info,
             layout_nutrition,
             layout_contains,
-        ])
+        ]),
+        sg.Column([
+            [sg.VPush()],
+            layout_preview,
+            [sg.VPush()],
+        ], expand_y=True)
     ]]
 
     # Create the Window

@@ -1,3 +1,5 @@
+import os
+from io import BytesIO
 import PySimpleGUI as sg
 import db
 import config
@@ -5,6 +7,40 @@ import window_utils
 import modules.ingredients.ingredient_prices as ingredient_prices
 import modules.ingredients.pricehistory as pricehistory
 from re import sub
+
+try:
+    from PIL import Image as PILImage
+except ImportError:
+    PILImage = None
+
+IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp')
+PREVIEW_SIZE = (200, 200)
+
+def _available_images():
+    '''List image files currently sitting in the ingredients photo folder.'''
+    os.makedirs(config.INGREDIENTS_PATH, exist_ok=True)
+    files = [
+        name for name in sorted(os.listdir(config.INGREDIENTS_PATH))
+        if os.path.splitext(name)[1].lower() in IMAGE_EXTENSIONS
+    ]
+    return [''] + files
+
+def _image_thumbnail(filename):
+    '''Return PNG bytes of a downsized preview for sg.Image(data=...), or None.'''
+    if not filename or PILImage is None:
+        return None
+    path = os.path.join(config.INGREDIENTS_PATH, filename)
+    if not os.path.isfile(path):
+        return None
+    try:
+        img = PILImage.open(path)
+        img.thumbnail(PREVIEW_SIZE)
+        buf = BytesIO()
+        img.save(buf, format='PNG')
+        return buf.getvalue()
+    except Exception as exc:
+        print(f'Failed to load preview for {filename}: {exc}')
+        return None
 
 def edit(id):
     def fetch_data():
@@ -40,6 +76,14 @@ def edit(id):
         for row_ in allergen_rows
     ])]
 
+    current_image = row.get('ImageFilename') or ''
+    layout_image = [sg.Frame('Image', [
+        [sg.Text('File'),
+         sg.Combo(_available_images(), default_value=current_image, k='ImageFilename', size=(40, 1), readonly=True, enable_events=True),
+         sg.Button('Refresh', k='-REFRESH-IMAGES-')],
+        [sg.Image(data=_image_thumbnail(current_image), k='-IMAGE-PREVIEW-', size=PREVIEW_SIZE)],
+    ])]
+
     layout_buttons = [sg.Button('Save', key='-SAVE-'),
                       sg.Button('Delete Ingredient', key='-DELETE-', button_color=("white","red")),
                       sg.Button('Close', button_color=("white","gray"), k='-CLOSE-')
@@ -48,6 +92,7 @@ def edit(id):
     layout = [  layout_demographic(),
                 layout_nutrition,
                 layout_allergens,
+                layout_image,
                 layout_buttons ]
 
     # Create the Window
@@ -91,6 +136,11 @@ def edit(id):
         elif event.startswith('-ALLERGEN-'):
             allergen_id = int(event.split('::')[1])
             db.modify_ingredient_allergen(id, allergen_id, values[event])
+        elif event == '-REFRESH-IMAGES-':
+            window['ImageFilename'].update(values=_available_images(), value=values['ImageFilename'])
+            window['-IMAGE-PREVIEW-'].update(data=_image_thumbnail(values['ImageFilename']))
+        elif event == 'ImageFilename':
+            window['-IMAGE-PREVIEW-'].update(data=_image_thumbnail(values['ImageFilename']))
         else:
             print('Unhandled Event', event, values, )
 

@@ -71,6 +71,7 @@ def update_ingredient(id, values):
         values['FiberGrams'],
         values['SugarGrams'],
         values['ProteinGrams'],
+        values.get('ImageFilename') or None,
     )
     result = query_from_file('sql\\update_ingredient_info.sql',params,filter = f'WHERE Id={id}')
     return result
@@ -94,6 +95,7 @@ def create_ingredient( values):
         values['FiberGrams'],
         values['SugarGrams'],
         values['ProteinGrams'],
+        values.get('ImageFilename') or None,
     )
     result = query_from_file('sql\\create_ingredient.sql',params)
     return result['lastrowid']
@@ -378,3 +380,24 @@ def get_recipe_price_history_dates(recipe_id):
     For the given recipe, get the list of ingredients and dates of earliest price history
     '''
     return query_from_file('sql\\get_recipe_price_history_dates.sql', (recipe_id,))['data']
+
+def set_ingredient_image(ingredient_id, filename):
+    '''Set or clear an ingredient's ImageFilename. Pass None/empty to clear.'''
+    return query('UPDATE Ingredients SET ImageFilename=? WHERE Id=?', (filename or None, ingredient_id))
+
+def get_recipe_wedge_components(recipe_id):
+    '''
+    Direct components of a recipe for wedge rendering: name, type, and (for
+    ingredients) the assigned image filename.
+    '''
+    sql = '''
+        SELECT
+            COALESCE(r.Name, i.Name) AS Name,
+            CASE WHEN c.ChildRecipe IS NOT NULL THEN 'recipe' ELSE 'ingredient' END AS Type,
+            i.ImageFilename AS ImageFilename
+        FROM Connections c
+        LEFT JOIN Recipes r ON r.Id = c.ChildRecipe
+        LEFT JOIN Ingredients i ON i.Id = c.ChildIngredient
+        WHERE c.ParentRecipe = ?;
+    '''
+    return query(sql, (recipe_id,))['data']
