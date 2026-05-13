@@ -4,7 +4,7 @@ points for the price edit / price history flows.'''
 import os
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QDoubleValidator, QPixmap
+from PySide6.QtGui import QDoubleValidator, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout,
@@ -53,6 +53,7 @@ class IngredientEditDialog(QDialog):
 
         button_box = QDialogButtonBox()
         save_btn = button_box.addButton('Save', QDialogButtonBox.AcceptRole)
+        save_btn.setShortcut(QKeySequence.Save)
         delete_btn = button_box.addButton('Delete Ingredient', QDialogButtonBox.DestructiveRole)
         delete_btn.setStyleSheet('background-color: #c0392b; color: white; padding: 4px 10px;')
         close_btn = button_box.addButton('Close', QDialogButtonBox.RejectRole)

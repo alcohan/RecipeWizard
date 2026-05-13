@@ -9,6 +9,7 @@ USDA values are NEVER applied automatically — the user must click
 intended flow: USDA is a quick reference; the user validates everything
 before saving.'''
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QDialog, QDialogButtonBox, QGroupBox, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
@@ -41,6 +42,7 @@ class IngredientCreateFromUsdaDialog(QDialog):
         splitter.setStretchFactor(1, 1)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Save).setShortcut(QKeySequence.Save)
         buttons.accepted.connect(self._on_save)
         buttons.rejected.connect(self.reject)
         # Without this, Enter in the search box also fires the dialog's

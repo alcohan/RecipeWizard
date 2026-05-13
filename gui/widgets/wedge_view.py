@@ -27,7 +27,12 @@ class _WedgeRenderTask(QRunnable):
         except Exception as exc:
             print(f'wedge render failed: {exc}')
             png = None
-        self.signals.completed.emit(png or b'')
+        try:
+            self.signals.completed.emit(png or b'')
+        except RuntimeError:
+            # Signal source got torn down (e.g. app exiting mid-render).
+            # The receiver is gone too, so there's nothing to deliver.
+            pass
 
 
 class WedgeView(QLabel):

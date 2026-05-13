@@ -1,3 +1,4 @@
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QMessageBox, QVBoxLayout,
 )
@@ -39,6 +40,7 @@ class SupplierEditDialog(QDialog):
 
         button_box = QDialogButtonBox()
         save_btn = button_box.addButton('Save', QDialogButtonBox.AcceptRole)
+        save_btn.setShortcut(QKeySequence.Save)
         delete_btn = button_box.addButton('Delete', QDialogButtonBox.DestructiveRole)
         delete_btn.setVisible(not is_new)
         delete_btn.setStyleSheet('background-color: #c0392b; color: white; padding: 4px 10px;')

@@ -5,7 +5,7 @@ set is visible up front (mirrors the old PySimpleGUI listbox UX) and so
 Enter inside the filter input can't auto-pick the first item — selection
 is always explicit.'''
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QDoubleValidator
+from PySide6.QtGui import QDoubleValidator, QKeySequence
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMessageBox, QVBoxLayout,
@@ -51,6 +51,7 @@ class RecipeComponentAddDialog(QDialog):
         qty_row.addRow('', self.unit_label)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Save).setShortcut(QKeySequence.Save)
         buttons.accepted.connect(self._on_save)
         buttons.rejected.connect(self.reject)
         # Same fix as the USDA dialog: don't let Enter in the filter box

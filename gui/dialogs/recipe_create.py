@@ -1,4 +1,4 @@
-from PySide6.QtGui import QDoubleValidator
+from PySide6.QtGui import QDoubleValidator, QKeySequence
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QMessageBox, QVBoxLayout,
 )
@@ -24,6 +24,7 @@ class RecipeCreateDialog(QDialog):
         form.addRow('Recipe Yield', self.yield_edit)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Save).setShortcut(QKeySequence.Save)
         buttons.accepted.connect(self._on_save)
         buttons.rejected.connect(self.reject)
 

@@ -1,4 +1,5 @@
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QLineEdit,
     QMainWindow, QMenu, QMessageBox, QPushButton, QTableView, QTabWidget,
@@ -78,6 +79,11 @@ class _BrowsePane(QWidget):
             return
         self.rowActivated.emit(self.proxy.mapToSource(view_index).row())
 
+    def focus_filter(self):
+        '''Called by the global Ctrl+F shortcut when this pane's tab is active.'''
+        self.filter_edit.setFocus()
+        self.filter_edit.selectAll()
+
     def _show_context_menu(self, point):
         view_index = self.table.indexAt(point)
         if not view_index.isValid():
@@ -110,7 +116,17 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._recipes_tab(), 'Recipes')
         self.setCentralWidget(self.tabs)
 
+        # Ctrl+F focuses whichever tab's filter is active.
+        find_shortcut = QShortcut(QKeySequence.Find, self)
+        find_shortcut.activated.connect(self._focus_active_filter)
+
         self.statusBar().showMessage('Ready')
+
+    def _focus_active_filter(self):
+        tab = self.tabs.currentWidget()
+        focus = getattr(tab, 'focus_filter', None)
+        if callable(focus):
+            focus()
 
     def _home_tab(self):
         tab = HomeTab(self.ingredients_model, self.recipes_model)
@@ -153,6 +169,11 @@ class MainWindow(QMainWindow):
         bar = self.menuBar()
 
         file_menu = bar.addMenu('&File')
+        new_recipe_action = file_menu.addAction('&New Recipe', self._on_new_recipe)
+        new_recipe_action.setShortcut(QKeySequence.New)
+        new_ingredient_action = file_menu.addAction('New &Ingredient', self._on_new_ingredient_blank)
+        new_ingredient_action.setShortcut('Ctrl+Shift+N')
+        file_menu.addSeparator()
         file_menu.addAction('&Import from CSV', self._on_import_csv)
         file_menu.addAction('&Export to CSV', self._on_export_csv)
         file_menu.addSeparator()

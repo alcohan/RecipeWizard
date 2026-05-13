@@ -2,7 +2,7 @@
 on `ingredient_prices` updates `Ingredients.Cost` to the latest effective
 unit price, so the parent dialog should refresh its Cost field on Accept.'''
 from PySide6.QtCore import QDate
-from PySide6.QtGui import QDoubleValidator
+from PySide6.QtGui import QDoubleValidator, QKeySequence
 from PySide6.QtWidgets import (
     QComboBox, QDateEdit, QDialog, QDialogButtonBox, QFormLayout, QLineEdit,
     QMessageBox, QPlainTextEdit, QVBoxLayout,
@@ -66,6 +66,7 @@ class IngredientPriceEditDialog(QDialog):
         form.addRow('Effective Date', self.effective_date)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Save).setShortcut(QKeySequence.Save)
         buttons.accepted.connect(self._on_save)
         buttons.rejected.connect(self.reject)
 
