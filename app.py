@@ -1,9 +1,11 @@
+'''RecipeWizard entry point. Initializes/migrates the SQLite database on
+first import, then boots the PySide6 application.'''
 import os
 import sqlite3
-import PySimpleGUI as sg
-import setup
+import sys
+
 import config
-import window_utils
+import setup
 
 
 def _db_initialized():
@@ -27,95 +29,21 @@ if not _db_initialized():
 else:
     setup.migrateDB()
 
-from modules import ingredients_module, recipes_module, about, suppliers, tags
-from modules.ingredients import bulk_image_assign
 
-from utilities import export_tables_to_file, import_data_to_tables
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import QApplication
 
-def refresh():
-    print('Refreshing Ingredients & Recipes Data')
-    ingredients_module.refresh_table(window)
-    recipes_module.refresh_table(window)
-
-sg.theme('LightGrey1')   # Add a touch of color
-
-# All the stuff inside your window.
-menu_layout = [['&File', ['&Import from CSV', '&Export to CSV', '---', 'E&xit']],
-              ['&Manage',['&Suppliers', '---', 'Tags', '[todo] Templates', '[todo] Units of Measure']],
-              ['&Tools', ['&Refresh::-REFRESH-','Reset Database::-CLEAN-RESET-','Reset With Sample Data::-SAMPLE-RESET-', '---', 'Auto-assign Images::-AUTOASSIGN-', 'Bulk Assign Images::-BULK-ASSIGN-IMAGES-', '---', '[todo] Bulk Price Update']],
-              ['&Help', ['About']]]
-
-layout_ingredients = sg.Frame('Ingredients',ingredients_module.render())
-layout_recipes = sg.Frame('Recipes',recipes_module.render())
-
-layout = [[sg.Menu(menu_layout, k='-MENU-'),
-          [layout_ingredients], 
-          [layout_recipes]
-          ]]
+from gui.main_window import MainWindow
 
 
-# Create the Window
-window = sg.Window(config.APPNAME, layout, icon=config.ICON, finalize=True)
-window_utils.register_active(window)
+def main():
+    app = QApplication(sys.argv)
+    app.setApplicationName(config.APPNAME)
+    app.setWindowIcon(QIcon(config.ICON))
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
 
-# Event Loop to process "events" and get the "values" of the inputs
-while True:
-    event, values = window.read()
-    if event in (sg.WIN_CLOSED, '-CLOSE-', 'Exit'): # if user closes window or clicks cancel
-        break
 
-    # Run the 'ingredients' events
-    elif result := ingredients_module.loop(event,values,window):
-        # If the loop returned 2, we need to refresh the data.
-        if result == 2:
-            refresh()
-        pass
-
-    # Run the 'recipes' events
-    elif result := recipes_module.loop(event,values,window):
-        if result == 2:
-            refresh()
-        pass
-
-    elif event in ('-RESET-', 'Reset With Sample Data::-SAMPLE-RESET-'):
-        print('Starting fresh with sample data')
-        setup.initializeDB()
-        setup.auto_assign_images()
-        refresh()
-    elif event in ('-CLEAN-', 'Reset Database::-CLEAN-RESET-'):
-        print('Starting fresh with a clean database')
-        setup.initializeDB(includeSampleData=False)
-        refresh()
-    elif event in ('Refresh', 'Refresh::-REFRESH-'):
-        print('Refreshing values')
-        refresh()
-    elif event == 'Auto-assign Images::-AUTOASSIGN-':
-        counts = setup.auto_assign_images()
-        sg.popup_ok(
-            f"Assigned: {counts['assigned']}\nAmbiguous (skipped): {counts['ambiguous']}\nNo match: {counts['unmatched']}",
-            title='Auto-assign Images',
-            icon=config.ICON,
-        )
-        refresh()
-    elif event == 'Bulk Assign Images::-BULK-ASSIGN-IMAGES-':
-        bulk_image_assign.render()
-        refresh()
-    elif event == 'About':
-        about.render()
-    elif event == 'Suppliers':
-        suppliers.render()
-    elif event == 'Tags':
-        tags.render()
-
-    elif event == 'Import from CSV':
-        setup.initializeDB(includeSampleData=False)
-        import_data_to_tables('builder.db')
-        setup.auto_assign_images()
-        refresh()
-    elif event == 'Export to CSV':
-        export_tables_to_file('builder.db')
-    
-    else:
-        print('Unhandled Event', event, values)
-
-window.close()
+if __name__ == '__main__':
+    main()
