@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QSettings, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QLineEdit,
@@ -103,6 +103,32 @@ class MainWindow(QMainWindow):
         self.resize(1100, 760)
         self._build_menus()
         self._build_tabs()
+        self._restore_state()
+
+    def _restore_state(self):
+        '''Restore window geometry and last-active tab from QSettings.
+        First launch has no settings — resize() above is the default.'''
+        settings = QSettings()
+        geom = settings.value('mainWindow/geometry')
+        if geom is not None:
+            self.restoreGeometry(geom)
+        state = settings.value('mainWindow/state')
+        if state is not None:
+            self.restoreState(state)
+        last_tab = settings.value('mainWindow/currentTab', 0)
+        try:
+            idx = int(last_tab)
+        except (TypeError, ValueError):
+            idx = 0
+        if 0 <= idx < self.tabs.count():
+            self.tabs.setCurrentIndex(idx)
+
+    def closeEvent(self, event):
+        settings = QSettings()
+        settings.setValue('mainWindow/geometry', self.saveGeometry())
+        settings.setValue('mainWindow/state', self.saveState())
+        settings.setValue('mainWindow/currentTab', self.tabs.currentIndex())
+        super().closeEvent(event)
 
     def _build_tabs(self):
         '''Top-level navigation. To add a tab later, write a `_xxx_tab()`
