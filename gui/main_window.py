@@ -1,12 +1,16 @@
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QHBoxLayout, QHeaderView, QLineEdit, QMainWindow,
-    QMenu, QMessageBox, QPushButton, QSplitter, QTableView, QVBoxLayout,
-    QWidget,
+    QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QLineEdit,
+    QMainWindow, QMenu, QMessageBox, QPushButton, QSplitter, QTableView,
+    QVBoxLayout, QWidget,
 )
 
 import config
+import db
 import setup
+from gui.dialogs.ingredient_create import IngredientCreateDialog
+from gui.dialogs.ingredient_edit import IngredientEditDialog
+from gui.dialogs.usda_search import UsdaSearchDialog
 from gui.models.filter_proxy import MultiColumnFilterProxy
 from gui.models.ingredients_model import IngredientsModel
 from gui.models.recipes_model import RecipesModel
@@ -167,17 +171,41 @@ class MainWindow(QMainWindow):
 
     def _on_ingredient_edit(self, src_row):
         ing_id = self.ingredients_model.id_at_row(src_row)
-        print(f'[stub] Edit ingredient id={ing_id} — Phase 2 will implement this')
+        dlg = IngredientEditDialog(ing_id, parent=self)
+        dlg.exec()
+        if dlg.modified:
+            self.refresh()
 
     def _on_ingredient_delete(self, src_row):
-        ing_id = self.ingredients_model.id_at_row(src_row)
-        print(f'[stub] Delete ingredient id={ing_id} — Phase 2 will implement this')
+        row = self.ingredients_model.row_dict(src_row)
+        if QMessageBox.question(
+            self, 'Delete', f"Delete {row['Name']}?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+        try:
+            db.delete_ingredient(row['Id'])
+        except Exception as exc:
+            QMessageBox.warning(self, 'Ingredient In Use', str(exc))
+            return
+        self.refresh()
 
     def _on_new_ingredient_search(self):
-        self._stub_log('New Ingredient (Search Database)', phase=2)
+        search_dlg = UsdaSearchDialog(parent=self)
+        if search_dlg.exec() != QDialog.Accepted or not search_dlg.selected_prefill:
+            return
+        self._create_then_edit(prefill=search_dlg.selected_prefill)
 
     def _on_new_ingredient_blank(self):
-        self._stub_log('New Ingredient (Blank)', phase=2)
+        self._create_then_edit(prefill=None)
+
+    def _create_then_edit(self, prefill):
+        create_dlg = IngredientCreateDialog(parent=self, prefill=prefill)
+        if create_dlg.exec() != QDialog.Accepted or not create_dlg.new_id:
+            return
+        edit_dlg = IngredientEditDialog(create_dlg.new_id, parent=self)
+        edit_dlg.exec()
+        self.refresh()
 
     def _on_recipe_edit(self, src_row):
         rec_id = self.recipes_model.id_at_row(src_row)
