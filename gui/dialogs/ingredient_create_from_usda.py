@@ -43,6 +43,12 @@ class IngredientCreateFromUsdaDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._on_save)
         buttons.rejected.connect(self.reject)
+        # Without this, Enter in the search box also fires the dialog's
+        # default-accept button and silently creates a blank ingredient.
+        # Save still works on explicit click or focus + Enter.
+        for btn in buttons.buttons():
+            btn.setAutoDefault(False)
+            btn.setDefault(False)
 
         layout = QVBoxLayout(self)
         layout.addWidget(splitter, stretch=1)
