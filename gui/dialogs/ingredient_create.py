@@ -1,5 +1,6 @@
 '''Standalone "New From Blank" create dialog. The combined "New From USDA"
 flow lives in ingredient_create_from_usda; both share IngredientFormWidget.'''
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QVBoxLayout
 
 import config
@@ -16,6 +17,7 @@ class IngredientCreateDialog(QDialog):
         self.form = IngredientFormWidget(prefill=prefill)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Save).setShortcut(QKeySequence.Save)
         buttons.accepted.connect(self._on_save)
         buttons.rejected.connect(self.reject)
 
