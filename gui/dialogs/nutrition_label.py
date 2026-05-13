@@ -143,8 +143,8 @@ def render_nutrition_label(recipe, ingredients_str, width=LABEL_WIDTH):
     def gap(px=GAP):
         state['y'] += px
 
-    name_font = QFont('Arial', 14); name_font.setBold(True)
-    title_font = QFont('Arial', 28); title_font.setWeight(QFont.Black)
+    name_font = QFont('Arial', 20); name_font.setBold(True)
+    title_font = QFont('Arial', 24); title_font.setWeight(QFont.Black)
     serving_font = QFont('Arial', 11)
     bold_font = QFont('Arial', 11); bold_font.setBold(True)
     cal_font = QFont('Arial', 22); cal_font.setWeight(QFont.Black)
