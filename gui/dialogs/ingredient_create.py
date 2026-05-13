@@ -30,5 +30,4 @@ class IngredientCreateDialog(QDialog):
         values = self.form.collect_values()
         self.new_id = db.create_ingredient(values)
         self.status_message = f"Created '{values.get('Name', '') or 'ingredient'}'"
-        print(f'Created new Ingredient id: {self.new_id}')
         self.accept()
