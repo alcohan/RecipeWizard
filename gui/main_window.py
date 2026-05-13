@@ -1,7 +1,7 @@
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QLineEdit,
-    QMainWindow, QMenu, QMessageBox, QPushButton, QSplitter, QTableView,
+    QMainWindow, QMenu, QMessageBox, QPushButton, QTableView, QTabWidget,
     QVBoxLayout, QWidget,
 )
 
@@ -20,6 +20,7 @@ from gui.dialogs.tags_manager import TagsManagerDialog
 from gui.models.filter_proxy import MultiColumnFilterProxy
 from gui.models.ingredients_model import IngredientsModel
 from gui.models.recipes_model import RecipesModel
+from gui.tabs.home_tab import HomeTab
 
 
 class _BrowsePane(QWidget):
@@ -93,19 +94,35 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(config.APPNAME)
-        self.resize(1000, 720)
+        self.resize(1100, 760)
         self._build_menus()
-        self._build_panes()
+        self._build_tabs()
 
-    def _build_panes(self):
+    def _build_tabs(self):
+        '''Top-level navigation. To add a tab later, write a `_xxx_tab()`
+        method that returns a QWidget and add one `addTab(...)` line below.'''
         self.ingredients_model = IngredientsModel(self)
         self.recipes_model = RecipesModel(self)
 
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self._home_tab(), 'Home')
+        self.tabs.addTab(self._ingredients_tab(), 'Ingredients')
+        self.tabs.addTab(self._recipes_tab(), 'Recipes')
+        self.setCentralWidget(self.tabs)
+
+        self.statusBar().showMessage('Ready')
+
+    def _home_tab(self):
+        tab = HomeTab(self.ingredients_model, self.recipes_model)
+        tab.recipeClicked.connect(self._on_recipe_edit_by_id)
+        return tab
+
+    def _ingredients_tab(self):
         new_search_btn = QPushButton('New (Search Database)')
         new_search_btn.clicked.connect(self._on_new_ingredient_search)
         new_blank_btn = QPushButton('New From Blank')
         new_blank_btn.clicked.connect(self._on_new_ingredient_blank)
-        self.ingredients_pane = _BrowsePane(
+        pane = _BrowsePane(
             placeholder='\U0001F50D  Filter ingredients…',
             source_model=self.ingredients_model,
             action_buttons=[new_search_btn, new_blank_btn],
@@ -114,11 +131,13 @@ class MainWindow(QMainWindow):
                 ('Delete', self._on_ingredient_delete),
             ],
         )
-        self.ingredients_pane.rowActivated.connect(self._on_ingredient_edit)
+        pane.rowActivated.connect(self._on_ingredient_edit)
+        return pane
 
+    def _recipes_tab(self):
         new_recipe_btn = QPushButton('New Recipe')
         new_recipe_btn.clicked.connect(self._on_new_recipe)
-        self.recipes_pane = _BrowsePane(
+        pane = _BrowsePane(
             placeholder='\U0001F50D  Filter recipes…',
             source_model=self.recipes_model,
             action_buttons=[new_recipe_btn],
@@ -127,16 +146,8 @@ class MainWindow(QMainWindow):
                 ('Delete', self._on_recipe_delete),
             ],
         )
-        self.recipes_pane.rowActivated.connect(self._on_recipe_edit)
-
-        splitter = QSplitter(Qt.Vertical)
-        splitter.addWidget(self.ingredients_pane)
-        splitter.addWidget(self.recipes_pane)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
-        self.setCentralWidget(splitter)
-
-        self.statusBar().showMessage('Ready')
+        pane.rowActivated.connect(self._on_recipe_edit)
+        return pane
 
     def _build_menus(self):
         bar = self.menuBar()
@@ -210,8 +221,13 @@ class MainWindow(QMainWindow):
         self.refresh()
 
     def _on_recipe_edit(self, src_row):
-        rec_id = self.recipes_model.id_at_row(src_row)
-        dlg = RecipeEditDialog(rec_id, parent=self)
+        self._on_recipe_edit_by_id(self.recipes_model.id_at_row(src_row))
+
+    def _on_recipe_edit_by_id(self, recipe_id):
+        '''Open the recipe edit dialog by recipe id (not row). Lets the home
+        tab gallery dispatch directly without round-tripping through a model
+        row index.'''
+        dlg = RecipeEditDialog(recipe_id, parent=self)
         dlg.exec()
         if dlg.modified:
             self.refresh()
