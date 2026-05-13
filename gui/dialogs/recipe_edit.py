@@ -42,6 +42,7 @@ class RecipeEditDialog(QDialog):
         super().__init__(parent)
         self.recipe_id = recipe_id
         self.modified = False
+        self.status_message = ''
 
         self.undo_stack = QUndoStack(self)
         self.undo_stack.indexChanged.connect(self._refresh)
@@ -311,8 +312,9 @@ class RecipeEditDialog(QDialog):
         dlg.exec()
 
     def _on_delete(self):
+        name = self.name_edit.text()
         if QMessageBox.question(
-            self, 'Delete', f'Delete {self.name_edit.text()}?',
+            self, 'Delete', f'Delete {name}?',
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         ) != QMessageBox.Yes:
             return
@@ -322,4 +324,5 @@ class RecipeEditDialog(QDialog):
             QMessageBox.warning(self, 'Recipe In Use', str(exc))
             return
         self.modified = True
+        self.status_message = f"Deleted '{name}'"
         self.accept()

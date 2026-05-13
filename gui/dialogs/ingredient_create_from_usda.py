@@ -28,6 +28,7 @@ class IngredientCreateFromUsdaDialog(QDialog):
         self.setWindowTitle(f'{config.APPNAME} | > NEW INGREDIENT (USDA Search) <')
         self.resize(1100, 640)
         self.new_id = 0
+        self.status_message = ''
 
         self._hits = []
         self._current_prefill = None
@@ -152,7 +153,9 @@ class IngredientCreateFromUsdaDialog(QDialog):
     # --- save ---
 
     def _on_save(self):
-        self.new_id = db.create_ingredient(self.form.collect_values())
+        values = self.form.collect_values()
+        self.new_id = db.create_ingredient(values)
+        self.status_message = f"Created '{values.get('Name', '') or 'ingredient'}'"
         print(f'Created new Ingredient id: {self.new_id}')
         self.accept()
 

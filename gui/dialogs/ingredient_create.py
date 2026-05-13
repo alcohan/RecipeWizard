@@ -13,6 +13,7 @@ class IngredientCreateDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(f'{config.APPNAME} | > NEW INGREDIENT <')
         self.new_id = 0
+        self.status_message = ''
 
         self.form = IngredientFormWidget(prefill=prefill)
 
@@ -26,6 +27,8 @@ class IngredientCreateDialog(QDialog):
         layout.addWidget(buttons)
 
     def _on_save(self):
-        self.new_id = db.create_ingredient(self.form.collect_values())
+        values = self.form.collect_values()
+        self.new_id = db.create_ingredient(values)
+        self.status_message = f"Created '{values.get('Name', '') or 'ingredient'}'"
         print(f'Created new Ingredient id: {self.new_id}')
         self.accept()

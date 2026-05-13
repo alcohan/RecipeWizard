@@ -12,6 +12,7 @@ class RecipeCreateDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(f'{config.APPNAME} | > NEW RECIPE <')
         self.new_id = 0
+        self.status_message = ''
 
         self.name_edit = QLineEdit()
         self.unit_edit = QLineEdit()
@@ -43,4 +44,5 @@ class RecipeCreateDialog(QDialog):
             QMessageBox.warning(self, 'Invalid Yield', 'Recipe Yield must be numeric.')
             return
         self.new_id = db.create_recipe(name, self.unit_edit.text(), yield_qty)
+        self.status_message = f"Created '{name}'"
         self.accept()
