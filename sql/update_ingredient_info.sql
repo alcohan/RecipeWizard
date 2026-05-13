@@ -13,4 +13,5 @@ UPDATE Ingredients SET
     , FiberGrams = ?
     , SugarGrams = ?
     , ProteinGrams = ?
+    , ImageFilename = ?
 {filter}
