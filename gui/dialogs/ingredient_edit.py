@@ -17,6 +17,7 @@ from gui.dialogs.ingredient_price_edit import IngredientPriceEditDialog
 from gui.dialogs.price_history import PriceHistoryDialog
 from gui.images import available_images
 from gui.widgets.allergen_checkbox_grid import AllergenCheckboxGrid
+from gui.widgets.tag_selector import TagSelector
 
 
 PREVIEW_SIZE = 200
@@ -49,6 +50,13 @@ class IngredientEditDialog(QDialog):
 
         demographic_box = self._build_demographic(row)
         nutrition_box = self._build_nutrition(row)
+        # Category tag — auto-saves and is reflected in the main ingredient
+        # table's Tag column on close-refresh.
+        self.tag_selector = TagSelector(
+            kind='ingredient', item_id=ingredient_id,
+            title='Category', autosave=True, columns=3,
+        )
+        self.tag_selector.selectionChanged.connect(self._mark_modified)
         # 4-column allergen grid fits the narrower right-hand column better.
         self.allergen_grid = AllergenCheckboxGrid(ingredient_id, columns=4)
         self.allergen_grid.changed.connect(self._mark_modified)
@@ -72,6 +80,7 @@ class IngredientEditDialog(QDialog):
         left_col.addStretch()
 
         right_col = QVBoxLayout()
+        right_col.addWidget(self.tag_selector)
         right_col.addWidget(self.allergen_grid)
         right_col.addWidget(image_box)
         # Used-in absorbs the remaining vertical space (no trailing stretch).

@@ -33,14 +33,16 @@ from gui.dialogs.recipe_component_add import RecipeComponentAddDialog
 from gui.models.components_model import RecipeComponentsModel
 from gui.undo.recipe_commands import (
     AddComponentCommand, RemoveComponentCommand, ReorderComponentsCommand,
-    SetComponentQtyCommand, ToggleTagCommand, UpdateRecipeInfoCommand,
+    SetComponentQtyCommand, SetRecipeTagCommand, UpdateRecipeInfoCommand,
 )
-from gui.widgets.tag_checkbox_grid import TagCheckboxGrid
-from gui.widgets.type_badge import TypeBadgeCellDelegate
+from gui.widgets.tag_badge import TagBadgeCellDelegate
+from gui.widgets.tag_selector import TagSelector
+from gui.widgets.template_summary import TemplateSummaryWidget
 from gui.widgets.wedge_view import WedgeView
 
 
 WEDGE_SIZE = 220
+# Order matters — the info strip in _build_summary joins these in order.
 INFO_FIELDS = (('Weight', 'Weight (g)'), ('Cost', 'Cost'), ('Components', 'Components'))
 
 
@@ -140,10 +142,6 @@ class RecipeEditDialog(QDialog):
         demo_form.addRow('Yield Unit', self.unit_edit)
         demo_form.addRow('Recipe Yield', self.yield_edit)
 
-        # Tags
-        self.tag_grid = TagCheckboxGrid(recipe_id=self.recipe_id)
-        self.tag_grid.toggled.connect(self._on_tag_toggle)
-
         # Components table — inline editing on Quantity, right-click for Edit/Remove.
         comp_box = QGroupBox('Components')
         self.components_table = QTableView()
@@ -165,8 +163,11 @@ class RecipeEditDialog(QDialog):
         self.components_table.horizontalHeader().setStretchLastSection(True)
         qty_col = self.components_model.COLUMNS.index('Quantity')
         self.components_table.setItemDelegateForColumn(qty_col, _QuantityDelegate(self.components_table))
+        # The Type column now paints the colored category badge for
+        # ingredients (and falls back to the generic 'recipe' label for
+        # sub-recipes) using the data the model exposes on UserRole/UserRole+1.
         type_col = self.components_model.COLUMNS.index('Type')
-        self.components_table.setItemDelegateForColumn(type_col, TypeBadgeCellDelegate(self.components_table))
+        self.components_table.setItemDelegateForColumn(type_col, TagBadgeCellDelegate(self.components_table))
         self.components_table.activated.connect(self._on_component_activated)
         self.components_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.components_table.customContextMenuRequested.connect(self._show_components_context_menu)
@@ -189,29 +190,48 @@ class RecipeEditDialog(QDialog):
         action_row.addWidget(history_btn)
         action_row.addStretch()
 
+        # Components is the focus of this column — demo on top, components
+        # claims the rest of the vertical space, actions pinned to the
+        # bottom. Format selector + template items live in the right
+        # column alongside the wedge (see _build_summary).
         wrap = QWidget()
         layout = QVBoxLayout(wrap)
         layout.addWidget(demo_box)
-        layout.addWidget(self.tag_grid)
         layout.addWidget(comp_box, stretch=1)
         layout.addLayout(action_row)
         return wrap
 
     def _build_summary(self, recipe):
-        '''Right pane: wedge preview at the top, then info / nutrition /
-        contains. Folds the old "middle" and "right" panes from the
-        original 3-column layout into a single summary column.'''
+        '''Right pane: wedge + format selector + template items at the top,
+        then a one-line info strip, then nutrition and contains.
+
+        Format moved here from the left column so the left column can be
+        Components-dominated. The wedge silhouette and the format
+        selector are visually paired (silhouette IS the format).'''
         unit = recipe['Unit']
 
         self.wedge = WedgeView(self.recipe_id, size=WEDGE_SIZE)
 
-        self.info_box = QGroupBox(f'Info (per {unit})')
-        self.info_labels = {}
-        info_form = QFormLayout(self.info_box)
-        for key, label_text in INFO_FIELDS:
-            lbl = QLabel('')
-            info_form.addRow(label_text, lbl)
-            self.info_labels[key] = lbl
+        # Format tag — single-select. Toggle routed through QUndoStack.
+        self.tag_grid = TagSelector(
+            kind='recipe', item_id=self.recipe_id, title='Format',
+            autosave=False, columns=2,
+        )
+        self.tag_grid.selectionChanged.connect(self._on_tag_changed)
+        # Two-row stats summary + click-to-expand flyout for the full
+        # item list. Refreshed from _refresh() on every undo-stack tick.
+        self.template_panel = TemplateSummaryWidget(self.recipe_id)
+
+        # Format selector + template summary, side by side under the wedge.
+        format_row = QHBoxLayout()
+        format_row.addWidget(self.tag_grid, stretch=1)
+        format_row.addWidget(self.template_panel, stretch=1)
+
+        # One-line "Per <unit> — Weight • Cost • N components" strip below
+        # the format row. Text is rebuilt by _refresh().
+        self.info_strip = QLabel('')
+        self.info_strip.setStyleSheet('color: #475569; padding: 2px 4px;')
+        self.info_strip.setTextFormat(Qt.RichText)
 
         self.nutrition_box = QGroupBox(f'Nutrition (per {unit})')
         self.nutrition_labels = {}
@@ -230,7 +250,8 @@ class RecipeEditDialog(QDialog):
         wrap = QWidget()
         layout = QVBoxLayout(wrap)
         layout.addWidget(self.wedge, alignment=Qt.AlignCenter)
-        layout.addWidget(self.info_box)
+        layout.addLayout(format_row)
+        layout.addWidget(self.info_strip)
         layout.addWidget(self.nutrition_box)
         layout.addWidget(contains_box)
         layout.addStretch()
@@ -250,9 +271,19 @@ class RecipeEditDialog(QDialog):
 
         self.components_model.refresh()
 
-        for key, lbl in self.info_labels.items():
+        # One-line info strip — "Per {unit}: Weight • Cost • N components".
+        # Replaces the multi-row info box; the same fields, just compact.
+        strip_parts = []
+        for key, label_text in INFO_FIELDS:
             value = recipe.get(key)
-            lbl.setText('' if value is None else str(value))
+            if value is None or value == '':
+                continue
+            strip_parts.append(f"<b>{label_text}</b> {value}")
+        sep = '  •  '
+        self.info_strip.setText(
+            f"Per {recipe['Unit']} — {sep.join(strip_parts)}" if strip_parts else ''
+        )
+
         for key, lbl in self.nutrition_labels.items():
             value = recipe.get(key)
             lbl.setText('' if value is None else str(value))
@@ -262,8 +293,7 @@ class RecipeEditDialog(QDialog):
 
         self.wedge.refresh()
 
-        # Group-box titles depend on the unit; rebuild on rename.
-        self.info_box.setTitle(f"Info (per {recipe['Unit']})")
+        # Nutrition group-box title depends on the unit; rebuild on rename.
         self.nutrition_box.setTitle(f"Nutrition (per {recipe['Unit']})")
 
         # Sync editable demographic fields. The widget the user is currently
@@ -281,9 +311,11 @@ class RecipeEditDialog(QDialog):
                 edit.setText(value)
             edit.blockSignals(False)
 
-        # Sync tag checkboxes (so undoing a tag toggle visually reverts)
-        for tag_row in db.get_recipe_tags(self.recipe_id):
-            self.tag_grid.set_checked(tag_row['id'], bool(tag_row['checked']))
+        # Sync format-tag selection (so undoing a change visually reverts)
+        current_tag = db.get_recipe_tag(self.recipe_id)
+        self.tag_grid.set_selected(current_tag['id'] if current_tag else None)
+        # Template items panel reflects the now-current format.
+        self.template_panel.refresh()
 
         self.setWindowTitle(f"{config.APPNAME} | {recipe['Name']}")
 
@@ -313,14 +345,19 @@ class RecipeEditDialog(QDialog):
             return
         self.undo_stack.push(UpdateRecipeInfoCommand(self.recipe_id, self._recipe_snapshot, after))
 
-    def _on_tag_toggle(self, tag_id, tag_name, state):
-        self.undo_stack.push(ToggleTagCommand(self.recipe_id, tag_id, state, tag_name))
+    def _on_tag_changed(self, new_tag_id, prev_tag_id):
+        if new_tag_id == prev_tag_id:
+            return
+        label = 'Clear format' if new_tag_id is None else 'Set format'
+        self.undo_stack.push(SetRecipeTagCommand(
+            self.recipe_id, prev_tag_id, new_tag_id, label,
+        ))
 
     def _on_add_component(self):
         dlg = RecipeComponentAddDialog(self.recipe_id, self.name_edit.text(), parent=self)
         if dlg.exec() != QDialog.Accepted or not dlg.selected:
             return
-        child_id, mode, name, _unit = dlg.selected
+        child_id, mode, name, _unit, *_ = dlg.selected
         self.undo_stack.push(AddComponentCommand(self.recipe_id, mode, child_id, dlg.qty, name))
 
     def _on_component_activated(self, view_index):
@@ -352,9 +389,19 @@ class RecipeEditDialog(QDialog):
         index = self.components_table.indexAt(point)
         if not index.isValid():
             return
+        row_dict = self.components_model.row_dict(index.row())
+        is_template = row_dict.get('FromTemplateTagId') is not None
         menu = QMenu(self.components_table)
         edit_action = menu.addAction('Edit Quantity')
         remove_action = menu.addAction('Remove')
+        if is_template:
+            # Template-added rows are managed by the template, not the
+            # recipe. Disable mutating actions; the user can edit the
+            # template itself via the Tags Manager.
+            edit_action.setEnabled(False)
+            remove_action.setEnabled(False)
+            edit_action.setToolTip('Edit this in the Template Editor')
+            remove_action.setToolTip('Edit this in the Template Editor')
         chosen = menu.exec(self.components_table.viewport().mapToGlobal(point))
         if chosen is edit_action:
             self._on_component_activated(index)

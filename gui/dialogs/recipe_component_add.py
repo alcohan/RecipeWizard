@@ -5,9 +5,12 @@ set is visible up front (mirrors the old PySimpleGUI listbox UX) and so
 Enter inside the filter input can't auto-pick the first item — selection
 is always explicit.
 
-A custom delegate paints a colored pill badge ("ingredient" / "recipe")
-next to each row. The mode text is also kept in item.text() so filter-by-
-typing still works (a user can narrow to recipes by typing "recipe").'''
+A custom delegate paints a colored pill badge next to each row:
+  - Sub-recipes always show a violet "recipe" badge.
+  - Ingredients with a category tag show that tag in its color.
+  - Untagged ingredients show no badge — the name slides to the left.
+The badge text + mode + tag are all in item.text() so the typing filter
+can narrow on any of them.'''
 from PySide6.QtCore import QRect, QSize, Qt
 from PySide6.QtGui import QDoubleValidator, QKeySequence, QPainter
 from PySide6.QtWidgets import (
@@ -17,13 +20,21 @@ from PySide6.QtWidgets import (
 
 import config
 import db
-from gui.widgets.type_badge import paint_type_badge
+from gui.widgets.tag_badge import paint_tag_badge
+
+
+# Sub-recipes always get a violet "recipe" badge regardless of which
+# format tag they happen to have. Keeps the picker focused on the
+# ingredient/sub-recipe distinction.
+_RECIPE_BADGE_COLOR = '#7c3aed'
+# Neutral fallback if an ingredient's tag color is somehow missing.
+_DEFAULT_TAG_COLOR = '#64748b'
 
 
 class _ComponentTypeBadgeDelegate(QStyledItemDelegate):
-    '''Paints each row as: [pill badge] name (unit). Reads the row tuple
-    (id, mode, name, unit) from Qt.UserRole. Doesn't paint item.text() —
-    that's left containing the mode so the typing filter still matches.'''
+    '''Paints each row as: [colored tag badge] name (unit). Reads the row
+    tuple (id, mode, name, unit, tag_name, tag_color) from Qt.UserRole.
+    Doesn't paint item.text() — that's the filter-search target.'''
 
     ROW_HEIGHT = 32
     PAD_X = 8
@@ -34,7 +45,7 @@ class _ComponentTypeBadgeDelegate(QStyledItemDelegate):
         if not row_data:
             super().paint(painter, option, index)
             return
-        _id, mode, name, unit = row_data
+        _id, mode, name, unit, tag_name, tag_color = row_data
 
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing)
@@ -46,15 +57,26 @@ class _ComponentTypeBadgeDelegate(QStyledItemDelegate):
         else:
             text_color = option.palette.text().color()
 
-        # Badge — drawn via the shared helper so the picker and the
-        # components-table cell stay visually consistent.
-        badge_area = option.rect.adjusted(self.PAD_X, 0, 0, 0)
-        badge_rect = paint_type_badge(painter, badge_area, mode, option.font)
+        # Badge: sub-recipes always show "recipe"; ingredients show their
+        # category tag if they have one. Untagged ingredients get no badge —
+        # the name slides over and the row reads as visually quieter.
+        if mode == 'recipe':
+            badge_text, badge_color = 'recipe', _RECIPE_BADGE_COLOR
+        elif tag_name:
+            badge_text, badge_color = tag_name, (tag_color or _DEFAULT_TAG_COLOR)
+        else:
+            badge_text, badge_color = None, None
 
-        # Name + unit text after the badge, elided to fit.
+        if badge_text is not None:
+            badge_area = option.rect.adjusted(self.PAD_X, 0, 0, 0)
+            badge_rect = paint_tag_badge(painter, badge_area, badge_text, badge_color, option.font)
+            text_x = badge_rect.right() + self.BADGE_GAP
+        else:
+            text_x = option.rect.x() + self.PAD_X
+
+        # Name + unit text after wherever the badge ended, elided to fit.
         painter.setPen(text_color)
         fm_text = painter.fontMetrics()
-        text_x = badge_rect.right() + self.BADGE_GAP
         text_w = option.rect.right() - text_x - self.PAD_X
         text_rect = QRect(text_x, option.rect.y(), text_w, option.rect.height())
         full_text = f'{name}  ({unit})' if unit else name
@@ -78,20 +100,32 @@ class RecipeComponentAddDialog(QDialog):
         self.selected = None  # tuple (id, mode, name, unit)
         self.qty = None
 
-        # tuples come back as (id, mode, name, unit)
+        # tuples come back as (id, mode, name, unit, tag_name, tag_color)
         self._eligible = db.get_eligible_ingredients(recipe_id)
 
         self.filter_edit = QLineEdit()
-        self.filter_edit.setPlaceholderText('Type to filter (try "recipe" to narrow to sub-recipes)…')
+        self.filter_edit.setPlaceholderText(
+            'Type to filter — name, "recipe", or a tag like "greens"…'
+        )
         self.filter_edit.textChanged.connect(self._on_filter)
 
         self.results = QListWidget()
         self.results.setItemDelegate(_ComponentTypeBadgeDelegate(self.results))
-        # Item text holds name + unit + mode so the substring filter still
-        # matches mode keywords; the delegate ignores text() for display.
+        # Item text drives the typing filter only — the delegate ignores it
+        # for display. Only include tokens that the user can actually see on
+        # the row, so typing a word never returns invisible "matches":
+        #   - sub-recipes carry "recipe" (their visible badge)
+        #   - tagged ingredients carry their tag name
+        #   - untagged ingredients carry only name + unit
         for row in self._eligible:
-            child_id, mode, name, unit = row
-            item = QListWidgetItem(f'{name} ({unit}) {mode}')
+            child_id, mode, name, unit, tag_name, tag_color = row
+            tokens = [unit]
+            if mode == 'recipe':
+                tokens.append('recipe')
+            elif tag_name:
+                tokens.append(tag_name)
+            search_extras = ' '.join(filter(None, tokens))
+            item = QListWidgetItem(f'{name} ({search_extras})')
             item.setData(Qt.UserRole, row)
             self.results.addItem(item)
         self.results.currentItemChanged.connect(self._on_selection_changed)
@@ -132,7 +166,7 @@ class RecipeComponentAddDialog(QDialog):
         if current is None:
             self.unit_label.setText('')
             return
-        _, _, _, unit = current.data(Qt.UserRole)
+        unit = current.data(Qt.UserRole)[3]
         self.unit_label.setText(f'× {unit}')
 
     def _on_save(self, *_):

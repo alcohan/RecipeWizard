@@ -17,11 +17,12 @@ from gui.dialogs.ingredient_edit import IngredientEditDialog
 from gui.dialogs.recipe_create import RecipeCreateDialog
 from gui.dialogs.recipe_edit import RecipeEditDialog
 from gui.dialogs.suppliers_manager import SuppliersManagerDialog
-from gui.dialogs.tags_manager import TagsManagerDialog
+from gui.dialogs.tags_manager import IngredientTagsDialog, RecipeTemplatesDialog
 from gui.models.filter_proxy import MultiColumnFilterProxy
 from gui.models.ingredients_model import IngredientsModel
 from gui.models.recipes_model import RecipesModel
 from gui.tabs.home_tab import HomeTab
+from gui.widgets.tag_badge import TagBadgeCellDelegate
 
 
 class _BrowsePane(QWidget):
@@ -173,6 +174,9 @@ class MainWindow(QMainWindow):
                 ('Delete', self._on_ingredient_delete),
             ],
         )
+        # Paint the Tag column as a colored pill badge.
+        tag_col = self.ingredients_model.COLUMNS.index('Tag')
+        pane.table.setItemDelegateForColumn(tag_col, TagBadgeCellDelegate(pane.table))
         pane.rowActivated.connect(self._on_ingredient_edit)
         return pane
 
@@ -207,7 +211,8 @@ class MainWindow(QMainWindow):
 
         manage_menu = bar.addMenu('&Manage')
         manage_menu.addAction('&Suppliers', self._on_suppliers)
-        manage_menu.addAction('&Tags', self._on_tags)
+        manage_menu.addAction('Ingredient &Tags', self._on_ingredient_tags)
+        manage_menu.addAction('Recipe Tem&plates', self._on_recipe_templates)
 
         tools_menu = bar.addMenu('&Tools')
         refresh_action = tools_menu.addAction('&Refresh', self.refresh)
@@ -392,8 +397,14 @@ class MainWindow(QMainWindow):
         # downstream (like price-history dialogs) re-reads.
         self.refresh()
 
-    def _on_tags(self):
-        TagsManagerDialog(parent=self).exec()
+    def _on_ingredient_tags(self):
+        IngredientTagsDialog(parent=self).exec()
+        self.refresh()
+
+    def _on_recipe_templates(self):
+        RecipeTemplatesDialog(parent=self).exec()
+        # Templates affect what wedges and badges show, so a refresh sweeps
+        # any edits (e.g. shape changes) back into the home gallery.
         self.refresh()
 
     def _on_about(self):
