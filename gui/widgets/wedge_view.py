@@ -18,16 +18,21 @@ class _WedgeRenderTask(QRunnable):
     so the 28-card gallery cold load doesn't block paint events while
     decoding sprites one-by-one.'''
 
-    def __init__(self, components, size):
+    def __init__(self, components, size, shape=None, shape_color=None):
         super().__init__()
         self.components = components
         self.size = size
+        self.shape = shape
+        self.shape_color = shape_color
         self.signals = _WedgeRenderSignals()
 
     def run(self):
         image = QImage()
         try:
-            png = render_recipe(self.components, size=self.size)
+            png = render_recipe(
+                self.components, size=self.size,
+                shape=self.shape, shape_color=self.shape_color,
+            )
             if png:
                 image.loadFromData(png)  # PNG decode happens on the worker
         except Exception as exc:
@@ -65,11 +70,24 @@ class WedgeView(QLabel):
         if not defer:
             self.refresh()
 
+    def _format_for_recipe(self):
+        '''(shape_name, color_hex) from the recipe's format tag, or
+        (None, None) if no format tag is set. shape is editable per-tag in
+        the Tags Manager, so this is just a plain DB read.'''
+        tag = db.get_recipe_tag(self.recipe_id)
+        if not tag:
+            return None, None
+        return tag.get('shape'), tag.get('color')
+
     def refresh(self):
         '''Synchronous render. Suitable when only one wedge is being drawn
         (recipe edit dialog) — there's no perceived stutter for a single
         ~100ms PIL render.'''
-        png = render_recipe(db.get_recipe_wedge_components(self.recipe_id), size=self._size)
+        shape, color = self._format_for_recipe()
+        png = render_recipe(
+            db.get_recipe_wedge_components(self.recipe_id),
+            size=self._size, shape=shape, shape_color=color,
+        )
         image = QImage()
         if png:
             image.loadFromData(png)
@@ -80,7 +98,8 @@ class WedgeView(QLabel):
         (home gallery) so the UI doesn't freeze while PIL works.'''
         pool = pool or QThreadPool.globalInstance()
         components = db.get_recipe_wedge_components(self.recipe_id)
-        task = _WedgeRenderTask(components, self._size)
+        shape, color = self._format_for_recipe()
+        task = _WedgeRenderTask(components, self._size, shape, color)
         # signals object lives on the task; the connection is auto-removed if
         # this WedgeView gets destroyed before the worker emits, so a late
         # callback never lands on a deleted widget.

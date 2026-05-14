@@ -96,16 +96,35 @@ class ReorderComponentsCommand(QUndoCommand):
         db.reorder_recipe_components(self.recipe_id, self.before)
 
 
-class ToggleTagCommand(QUndoCommand):
-    def __init__(self, recipe_id, tag_id, state, tag_name):
-        verb = 'Set' if state else 'Unset'
-        super().__init__(f'{verb} tag {tag_name}')
+class SetRecipeTagCommand(QUndoCommand):
+    '''Change a recipe's format. The first redo actually runs the
+    template transition (add items, scale categories, etc.) and captures
+    the resulting Connections snapshot; subsequent redos and the undo
+    both replay snapshots so we never have to invert the transition
+    logic at runtime.
+
+    `before` and `after` are tag ids (or None for "no tag").'''
+
+    def __init__(self, recipe_id, before, after, label):
+        super().__init__(label)
         self.recipe_id = recipe_id
-        self.tag_id = tag_id
-        self.state = state
+        self.before = before
+        self.after = after
+        # Snapshots captured the first time redo() runs. None until then.
+        self._before_snapshot = None
+        self._after_snapshot = None
 
     def redo(self):
-        db.modify_recipe_tag(self.recipe_id, self.tag_id, self.state)
+        if self._before_snapshot is None:
+            # First-time apply: actually run the transition, then snapshot.
+            self._before_snapshot = db.snapshot_recipe_connections(self.recipe_id)
+            db.transition_recipe_format(self.recipe_id, self.before, self.after)
+            self._after_snapshot = db.snapshot_recipe_connections(self.recipe_id)
+        else:
+            # Redo after a prior undo — replay the snapshot we already have.
+            db.restore_recipe_connections(self.recipe_id, self._after_snapshot)
+        db.set_recipe_tag(self.recipe_id, self.after)
 
     def undo(self):
-        db.modify_recipe_tag(self.recipe_id, self.tag_id, not self.state)
+        db.restore_recipe_connections(self.recipe_id, self._before_snapshot)
+        db.set_recipe_tag(self.recipe_id, self.before)
