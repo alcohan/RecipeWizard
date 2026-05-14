@@ -1,5 +1,7 @@
 DROP VIEW IF EXISTS RecipeAllergens;
 DROP VIEW IF EXISTS recipe_ingredients_expanded;
+DROP TABLE IF EXISTS tag_components;
+DROP TABLE IF EXISTS tag_category_multipliers;
 DROP TABLE IF EXISTS tags;
 DROP TABLE IF EXISTS ingredient_tags_mapping;
 DROP TABLE IF EXISTS recipe_tags_mapping;
@@ -46,6 +48,10 @@ CREATE TABLE Connections (
 	, ChildIngredient Integer
 	, Quantity float
 	, SortOrder Integer
+	-- Provenance: which template tag added this row (NULL = manual). Used so
+	-- switching a recipe's format can remove the previous template's items
+	-- cleanly without touching anything the user added themselves.
+	, from_template_tag_id Integer
 );
 
 
@@ -77,6 +83,9 @@ CREATE TABLE ingredient_prices (
 CREATE TABLE tags (
   id INTEGER PRIMARY KEY AUTOINCREMENT
   , name TEXT
+  , kind TEXT NOT NULL DEFAULT 'ingredient' -- 'ingredient' | 'recipe'
+  , color TEXT  -- hex like '#16a34a'; null falls back to a neutral default
+  , shape TEXT NOT NULL DEFAULT 'none'  -- recipe-kind only: 'none'|'ring'|'bowl'|'wrap'|'tray'
   , sortOrder INTEGER
 );
 
@@ -94,6 +103,32 @@ CREATE TABLE recipe_tags_mapping (
   , recipe_id INTEGER
   , FOREIGN KEY (recipe_id) REFERENCES recipes(id)
   , FOREIGN KEY (tag_id) REFERENCES tags(id)
+);
+
+-- Items a recipe-format template auto-adds when applied. Shape mirrors
+-- Connections (one of child_recipe / child_ingredient is set) so the same
+-- "add component" UX can be reused.
+CREATE TABLE tag_components (
+  id INTEGER PRIMARY KEY AUTOINCREMENT
+  , tag_id INTEGER NOT NULL  -- must reference a kind='recipe' tag
+  , child_recipe INTEGER
+  , child_ingredient INTEGER
+  , quantity FLOAT NOT NULL DEFAULT 1
+  , FOREIGN KEY (tag_id) REFERENCES tags(id)
+);
+
+-- Per-template portion overrides keyed by ingredient-category tag. E.g.
+-- (Wrap, Base, 0.3) means "when Wrap is applied, multiply every Base
+-- ingredient's quantity by 0.3 in the target recipe." Reversed on
+-- template switch.
+CREATE TABLE tag_category_multipliers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT
+  , tag_id INTEGER NOT NULL              -- must reference a kind='recipe' tag
+  , category_tag_id INTEGER NOT NULL     -- must reference a kind='ingredient' tag
+  , multiplier FLOAT NOT NULL DEFAULT 1
+  , UNIQUE (tag_id, category_tag_id)
+  , FOREIGN KEY (tag_id) REFERENCES tags(id)
+  , FOREIGN KEY (category_tag_id) REFERENCES tags(id)
 );
 
 CREATE TABLE allergens (

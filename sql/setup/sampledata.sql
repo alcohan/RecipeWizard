@@ -159,7 +159,7 @@ INSERT INTO Recipes Values
 ,(28,'I Dream of Tahini','each',1)
 ;
 
-INSERT INTO CONNECTIONS Values
+INSERT INTO Connections (ParentRecipe, ChildRecipe, ChildIngredient, Quantity) VALUES
 (5,NULL,3,0.25)
 ,(9,NULL,3,0.15)
 ,(10,NULL,3,0.5)
@@ -460,139 +460,138 @@ INSERT INTO CONNECTIONS Values
 ,(25,NULL,111,1)
 ;
 
+-- Backfill SortOrder so each component within a parent has a distinct,
+-- stable order. Same per-parent rowid-based ranking as migrateDB(); kept
+-- here so freshly-initialized DBs match migrated DBs.
+UPDATE Connections
+SET SortOrder = (
+    SELECT COUNT(*)
+    FROM Connections c2
+    WHERE c2.ParentRecipe = Connections.ParentRecipe
+      AND c2.rowid <= Connections.rowid
+);
+
 INSERT INTO suppliers (name) VALUES ('Sysco'),('Charlies');
 
-INSERT INTO tags (name) VALUES
-('Base'),
-('Dressing'),
-('Packaging'),
-('Protein'),
-('Toppings')
+-- Canonical tag set. Recipe formats drive the homepage silhouette;
+-- ingredient categories drive the colored badges.
+INSERT INTO tags (id, name, kind, color, shape, sortOrder) VALUES
+ (1,'Salad','recipe','#16a34a','ring',1)
+,(2,'Wrap','recipe','#b45309','wrap',2)
+,(3,'Bowl','recipe','#ea580c','bowl',3)
+,(4,'Catering','recipe','#7c3aed','tray',4)
+,(5,'Greens','ingredient','#15803d','none',1)
+,(6,'Grains','ingredient','#92400e','none',2)
+,(7,'Toppings','ingredient','#dc2626','none',3)
+,(8,'Cheese','ingredient','#eab308','none',4)
+,(9,'Crunchies','ingredient','#a16207','none',5)
+,(10,'Premiums','ingredient','#9333ea','none',6)
+,(11,'Protein','ingredient','#be185d','none',7)
+,(12,'Dressing','ingredient','#0891b2','none',8)
+,(13,'Finish','ingredient','#db2777','none',9)
+,(14,'Packaging','ingredient','#475569','none',10)
 ;
 
+-- Each ingredient gets at most one category tag. Packaging items
+-- (Bread, Packaging, wraps/lids/bags 100-123) intentionally have no tag.
 INSERT INTO ingredient_tags_mapping (tag_id, ingredient_id) VALUES
-(1,3),
-(1,4),
-(1,5),
-(1,6),
-(1,7),
-(1,8),
-(1,9),
-(1,10),
-(1,11),
-(1,12),
-(5,13),
-(5,14),
-(5,15),
-(5,16),
-(5,17),
-(5,18),
-(5,19),
-(5,20),
-(5,21),
-(5,22),
-(5,23),
-(5,24),
-(5,25),
-(5,26),
-(5,27),
-(5,28),
-(5,29),
-(5,30),
-(5,31),
-(5,32),
-(5,33),
-(5,34),
-(5,35),
-(5,36),
-(4,37),
-(4,38),
-(4,39),
-(4,40),
-(5,41),
-(4,42),
-(5,43),
-(5,44),
-(5,45),
-(5,46),
-(5,47),
-(5,48),
-(5,49),
-(5,50),
-(5,51),
-(5,52),
-(5,53),
-(5,54),
-(5,55),
-(5,56),
-(5,57),
-(5,58),
-(5,59),
-(5,60),
-(5,61),
-(5,62),
-(5,63),
-(5,64),
-(5,65),
-(5,66),
-(5,67),
-(5,68),
-(5,69),
-(5,70),
-(5,71),
-(5,72),
-(5,73),
-(5,74),
-(5,75),
-(5,76),
-(5,77),
-(5,78),
-(5,79),
-(2,80),
-(2,81),
-(2,82),
-(2,83),
-(2,84),
-(2,85),
-(2,86),
-(2,87),
-(2,88),
-(2,89),
-(2,90),
-(2,91),
-(2,92),
-(2,93),
-(2,94),
-(2,95),
-(2,96),
-(2,97),
-(2,98),
-(2,99),
-(3,100),
-(3,101),
-(3,102),
-(3,103),
-(3,104),
-(3,105),
-(3,106),
-(3,107),
-(3,108),
-(3,109),
-(3,110),
-(3,111),
-(3,112),
-(3,113),
-(3,114),
-(3,115),
-(3,116),
-(3,117),
-(3,118),
-(3,119),
-(3,120),
-(3,121),
-(3,122),
-(3,123)
+ -- Greens (5)
+ (5,3),(5,4),(5,5),(5,6),(5,7)
+ -- Grains (6)
+,(6,8),(6,9),(6,10),(6,11),(6,12)
+ -- Toppings (7) — produce, pickles, roasted veg, fruits
+,(7,13),(7,14),(7,15),(7,16),(7,17),(7,18),(7,19),(7,20),(7,21),(7,22)
+,(7,25),(7,27),(7,43),(7,44),(7,48),(7,49),(7,57)
+,(7,66),(7,67),(7,68),(7,69),(7,70),(7,71),(7,72)
+ -- Cheese (8)
+,(8,30),(8,31),(8,32),(8,33),(8,34)
+ -- Crunchies (9)
+,(9,46),(9,50),(9,51),(9,52),(9,53),(9,54),(9,55),(9,56),(9,58),(9,61),(9,64),(9,65)
+ -- Premiums (10) — avocado, tofu, bacon, eggs
+,(10,23),(10,24),(10,35),(10,36),(10,41)
+ -- Protein (11) — meat mains, marinated tofu, beans
+,(11,37),(11,38),(11,39),(11,40),(11,42),(11,45),(11,47),(11,62)
+ -- Dressing (12)
+,(12,59),(12,60),(12,63),(12,74),(12,78)
+,(12,80),(12,81),(12,82),(12,83),(12,84),(12,85),(12,86),(12,87),(12,88),(12,89)
+,(12,90),(12,91),(12,92),(12,93),(12,94),(12,95),(12,96),(12,97),(12,98),(12,99)
+ -- Finish (13) — small sprinkles: spices, herbs, lemon wedges, hot drips
+,(13,26),(13,28),(13,29),(13,73),(13,75),(13,76),(13,77),(13,79)
+ -- Packaging (14) — bread, bags, lids, utensils, etc. (every untagged item)
+,(14,1),(14,2)
+,(14,100),(14,101),(14,102),(14,103),(14,104),(14,105),(14,106),(14,107),(14,108),(14,109)
+,(14,110),(14,111),(14,112),(14,113),(14,114),(14,115),(14,116),(14,117),(14,118),(14,119)
+,(14,120),(14,121),(14,122),(14,123)
 ;
+
+-- Template items per recipe-kind tag. Applied to a target recipe when its
+-- format changes; items already in the recipe are skipped (no duplicates).
+INSERT INTO tag_components (tag_id, child_ingredient, quantity) VALUES
+ -- Salad
+ (1, 113, 1)  -- Large Bowl
+,(1, 114, 1)  -- Salad Dome Lid
+,(1, 115, 1)  -- Ramekin and Lid
+,(1, 116, 1)  -- Fork
+,(1, 117, 1)  -- Napkin
+,(1, 118, 1)  -- Small Bag
+ -- Wrap (shell + packaging — the shell is Grains-tagged so it shows in
+ -- the components list as a template-added row; packaging items get
+ -- filtered out of the visual list but still factor into recipe cost.)
+,(2, 9, 1)    -- Wheat Wrap XTRM (the wrap shell)
+,(2, 121, 1)  -- Wrap Paper
+,(2, 122, 1)  -- Sticker
+,(2, 117, 1)  -- Napkin
+ -- Bowl
+,(3, 112, 1)  -- Bowl SugarCane compost
+,(3, 110, 1)  -- 26 oz Lid
+,(3, 116, 1)  -- Fork
+,(3, 117, 1)  -- Napkin
+ -- Catering
+,(4, 103, 1)  -- 80 oz Catering Square
+,(4, 105, 1)  -- CLR Lid
+,(4, 106, 1)  -- 6" serving tongs
+;
+
+-- Wraps fit a smaller portion of greens than salads or bowls. Grains are
+-- intentionally not scaled — the wrap shell itself sits in that category
+-- and should stay at full quantity.
+INSERT INTO tag_category_multipliers (tag_id, category_tag_id, multiplier) VALUES
+ (2, 5, 0.3)  -- Wrap: Greens = 0.3
+;
+
+-- Each recipe gets one format tag, inferred from the existing
+-- greens/grains portioning in Connections rather than the recipe name:
+--   - Has 'Wheat Wrap XTRM' (id 9), or total base portions <= ~0.3 -> Wrap
+--   - Total grains >= 0.5 and >= greens -> Bowl
+--   - Otherwise -> Salad
+INSERT INTO recipe_tags_mapping (tag_id, recipe_id) VALUES
+ (1,1),(1,2),(1,3),(1,4),(1,5),(1,6),(2,7),(2,8),(3,9),(1,10)
+,(3,11),(2,12),(3,13),(3,14),(3,15),(3,16),(1,17),(3,18),(2,19),(1,20)
+,(2,21),(2,22),(3,23),(3,24),(3,25),(2,26),(2,27),(2,28)
+;
+
+-- Backfill from_template_tag_id on Connections rows whose ingredient is in
+-- the recipe's current format's template. Without this, the seed wrap
+-- recipes have their tortilla (and packaging) as plain manual rows: they
+-- look like regular ingredients in the components list, and switching
+-- away from Wrap doesn't remove them because the transition logic only
+-- deletes provenance-marked rows. After this UPDATE, the seed matches
+-- what newly Wrap-applied recipes look like, and round-tripping the
+-- format cleans up correctly.
+UPDATE Connections
+SET from_template_tag_id = (
+    SELECT rtm.tag_id FROM recipe_tags_mapping rtm
+    WHERE rtm.recipe_id = Connections.ParentRecipe
+    LIMIT 1
+)
+WHERE from_template_tag_id IS NULL
+  AND ChildIngredient IS NOT NULL
+  AND EXISTS (
+      SELECT 1 FROM tag_components tc
+      JOIN recipe_tags_mapping rtm ON rtm.tag_id = tc.tag_id
+      WHERE rtm.recipe_id = Connections.ParentRecipe
+        AND tc.child_ingredient = Connections.ChildIngredient
+  );
 
 INSERT INTO allergens (name, sortOrder) VALUES
 ('Meat',1),
