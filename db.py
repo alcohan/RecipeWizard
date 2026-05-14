@@ -215,6 +215,10 @@ def recipe_components(id: int):
 
     # Format the data
     for row in result:
+        # Preserve the raw float — inline editing in the recipe dialog needs
+        # the precise value for the undo stack, otherwise round-tripping
+        # rounds anything past 2 decimals.
+        row['QuantityRaw'] = row['Quantity']
         # Strip trailing zeroes from quantity
         row['Quantity'] = "{:.2f}".format(row['Quantity']).rstrip('0').rstrip('.')
         # Format cost as "$ 0.00"
@@ -233,9 +237,20 @@ def get_eligible_ingredients(id: int):
 
 
 # Interact with Recipe Ingredients
-def add_recipe_ingredient(parent: int, mode: str, child: int, qty: float):
+def add_recipe_ingredient(parent: int, mode: str, child: int, qty: float, sort_order: int = None):
+    '''Insert a Connections row. If sort_order is None, the new row is
+    appended (MAX(SortOrder) + 1 for the parent recipe). Pass an explicit
+    sort_order when undoing a remove, so the row lands back in its
+    original position.'''
+    if sort_order is None:
+        result = query(
+            'SELECT COALESCE(MAX(SortOrder), 0) + 1 AS next FROM Connections WHERE ParentRecipe = ?;',
+            (parent,), one=True,
+        )
+        sort_order = (result or {}).get('next', 1) or 1
     sql = '''
-        INSERT INTO Connections Values (?, ?, ?, ?);
+        INSERT INTO Connections (ParentRecipe, ChildRecipe, ChildIngredient, Quantity, SortOrder)
+        VALUES (?, ?, ?, ?, ?);
     '''
     if mode == 'ingredient':
         recipe = None
@@ -245,7 +260,26 @@ def add_recipe_ingredient(parent: int, mode: str, child: int, qty: float):
         ingredient = None
     else:
         raise ValueError(f"Invalid mode: {mode}")
-    return query(sql, (parent, recipe, ingredient, qty))
+    return query(sql, (parent, recipe, ingredient, qty, sort_order))
+
+
+def reorder_recipe_components(parent: int, ordered_specs):
+    '''Rewrite SortOrder for `parent`'s components in the order given.
+    `ordered_specs` is a list of (mode, child_id) tuples; the first gets
+    SortOrder=1, the next gets 2, etc. Unlisted rows are left alone (their
+    old SortOrder values may now be out of range, but ORDER BY still
+    produces a consistent result).'''
+    for i, (mode, child_id) in enumerate(ordered_specs, start=1):
+        if mode == 'ingredient':
+            query(
+                'UPDATE Connections SET SortOrder = ? WHERE ParentRecipe = ? AND ChildIngredient = ?;',
+                (i, parent, child_id),
+            )
+        elif mode == 'recipe':
+            query(
+                'UPDATE Connections SET SortOrder = ? WHERE ParentRecipe = ? AND ChildRecipe = ?;',
+                (i, parent, child_id),
+            )
 
 def update_recipe_ingredient(parent: int, mode: str, child: int, qty: float):
     sql = '''

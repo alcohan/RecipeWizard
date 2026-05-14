@@ -6,16 +6,23 @@ reversed with Ctrl+Z. QUndoStack.indexChanged drives the refresh that
 re-reads RecipesWithNutrition, redraws the wedge, and re-syncs the
 editable demographic fields.
 
-Layout: three columns separated by a QSplitter.
-  Left:    demographic + Update button, tag grid, components table, action row
-  Middle:  read-only info / nutrition / contains panels
-  Right:   wedge preview'''
+UX notes:
+- Name / Yield Unit / Recipe Yield auto-save on focus-out or Enter; there
+  is no explicit "Update" button. Each commit is its own undo step.
+- Component quantities are edited inline in the table (double-click or
+  right-click → Edit). No more component-edit popup.
+- Right-click on a component also exposes Remove, which confirms then
+  pushes RemoveComponentCommand.
+
+Layout: two columns separated by a QSplitter.
+  Left:    demographic, tag grid, components table, action row
+  Right:   wedge preview, then read-only info / nutrition / contains'''
 from PySide6.QtCore import Qt, QSettings
 from PySide6.QtGui import QDoubleValidator, QKeySequence, QUndoStack
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QDialogButtonBox, QFormLayout, QGroupBox,
-    QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSplitter,
-    QTableView, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton,
+    QSplitter, QStyledItemDelegate, QTableView, QVBoxLayout, QWidget,
 )
 
 import config
@@ -23,18 +30,30 @@ import db
 from gui.dialogs.nutrition_label import NutritionLabelDialog
 from gui.dialogs.price_history import PriceHistoryDialog
 from gui.dialogs.recipe_component_add import RecipeComponentAddDialog
-from gui.dialogs.recipe_component_edit import RecipeComponentEditDialog
 from gui.models.components_model import RecipeComponentsModel
 from gui.undo.recipe_commands import (
-    AddComponentCommand, RemoveComponentCommand, SetComponentQtyCommand,
-    ToggleTagCommand, UpdateRecipeInfoCommand,
+    AddComponentCommand, RemoveComponentCommand, ReorderComponentsCommand,
+    SetComponentQtyCommand, ToggleTagCommand, UpdateRecipeInfoCommand,
 )
 from gui.widgets.tag_checkbox_grid import TagCheckboxGrid
+from gui.widgets.type_badge import TypeBadgeCellDelegate
 from gui.widgets.wedge_view import WedgeView
 
 
 WEDGE_SIZE = 220
 INFO_FIELDS = (('Weight', 'Weight (g)'), ('Cost', 'Cost'), ('Components', 'Components'))
+
+
+class _QuantityDelegate(QStyledItemDelegate):
+    '''Numeric-only editor for the Quantity column. Wires a QLineEdit with
+    QDoubleValidator so the user can't commit garbage text.'''
+
+    def createEditor(self, parent, option, index):
+        editor = QLineEdit(parent)
+        validator = QDoubleValidator(0.0001, 1_000_000.0, 4, editor)
+        validator.setNotation(QDoubleValidator.StandardNotation)
+        editor.setValidator(validator)
+        return editor
 
 
 class RecipeEditDialog(QDialog):
@@ -53,10 +72,11 @@ class RecipeEditDialog(QDialog):
 
         self._recipe_snapshot = self._snapshot(recipe)
         self.components_model = RecipeComponentsModel(recipe_id)
+        self.components_model.qtyEdited.connect(self._on_qty_edited)
+        self.components_model.rowsReordered.connect(self._on_components_reordered)
 
         left_col = self._build_left(recipe)
-        middle_col = self._build_middle(recipe)
-        right_col = self._build_right()
+        right_col = self._build_summary(recipe)
 
         # Undo/Redo actions — keyboard shortcuts only, no toolbar buttons.
         undo_action = self.undo_stack.createUndoAction(self, 'Undo')
@@ -78,11 +98,9 @@ class RecipeEditDialog(QDialog):
 
         self.splitter = QSplitter(Qt.Horizontal)
         self.splitter.addWidget(left_col)
-        self.splitter.addWidget(middle_col)
         self.splitter.addWidget(right_col)
         self.splitter.setStretchFactor(0, 3)
         self.splitter.setStretchFactor(1, 2)
-        self.splitter.setStretchFactor(2, 1)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.splitter, stretch=1)
@@ -97,46 +115,61 @@ class RecipeEditDialog(QDialog):
         self._refresh()
 
     def done(self, result):
+        # Flush any pending demographic edit before the dialog closes
+        # (editingFinished doesn't fire on the focused widget when the
+        # dialog goes away via the Close button).
+        self._maybe_commit_info()
         QSettings().setValue('recipeEditDialog/splitter', self.splitter.saveState())
         super().done(result)
 
     # --- layout builders ---
 
     def _build_left(self, recipe):
-        # Demographic
+        # Demographic — fields auto-save on focus-out / Enter, no Update button.
         demo_box = QGroupBox('Recipe')
         self.name_edit = QLineEdit(recipe['Name'])
+        self.name_edit.editingFinished.connect(self._maybe_commit_info)
         self.unit_edit = QLineEdit(recipe['Unit'])
+        self.unit_edit.editingFinished.connect(self._maybe_commit_info)
         self.yield_edit = QLineEdit(str(recipe['OutputQty']))
         self.yield_edit.setValidator(QDoubleValidator(0.0, 1_000_000.0, 4))
-        update_btn = QPushButton('Update')
-        update_btn.clicked.connect(self._on_update_info)
+        self.yield_edit.editingFinished.connect(self._maybe_commit_info)
 
-        demo_form = QFormLayout()
+        demo_form = QFormLayout(demo_box)
         demo_form.addRow('Name', self.name_edit)
         demo_form.addRow('Yield Unit', self.unit_edit)
         demo_form.addRow('Recipe Yield', self.yield_edit)
-
-        demo_row = QHBoxLayout()
-        demo_row.addLayout(demo_form, stretch=1)
-        demo_row.addWidget(update_btn, alignment=Qt.AlignBottom)
-        demo_layout = QVBoxLayout(demo_box)
-        demo_layout.addLayout(demo_row)
 
         # Tags
         self.tag_grid = TagCheckboxGrid(recipe_id=self.recipe_id)
         self.tag_grid.toggled.connect(self._on_tag_toggle)
 
-        # Components table
+        # Components table — inline editing on Quantity, right-click for Edit/Remove.
         comp_box = QGroupBox('Components')
         self.components_table = QTableView()
         self.components_table.setModel(self.components_model)
         self.components_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.components_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.components_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.components_table.setEditTriggers(
+            QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed
+        )
+        # Drag-reorder rows. The model returns False from dropMimeData for
+        # no-op moves and the actual SortOrder update goes through the
+        # undo stack (see _on_components_reordered).
+        self.components_table.setDragEnabled(True)
+        self.components_table.setAcceptDrops(True)
+        self.components_table.setDropIndicatorShown(True)
+        self.components_table.setDragDropMode(QAbstractItemView.InternalMove)
+        self.components_table.setDefaultDropAction(Qt.MoveAction)
         self.components_table.verticalHeader().setVisible(False)
         self.components_table.horizontalHeader().setStretchLastSection(True)
+        qty_col = self.components_model.COLUMNS.index('Quantity')
+        self.components_table.setItemDelegateForColumn(qty_col, _QuantityDelegate(self.components_table))
+        type_col = self.components_model.COLUMNS.index('Type')
+        self.components_table.setItemDelegateForColumn(type_col, TypeBadgeCellDelegate(self.components_table))
         self.components_table.activated.connect(self._on_component_activated)
+        self.components_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.components_table.customContextMenuRequested.connect(self._show_components_context_menu)
         self.components_model.modelReset.connect(self.components_table.resizeColumnsToContents)
         self.components_table.resizeColumnsToContents()
         comp_layout = QVBoxLayout(comp_box)
@@ -164,8 +197,13 @@ class RecipeEditDialog(QDialog):
         layout.addLayout(action_row)
         return wrap
 
-    def _build_middle(self, recipe):
+    def _build_summary(self, recipe):
+        '''Right pane: wedge preview at the top, then info / nutrition /
+        contains. Folds the old "middle" and "right" panes from the
+        original 3-column layout into a single summary column.'''
         unit = recipe['Unit']
+
+        self.wedge = WedgeView(self.recipe_id, size=WEDGE_SIZE)
 
         self.info_box = QGroupBox(f'Info (per {unit})')
         self.info_labels = {}
@@ -191,19 +229,12 @@ class RecipeEditDialog(QDialog):
 
         wrap = QWidget()
         layout = QVBoxLayout(wrap)
+        layout.addWidget(self.wedge, alignment=Qt.AlignCenter)
         layout.addWidget(self.info_box)
         layout.addWidget(self.nutrition_box)
         layout.addWidget(contains_box)
         layout.addStretch()
         return wrap
-
-    def _build_right(self):
-        preview_box = QGroupBox('Preview')
-        self.wedge = WedgeView(self.recipe_id, size=WEDGE_SIZE)
-        preview_layout = QVBoxLayout(preview_box)
-        preview_layout.addWidget(self.wedge, alignment=Qt.AlignCenter)
-        preview_layout.addStretch()
-        return preview_box
 
     # --- helpers ---
 
@@ -235,14 +266,16 @@ class RecipeEditDialog(QDialog):
         self.info_box.setTitle(f"Info (per {recipe['Unit']})")
         self.nutrition_box.setTitle(f"Nutrition (per {recipe['Unit']})")
 
-        # Sync editable demographic fields. Uncommitted typed-but-not-Updated
-        # values will be lost here — that's an acceptable tradeoff for keeping
-        # the form visibly in sync after an undo.
+        # Sync editable demographic fields. The widget the user is currently
+        # editing is left alone — otherwise typing in one field while another
+        # commits would clobber the in-progress edit.
         for edit, value in (
             (self.name_edit, recipe['Name']),
             (self.unit_edit, recipe['Unit']),
             (self.yield_edit, str(recipe['OutputQty'])),
         ):
+            if edit.hasFocus():
+                continue
             edit.blockSignals(True)
             if edit.text() != value:
                 edit.setText(value)
@@ -256,17 +289,28 @@ class RecipeEditDialog(QDialog):
 
     # --- handlers ---
 
-    def _on_update_info(self):
+    def _maybe_commit_info(self):
+        '''Auto-save the recipe demographic fields. Wired to each input's
+        editingFinished signal and called explicitly from done() so a Close
+        click doesn't lose an in-flight edit.'''
         name = self.name_edit.text().strip()
+        if not name:
+            # Refuse the empty-name commit; restore the previous value.
+            self.name_edit.blockSignals(True)
+            self.name_edit.setText(self._recipe_snapshot[0])
+            self.name_edit.blockSignals(False)
+            return
         unit = self.unit_edit.text()
         try:
             yield_qty = float(self.yield_edit.text() or 0)
         except ValueError:
-            QMessageBox.warning(self, 'Invalid', 'Recipe Yield must be numeric.')
+            self.yield_edit.blockSignals(True)
+            self.yield_edit.setText(str(self._recipe_snapshot[2]))
+            self.yield_edit.blockSignals(False)
             return
         after = (name, unit, yield_qty)
         if after == self._recipe_snapshot:
-            return  # nothing to push
+            return
         self.undo_stack.push(UpdateRecipeInfoCommand(self.recipe_id, self._recipe_snapshot, after))
 
     def _on_tag_toggle(self, tag_id, tag_name, state):
@@ -280,29 +324,67 @@ class RecipeEditDialog(QDialog):
         self.undo_stack.push(AddComponentCommand(self.recipe_id, mode, child_id, dlg.qty, name))
 
     def _on_component_activated(self, view_index):
+        '''Double-click or Enter on a row — open the inline Quantity editor.'''
         if not view_index.isValid():
             return
-        component = self.components_model.row_dict(view_index.row())
-        dlg = RecipeComponentEditDialog(self.name_edit.text(), component, parent=self)
-        if dlg.exec() != QDialog.Accepted:
-            return
-        mode = component['Type']
-        child_id = component['Id']
-        name = component['Name']
+        qty_col = self.components_model.COLUMNS.index('Quantity')
+        qty_index = self.components_model.index(view_index.row(), qty_col)
+        self.components_table.setCurrentIndex(qty_index)
+        self.components_table.edit(qty_index)
+
+    def _on_qty_edited(self, row, new_qty):
+        '''The components model emitted qtyEdited because the user finished
+        an inline edit. Push a SetComponentQtyCommand so the change is
+        undoable.'''
+        row_dict = self.components_model.row_dict(row)
         try:
-            old_qty = float(component['Quantity'])
+            old_qty = float(row_dict.get('QuantityRaw', 0) or 0)
         except (TypeError, ValueError):
             old_qty = 0.0
-        if dlg.result_action == 'update':
-            if dlg.new_qty == old_qty:
-                return
-            self.undo_stack.push(SetComponentQtyCommand(
-                self.recipe_id, mode, child_id, old_qty, dlg.new_qty, name,
-            ))
-        elif dlg.result_action == 'delete':
-            self.undo_stack.push(RemoveComponentCommand(
-                self.recipe_id, mode, child_id, old_qty, name,
-            ))
+        if new_qty == old_qty:
+            return
+        self.undo_stack.push(SetComponentQtyCommand(
+            self.recipe_id, row_dict['Type'], row_dict['Id'],
+            old_qty, new_qty, row_dict['Name'],
+        ))
+
+    def _show_components_context_menu(self, point):
+        index = self.components_table.indexAt(point)
+        if not index.isValid():
+            return
+        menu = QMenu(self.components_table)
+        edit_action = menu.addAction('Edit Quantity')
+        remove_action = menu.addAction('Remove')
+        chosen = menu.exec(self.components_table.viewport().mapToGlobal(point))
+        if chosen is edit_action:
+            self._on_component_activated(index)
+        elif chosen is remove_action:
+            self._remove_component(index.row())
+
+    def _remove_component(self, row):
+        row_dict = self.components_model.row_dict(row)
+        name = row_dict['Name']
+        if QMessageBox.question(
+            self, 'Remove', f"Remove '{name}' from this recipe?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+        try:
+            old_qty = float(row_dict.get('QuantityRaw', 0) or 0)
+        except (TypeError, ValueError):
+            old_qty = 0.0
+        sort_order = row_dict.get('SortOrder')
+        self.undo_stack.push(RemoveComponentCommand(
+            self.recipe_id, row_dict['Type'], row_dict['Id'], old_qty, name,
+            sort_order=sort_order,
+        ))
+
+    def _on_components_reordered(self, before, after):
+        '''Model fired this when the user dropped a row at a new position.
+        Push it through the undo stack so the DB rewrite is reversible.'''
+        if before == after:
+            return
+        self.undo_stack.push(ReorderComponentsCommand(self.recipe_id, before, after))
 
     def _on_nutrition_label(self):
         NutritionLabelDialog(self.recipe_id, parent=self).exec()
