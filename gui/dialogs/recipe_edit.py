@@ -32,8 +32,8 @@ from gui.dialogs.price_history import PriceHistoryDialog
 from gui.dialogs.recipe_component_add import RecipeComponentAddDialog
 from gui.models.components_model import RecipeComponentsModel
 from gui.undo.recipe_commands import (
-    AddComponentCommand, RemoveComponentCommand, SetComponentQtyCommand,
-    ToggleTagCommand, UpdateRecipeInfoCommand,
+    AddComponentCommand, RemoveComponentCommand, ReorderComponentsCommand,
+    SetComponentQtyCommand, ToggleTagCommand, UpdateRecipeInfoCommand,
 )
 from gui.widgets.tag_checkbox_grid import TagCheckboxGrid
 from gui.widgets.type_badge import TypeBadgeCellDelegate
@@ -73,6 +73,7 @@ class RecipeEditDialog(QDialog):
         self._recipe_snapshot = self._snapshot(recipe)
         self.components_model = RecipeComponentsModel(recipe_id)
         self.components_model.qtyEdited.connect(self._on_qty_edited)
+        self.components_model.rowsReordered.connect(self._on_components_reordered)
 
         left_col = self._build_left(recipe)
         right_col = self._build_summary(recipe)
@@ -152,6 +153,14 @@ class RecipeEditDialog(QDialog):
         self.components_table.setEditTriggers(
             QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed
         )
+        # Drag-reorder rows. The model returns False from dropMimeData for
+        # no-op moves and the actual SortOrder update goes through the
+        # undo stack (see _on_components_reordered).
+        self.components_table.setDragEnabled(True)
+        self.components_table.setAcceptDrops(True)
+        self.components_table.setDropIndicatorShown(True)
+        self.components_table.setDragDropMode(QAbstractItemView.InternalMove)
+        self.components_table.setDefaultDropAction(Qt.MoveAction)
         self.components_table.verticalHeader().setVisible(False)
         self.components_table.horizontalHeader().setStretchLastSection(True)
         qty_col = self.components_model.COLUMNS.index('Quantity')
@@ -364,9 +373,18 @@ class RecipeEditDialog(QDialog):
             old_qty = float(row_dict.get('QuantityRaw', 0) or 0)
         except (TypeError, ValueError):
             old_qty = 0.0
+        sort_order = row_dict.get('SortOrder')
         self.undo_stack.push(RemoveComponentCommand(
             self.recipe_id, row_dict['Type'], row_dict['Id'], old_qty, name,
+            sort_order=sort_order,
         ))
+
+    def _on_components_reordered(self, before, after):
+        '''Model fired this when the user dropped a row at a new position.
+        Push it through the undo stack so the DB rewrite is reversible.'''
+        if before == after:
+            return
+        self.undo_stack.push(ReorderComponentsCommand(self.recipe_id, before, after))
 
     def _on_nutrition_label(self):
         NutritionLabelDialog(self.recipe_id, parent=self).exec()
