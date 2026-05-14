@@ -9,6 +9,7 @@ USDA values are NEVER applied automatically — the user must click
 intended flow: USDA is a quick reference; the user validates everything
 before saving.'''
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QDialog, QDialogButtonBox, QGroupBox, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
@@ -27,6 +28,7 @@ class IngredientCreateFromUsdaDialog(QDialog):
         self.setWindowTitle(f'{config.APPNAME} | > NEW INGREDIENT (USDA Search) <')
         self.resize(1100, 640)
         self.new_id = 0
+        self.status_message = ''
 
         self._hits = []
         self._current_prefill = None
@@ -41,6 +43,7 @@ class IngredientCreateFromUsdaDialog(QDialog):
         splitter.setStretchFactor(1, 1)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Save).setShortcut(QKeySequence.Save)
         buttons.accepted.connect(self._on_save)
         buttons.rejected.connect(self.reject)
         # Without this, Enter in the search box also fires the dialog's
@@ -150,8 +153,9 @@ class IngredientCreateFromUsdaDialog(QDialog):
     # --- save ---
 
     def _on_save(self):
-        self.new_id = db.create_ingredient(self.form.collect_values())
-        print(f'Created new Ingredient id: {self.new_id}')
+        values = self.form.collect_values()
+        self.new_id = db.create_ingredient(values)
+        self.status_message = f"Created '{values.get('Name', '') or 'ingredient'}'"
         self.accept()
 
 

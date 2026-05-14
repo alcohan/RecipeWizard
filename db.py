@@ -385,6 +385,20 @@ def set_ingredient_image(ingredient_id, filename):
     '''Set or clear an ingredient's ImageFilename. Pass None/empty to clear.'''
     return query('UPDATE Ingredients SET ImageFilename=? WHERE Id=?', (filename or None, ingredient_id))
 
+def get_recipes_using_ingredient(ingredient_id):
+    '''Recipes that directly include this ingredient as a component.
+    Matches the same "in use" check that blocks ingredient deletion —
+    doesn't expand sub-recipes.'''
+    sql = '''
+        SELECT DISTINCT r.Id, r.Name
+        FROM Connections c
+        JOIN Recipes r ON c.ParentRecipe = r.Id
+        WHERE c.ChildIngredient = ?
+        ORDER BY r.Name COLLATE NOCASE ASC;
+    '''
+    return query(sql, (ingredient_id,))['data']
+
+
 def get_recipe_wedge_components(recipe_id):
     '''
     Direct components of a recipe for wedge rendering: name, type, and (for

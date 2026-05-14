@@ -1,3 +1,4 @@
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QMessageBox, QVBoxLayout,
 )
@@ -19,6 +20,7 @@ class SupplierEditDialog(QDialog):
         super().__init__(parent)
         self.supplier_id = supplier_id
         self.modified = False
+        self.status_message = ''
         is_new = supplier_id is None
 
         if is_new:
@@ -39,6 +41,7 @@ class SupplierEditDialog(QDialog):
 
         button_box = QDialogButtonBox()
         save_btn = button_box.addButton('Save', QDialogButtonBox.AcceptRole)
+        save_btn.setShortcut(QKeySequence.Save)
         delete_btn = button_box.addButton('Delete', QDialogButtonBox.DestructiveRole)
         delete_btn.setVisible(not is_new)
         delete_btn.setStyleSheet('background-color: #c0392b; color: white; padding: 4px 10px;')
@@ -61,11 +64,13 @@ class SupplierEditDialog(QDialog):
         if not values['name'].strip():
             QMessageBox.warning(self, 'Missing Name', 'Supplier name is required.')
             return
+        verb = 'Created' if self.supplier_id is None else 'Saved'
         if self.supplier_id is None:
             db.create_supplier(values)
         else:
             db.update_supplier(self.supplier_id, values)
         self.modified = True
+        self.status_message = f"{verb} '{values['name']}'"
         self.accept()
 
     def _on_delete(self):
@@ -81,4 +86,5 @@ class SupplierEditDialog(QDialog):
             QMessageBox.warning(self, 'Supplier In Use', str(exc))
             return
         self.modified = True
+        self.status_message = f"Deleted '{name}'"
         self.accept()
