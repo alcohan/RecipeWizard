@@ -52,6 +52,10 @@ def _set_windows_app_user_model_id(app_id):
 def main():
     _set_windows_app_user_model_id('AdrianCohan.RecipeWizard')
     app = QApplication(sys.argv)
+    # Organization + application names back QSettings (window geometry,
+    # splitter state, last-active tab) under HKCU\Software\AdrianCohan\RecipeWizard
+    # on Windows.
+    app.setOrganizationName('AdrianCohan')
     app.setApplicationName(config.APPNAME)
     app.setWindowIcon(QIcon(config.ICON))
     window = MainWindow()

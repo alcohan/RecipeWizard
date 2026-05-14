@@ -1,7 +1,7 @@
 '''Edit qty or remove an existing recipe component. The caller maps the
 result_action ("update" | "delete") into a SetComponentQtyCommand or
 RemoveComponentCommand pushed onto the recipe dialog's undo stack.'''
-from PySide6.QtGui import QDoubleValidator
+from PySide6.QtGui import QDoubleValidator, QKeySequence
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QMessageBox,
     QVBoxLayout,
@@ -31,6 +31,7 @@ class RecipeComponentEditDialog(QDialog):
 
         button_box = QDialogButtonBox()
         save_btn = button_box.addButton('Save', QDialogButtonBox.AcceptRole)
+        save_btn.setShortcut(QKeySequence.Save)
         delete_btn = button_box.addButton('Delete', QDialogButtonBox.DestructiveRole)
         delete_btn.setStyleSheet('background-color: #c0392b; color: white; padding: 4px 10px;')
         cancel_btn = button_box.addButton('Cancel', QDialogButtonBox.RejectRole)

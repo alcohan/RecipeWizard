@@ -1,4 +1,4 @@
-from PySide6.QtGui import QDoubleValidator
+from PySide6.QtGui import QDoubleValidator, QKeySequence
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QMessageBox, QVBoxLayout,
 )
@@ -12,6 +12,7 @@ class RecipeCreateDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(f'{config.APPNAME} | > NEW RECIPE <')
         self.new_id = 0
+        self.status_message = ''
 
         self.name_edit = QLineEdit()
         self.unit_edit = QLineEdit()
@@ -24,6 +25,7 @@ class RecipeCreateDialog(QDialog):
         form.addRow('Recipe Yield', self.yield_edit)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Save).setShortcut(QKeySequence.Save)
         buttons.accepted.connect(self._on_save)
         buttons.rejected.connect(self.reject)
 
@@ -42,4 +44,5 @@ class RecipeCreateDialog(QDialog):
             QMessageBox.warning(self, 'Invalid Yield', 'Recipe Yield must be numeric.')
             return
         self.new_id = db.create_recipe(name, self.unit_edit.text(), yield_qty)
+        self.status_message = f"Created '{name}'"
         self.accept()
