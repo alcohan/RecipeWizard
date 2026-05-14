@@ -3,23 +3,103 @@
 Uses a filterable QListWidget rather than QCompleter so the full eligible
 set is visible up front (mirrors the old PySimpleGUI listbox UX) and so
 Enter inside the filter input can't auto-pick the first item — selection
-is always explicit.'''
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QDoubleValidator, QKeySequence
+is always explicit.
+
+A custom delegate paints a colored pill badge ("ingredient" / "recipe")
+next to each row. The mode text is also kept in item.text() so filter-by-
+typing still works (a user can narrow to recipes by typing "recipe").'''
+from PySide6.QtCore import QRect, QSize, Qt
+from PySide6.QtGui import QColor, QDoubleValidator, QFont, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QListWidget,
-    QListWidgetItem, QMessageBox, QVBoxLayout,
+    QListWidgetItem, QMessageBox, QStyle, QStyledItemDelegate, QVBoxLayout,
 )
 
 import config
 import db
 
 
+# Colors chosen for clear contrast with the white-on-color pill text and
+# enough distinction from each other (selection highlight is usually a
+# system-blue, which clashes with neither).
+_INGREDIENT_BADGE = QColor('#16a34a')   # green
+_RECIPE_BADGE = QColor('#7c3aed')        # violet
+
+
+class _ComponentTypeBadgeDelegate(QStyledItemDelegate):
+    '''Paints each row as: [pill badge] name (unit). Reads the row tuple
+    (id, mode, name, unit) from Qt.UserRole. Doesn't paint item.text() —
+    that's left containing the mode so the typing filter still matches.'''
+
+    ROW_HEIGHT = 32
+    PAD_X = 8
+    BADGE_GAP = 10
+    BADGE_PAD_X = 10
+    BADGE_PAD_Y = 2
+
+    def paint(self, painter, option, index):
+        row_data = index.data(Qt.UserRole)
+        if not row_data:
+            super().paint(painter, option, index)
+            return
+        _id, mode, name, unit = row_data
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Standard selection / hover background.
+        selected = bool(option.state & QStyle.State_Selected)
+        if selected:
+            painter.fillRect(option.rect, option.palette.highlight())
+            text_color = option.palette.highlightedText().color()
+        else:
+            text_color = option.palette.text().color()
+
+        base_font = QFont(option.font)
+        badge_font = QFont(base_font)
+        badge_font.setBold(True)
+        badge_font.setPointSizeF(base_font.pointSizeF() * 0.85)
+
+        # Badge geometry
+        painter.setFont(badge_font)
+        fm_badge = painter.fontMetrics()
+        badge_text = mode  # "ingredient" or "recipe"
+        badge_w = fm_badge.horizontalAdvance(badge_text) + self.BADGE_PAD_X * 2
+        badge_h = fm_badge.height() + self.BADGE_PAD_Y * 2
+        badge_x = option.rect.x() + self.PAD_X
+        badge_y = option.rect.y() + (option.rect.height() - badge_h) // 2
+        badge_rect = QRect(badge_x, badge_y, badge_w, badge_h)
+
+        # Draw the pill
+        badge_color = _RECIPE_BADGE if mode == 'recipe' else _INGREDIENT_BADGE
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(badge_color)
+        painter.drawRoundedRect(badge_rect, badge_h / 2, badge_h / 2)
+        painter.setPen(Qt.white)
+        painter.drawText(badge_rect, Qt.AlignCenter, badge_text)
+
+        # Draw the name + unit text, elided if it doesn't fit
+        painter.setFont(base_font)
+        painter.setPen(text_color)
+        fm_text = painter.fontMetrics()
+        text_x = badge_rect.right() + self.BADGE_GAP
+        text_w = option.rect.right() - text_x - self.PAD_X
+        text_rect = QRect(text_x, option.rect.y(), text_w, option.rect.height())
+        full_text = f'{name}  ({unit})' if unit else name
+        elided = fm_text.elidedText(full_text, Qt.ElideRight, text_w)
+        painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, elided)
+
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        return QSize(option.rect.width() or 200, self.ROW_HEIGHT)
+
+
 class RecipeComponentAddDialog(QDialog):
     def __init__(self, recipe_id, recipe_name, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f'{config.APPNAME} | {recipe_name} | > NEW <')
-        self.resize(520, 480)
+        self.resize(520, 520)
 
         self.recipe_id = recipe_id
         # `selected` and `qty` are populated on Accept.
@@ -30,13 +110,16 @@ class RecipeComponentAddDialog(QDialog):
         self._eligible = db.get_eligible_ingredients(recipe_id)
 
         self.filter_edit = QLineEdit()
-        self.filter_edit.setPlaceholderText('Type to filter…')
+        self.filter_edit.setPlaceholderText('Type to filter (try "recipe" to narrow to sub-recipes)…')
         self.filter_edit.textChanged.connect(self._on_filter)
 
         self.results = QListWidget()
+        self.results.setItemDelegate(_ComponentTypeBadgeDelegate(self.results))
+        # Item text holds name + unit + mode so the substring filter still
+        # matches mode keywords; the delegate ignores text() for display.
         for row in self._eligible:
             child_id, mode, name, unit = row
-            item = QListWidgetItem(f'{name} ({unit}) - {mode}[{child_id}]')
+            item = QListWidgetItem(f'{name} ({unit}) {mode}')
             item.setData(Qt.UserRole, row)
             self.results.addItem(item)
         self.results.currentItemChanged.connect(self._on_selection_changed)
