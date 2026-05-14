@@ -98,6 +98,21 @@ def migrateDB():
         print('Migrating: adding Ingredients.ImageFilename')
         cursor.execute('ALTER TABLE Ingredients ADD COLUMN ImageFilename TEXT')
 
+    if not column_exists('Connections', 'SortOrder'):
+        print('Migrating: adding Connections.SortOrder')
+        cursor.execute('ALTER TABLE Connections ADD COLUMN SortOrder INTEGER')
+        # Backfill from rowid order per parent — gives each existing row a
+        # stable, distinct SortOrder reflecting the order it was inserted.
+        cursor.execute('''
+            UPDATE Connections
+            SET SortOrder = (
+                SELECT COUNT(*)
+                FROM Connections c2
+                WHERE c2.ParentRecipe = Connections.ParentRecipe
+                  AND c2.rowid <= Connections.rowid
+            )
+        ''')
+
     connection.commit()
     connection.close()
 

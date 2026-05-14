@@ -45,6 +45,7 @@ CREATE TABLE Connections (
 	, ChildRecipe Integer
 	, ChildIngredient Integer
 	, Quantity float
+	, SortOrder Integer
 );
 
 
