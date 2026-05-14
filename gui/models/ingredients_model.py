@@ -1,10 +1,11 @@
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 
 import db
+from gui.widgets.tag_badge import TagColorRole
 
 
 class IngredientsModel(QAbstractTableModel):
-    COLUMNS = ('Name', 'Portion', 'Unit', 'Calories')
+    COLUMNS = ('Name', 'Tag', 'Portion', 'Unit', 'Calories')
     NUMERIC_COLUMNS = ('Calories',)
 
     def __init__(self, parent=None):
@@ -27,7 +28,17 @@ class IngredientsModel(QAbstractTableModel):
         if not index.isValid():
             return None
         col = self.COLUMNS[index.column()]
-        value = self._rows[index.row()].get(col)
+        row = self._rows[index.row()]
+        if col == 'Tag':
+            if role == Qt.DisplayRole:
+                return row.get('TagName') or ''
+            if role == TagColorRole:
+                return row.get('TagColor')
+            # UserRole drives sort: untagged sorts to the bottom of A→Z.
+            if role == Qt.UserRole:
+                return (row.get('TagName') or '￿').lower()
+            return None
+        value = row.get(col)
         if role == Qt.DisplayRole:
             if col in self.NUMERIC_COLUMNS:
                 return _format_num(value)
