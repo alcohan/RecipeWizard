@@ -36,6 +36,7 @@ from gui.undo.recipe_commands import (
     ToggleTagCommand, UpdateRecipeInfoCommand,
 )
 from gui.widgets.tag_checkbox_grid import TagCheckboxGrid
+from gui.widgets.type_badge import TypeBadgeCellDelegate
 from gui.widgets.wedge_view import WedgeView
 
 
@@ -155,6 +156,8 @@ class RecipeEditDialog(QDialog):
         self.components_table.horizontalHeader().setStretchLastSection(True)
         qty_col = self.components_model.COLUMNS.index('Quantity')
         self.components_table.setItemDelegateForColumn(qty_col, _QuantityDelegate(self.components_table))
+        type_col = self.components_model.COLUMNS.index('Type')
+        self.components_table.setItemDelegateForColumn(type_col, TypeBadgeCellDelegate(self.components_table))
         self.components_table.activated.connect(self._on_component_activated)
         self.components_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.components_table.customContextMenuRequested.connect(self._show_components_context_menu)

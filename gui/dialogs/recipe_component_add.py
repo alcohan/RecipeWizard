@@ -9,7 +9,7 @@ A custom delegate paints a colored pill badge ("ingredient" / "recipe")
 next to each row. The mode text is also kept in item.text() so filter-by-
 typing still works (a user can narrow to recipes by typing "recipe").'''
 from PySide6.QtCore import QRect, QSize, Qt
-from PySide6.QtGui import QColor, QDoubleValidator, QFont, QKeySequence, QPainter
+from PySide6.QtGui import QDoubleValidator, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMessageBox, QStyle, QStyledItemDelegate, QVBoxLayout,
@@ -17,13 +17,7 @@ from PySide6.QtWidgets import (
 
 import config
 import db
-
-
-# Colors chosen for clear contrast with the white-on-color pill text and
-# enough distinction from each other (selection highlight is usually a
-# system-blue, which clashes with neither).
-_INGREDIENT_BADGE = QColor('#16a34a')   # green
-_RECIPE_BADGE = QColor('#7c3aed')        # violet
+from gui.widgets.type_badge import paint_type_badge
 
 
 class _ComponentTypeBadgeDelegate(QStyledItemDelegate):
@@ -34,8 +28,6 @@ class _ComponentTypeBadgeDelegate(QStyledItemDelegate):
     ROW_HEIGHT = 32
     PAD_X = 8
     BADGE_GAP = 10
-    BADGE_PAD_X = 10
-    BADGE_PAD_Y = 2
 
     def paint(self, painter, option, index):
         row_data = index.data(Qt.UserRole)
@@ -47,39 +39,19 @@ class _ComponentTypeBadgeDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # Standard selection / hover background.
-        selected = bool(option.state & QStyle.State_Selected)
-        if selected:
+        # Standard selection background.
+        if option.state & QStyle.State_Selected:
             painter.fillRect(option.rect, option.palette.highlight())
             text_color = option.palette.highlightedText().color()
         else:
             text_color = option.palette.text().color()
 
-        base_font = QFont(option.font)
-        badge_font = QFont(base_font)
-        badge_font.setBold(True)
-        badge_font.setPointSizeF(base_font.pointSizeF() * 0.85)
+        # Badge — drawn via the shared helper so the picker and the
+        # components-table cell stay visually consistent.
+        badge_area = option.rect.adjusted(self.PAD_X, 0, 0, 0)
+        badge_rect = paint_type_badge(painter, badge_area, mode, option.font)
 
-        # Badge geometry
-        painter.setFont(badge_font)
-        fm_badge = painter.fontMetrics()
-        badge_text = mode  # "ingredient" or "recipe"
-        badge_w = fm_badge.horizontalAdvance(badge_text) + self.BADGE_PAD_X * 2
-        badge_h = fm_badge.height() + self.BADGE_PAD_Y * 2
-        badge_x = option.rect.x() + self.PAD_X
-        badge_y = option.rect.y() + (option.rect.height() - badge_h) // 2
-        badge_rect = QRect(badge_x, badge_y, badge_w, badge_h)
-
-        # Draw the pill
-        badge_color = _RECIPE_BADGE if mode == 'recipe' else _INGREDIENT_BADGE
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(badge_color)
-        painter.drawRoundedRect(badge_rect, badge_h / 2, badge_h / 2)
-        painter.setPen(Qt.white)
-        painter.drawText(badge_rect, Qt.AlignCenter, badge_text)
-
-        # Draw the name + unit text, elided if it doesn't fit
-        painter.setFont(base_font)
+        # Name + unit text after the badge, elided to fit.
         painter.setPen(text_color)
         fm_text = painter.fontMetrics()
         text_x = badge_rect.right() + self.BADGE_GAP
