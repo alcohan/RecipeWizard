@@ -215,6 +215,10 @@ def recipe_components(id: int):
 
     # Format the data
     for row in result:
+        # Preserve the raw float — inline editing in the recipe dialog needs
+        # the precise value for the undo stack, otherwise round-tripping
+        # rounds anything past 2 decimals.
+        row['QuantityRaw'] = row['Quantity']
         # Strip trailing zeroes from quantity
         row['Quantity'] = "{:.2f}".format(row['Quantity']).rstrip('0').rstrip('.')
         # Format cost as "$ 0.00"
