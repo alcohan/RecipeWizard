@@ -14,10 +14,9 @@ UX notes:
 - Right-click on a component also exposes Remove, which confirms then
   pushes RemoveComponentCommand.
 
-Layout: three columns separated by a QSplitter.
+Layout: two columns separated by a QSplitter.
   Left:    demographic, tag grid, components table, action row
-  Middle:  read-only info / nutrition / contains panels
-  Right:   wedge preview'''
+  Right:   wedge preview, then read-only info / nutrition / contains'''
 from PySide6.QtCore import Qt, QSettings
 from PySide6.QtGui import QDoubleValidator, QKeySequence, QUndoStack
 from PySide6.QtWidgets import (
@@ -75,8 +74,7 @@ class RecipeEditDialog(QDialog):
         self.components_model.qtyEdited.connect(self._on_qty_edited)
 
         left_col = self._build_left(recipe)
-        middle_col = self._build_middle(recipe)
-        right_col = self._build_right()
+        right_col = self._build_summary(recipe)
 
         # Undo/Redo actions — keyboard shortcuts only, no toolbar buttons.
         undo_action = self.undo_stack.createUndoAction(self, 'Undo')
@@ -98,11 +96,9 @@ class RecipeEditDialog(QDialog):
 
         self.splitter = QSplitter(Qt.Horizontal)
         self.splitter.addWidget(left_col)
-        self.splitter.addWidget(middle_col)
         self.splitter.addWidget(right_col)
         self.splitter.setStretchFactor(0, 3)
         self.splitter.setStretchFactor(1, 2)
-        self.splitter.setStretchFactor(2, 1)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.splitter, stretch=1)
@@ -189,8 +185,13 @@ class RecipeEditDialog(QDialog):
         layout.addLayout(action_row)
         return wrap
 
-    def _build_middle(self, recipe):
+    def _build_summary(self, recipe):
+        '''Right pane: wedge preview at the top, then info / nutrition /
+        contains. Folds the old "middle" and "right" panes from the
+        original 3-column layout into a single summary column.'''
         unit = recipe['Unit']
+
+        self.wedge = WedgeView(self.recipe_id, size=WEDGE_SIZE)
 
         self.info_box = QGroupBox(f'Info (per {unit})')
         self.info_labels = {}
@@ -216,19 +217,12 @@ class RecipeEditDialog(QDialog):
 
         wrap = QWidget()
         layout = QVBoxLayout(wrap)
+        layout.addWidget(self.wedge, alignment=Qt.AlignCenter)
         layout.addWidget(self.info_box)
         layout.addWidget(self.nutrition_box)
         layout.addWidget(contains_box)
         layout.addStretch()
         return wrap
-
-    def _build_right(self):
-        preview_box = QGroupBox('Preview')
-        self.wedge = WedgeView(self.recipe_id, size=WEDGE_SIZE)
-        preview_layout = QVBoxLayout(preview_box)
-        preview_layout.addWidget(self.wedge, alignment=Qt.AlignCenter)
-        preview_layout.addStretch()
-        return preview_box
 
     # --- helpers ---
 
