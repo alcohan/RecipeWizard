@@ -68,6 +68,13 @@ class RecipeEditDialog(QDialog):
         self.undo_stack = QUndoStack(self)
         self.undo_stack.indexChanged.connect(self._refresh)
 
+        # Bring the recipe in line with its current format's template
+        # before reading anything else — fixes sample-seeded recipes that
+        # were tagged but missed some template items, and recipes whose
+        # template was edited after they were tagged. Silent / not on the
+        # undo stack: this reconciles latent data drift, not a user action.
+        db.reconcile_recipe_template(recipe_id)
+
         recipe = db.recipe_info(recipe_id)
         self.setWindowTitle(f"{config.APPNAME} | {recipe['Name']}")
         self.resize(1200, 760)
