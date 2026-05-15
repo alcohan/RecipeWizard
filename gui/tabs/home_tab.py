@@ -1,15 +1,45 @@
-'''Home dashboard tab: summary count cards on top, a clickable grid of
-recipe-wedge cards below. New future widgets/sections should slot into
-HomeTab's vertical layout the same way.'''
+'''Home dashboard tab.
+
+Layout from top to bottom:
+  - clickable count cards (Ingredients / Recipes / Suppliers)
+  - quick-action buttons (New Recipe / New Ingredient from USDA / New Ingredient blank)
+  - "Recently edited" strip — up to 4 most recently touched recipes or ingredients
+  - filterable wedge gallery of all recipes (the original home content)
+
+The tab emits granular signals (newRecipeRequested, ingredientsRequested,
+itemActivated, etc.) so MainWindow can route to the right handler without
+the tab having to know about other tabs or dialogs directly.'''
 from PySide6.QtCore import Qt, QThreadPool, Signal
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QScrollArea,
-    QVBoxLayout, QWidget,
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QScrollArea, QVBoxLayout, QWidget,
 )
 
 import db
+from gui.widgets.recent_card import RecentItemCard
 from gui.widgets.summary_card import SummaryCard
 from gui.widgets.wedge_view import WedgeView
+
+
+_QUICK_ACTION_QSS = '''
+    QPushButton {
+        padding: 10px 18px;
+        font-size: 11pt;
+        font-weight: bold;
+        background-color: #2a7;
+        color: white;
+        border: none;
+        border-radius: 6px;
+    }
+    QPushButton:hover { background-color: #36a060; }
+    QPushButton:pressed { background-color: #1f5e3f; }
+    QPushButton[variant="secondary"] {
+        background-color: white;
+        color: #1f5e3f;
+        border: 1px solid #2a7;
+    }
+    QPushButton[variant="secondary"]:hover { background-color: #f5fff5; }
+'''
 
 
 class _RecipeCard(QFrame):
@@ -198,26 +228,115 @@ class _RecipeGallery(QWidget):
 
 
 class HomeTab(QWidget):
-    '''Top-level home tab. Emits recipeClicked(int) when a gallery card is
-    activated — the MainWindow listens and opens the recipe edit dialog.'''
+    '''Top-level home tab. Emits granular signals so MainWindow can route
+    each action to the right place without the tab knowing about other
+    tabs or dialogs.'''
 
     recipeClicked = Signal(int)
+
+    # Count-card navigation
+    ingredientsRequested = Signal()
+    recipesRequested = Signal()
+    suppliersRequested = Signal()
+
+    # Quick-action buttons
+    newRecipeRequested = Signal()
+    newIngredientUsdaRequested = Signal()
+    newIngredientBlankRequested = Signal()
+
+    # Recently-edited strip: kind in {'recipe', 'ingredient'}
+    itemActivated = Signal(str, int)
+
+    MAX_RECENTS = 4
 
     def __init__(self, ingredients_model, recipes_model, parent=None):
         super().__init__(parent)
         self._ingredients_model = ingredients_model
         self._recipes_model = recipes_model
 
-        self.ingredients_card = SummaryCard('Ingredients')
-        self.recipes_card = SummaryCard('Recipes')
-        self.suppliers_card = SummaryCard('Suppliers')
+        layout = QVBoxLayout(self)
+        layout.addLayout(self._build_counts_row())
+        layout.addSpacing(4)
+        layout.addLayout(self._build_quick_actions_row())
+        layout.addSpacing(8)
+        layout.addWidget(self._build_recents_section())
+        layout.addSpacing(8)
+        layout.addLayout(self._build_recipes_section_header())
 
-        cards_row = QHBoxLayout()
-        cards_row.addWidget(self.ingredients_card)
-        cards_row.addWidget(self.recipes_card)
-        cards_row.addWidget(self.suppliers_card)
-        cards_row.addStretch()
+        self.gallery = _RecipeGallery(recipes_model)
+        self.gallery.recipeClicked.connect(self.recipeClicked.emit)
+        self.filter_edit.textChanged.connect(self.gallery.setFilterText)
+        layout.addWidget(self.gallery, stretch=1)
 
+        # Counts and recents react to any save/delete that resets a model.
+        ingredients_model.modelReset.connect(self._on_data_changed)
+        recipes_model.modelReset.connect(self._on_data_changed)
+        self._on_data_changed()
+
+    # --- builders ---
+
+    def _build_counts_row(self):
+        self.ingredients_card = SummaryCard('Ingredients', clickable=True)
+        self.ingredients_card.clicked.connect(self.ingredientsRequested.emit)
+        self.recipes_card = SummaryCard('Recipes', clickable=True)
+        self.recipes_card.clicked.connect(self.recipesRequested.emit)
+        self.suppliers_card = SummaryCard('Suppliers', clickable=True)
+        self.suppliers_card.clicked.connect(self.suppliersRequested.emit)
+
+        row = QHBoxLayout()
+        row.addWidget(self.ingredients_card)
+        row.addWidget(self.recipes_card)
+        row.addWidget(self.suppliers_card)
+        row.addStretch()
+        return row
+
+    def _build_quick_actions_row(self):
+        new_recipe = QPushButton('+ New Recipe')
+        new_recipe.clicked.connect(self.newRecipeRequested.emit)
+
+        new_ing_usda = QPushButton('+ New Ingredient (USDA Search)')
+        new_ing_usda.setProperty('variant', 'secondary')
+        new_ing_usda.clicked.connect(self.newIngredientUsdaRequested.emit)
+
+        new_ing_blank = QPushButton('+ New Ingredient (Blank)')
+        new_ing_blank.setProperty('variant', 'secondary')
+        new_ing_blank.clicked.connect(self.newIngredientBlankRequested.emit)
+
+        # Local stylesheet on each so the secondary-variant selector applies.
+        for btn in (new_recipe, new_ing_usda, new_ing_blank):
+            btn.setStyleSheet(_QUICK_ACTION_QSS)
+            btn.setCursor(Qt.PointingHandCursor)
+
+        row = QHBoxLayout()
+        row.addWidget(new_recipe)
+        row.addWidget(new_ing_usda)
+        row.addWidget(new_ing_blank)
+        row.addStretch()
+        return row
+
+    def _build_recents_section(self):
+        '''Wrapper around the recents strip — kept as a QFrame so we can
+        cleanly rebuild the inner cards on every data-change without
+        disturbing the surrounding layout.'''
+        self._recents_frame = QFrame()
+        self._recents_frame.setObjectName('RecentsFrame')
+        self._recents_frame.setStyleSheet('QFrame#RecentsFrame { border: 0; }')
+
+        title = QLabel('Recently edited')
+        title.setStyleSheet('font-size: 11pt; font-weight: bold; color: #555;')
+
+        self._recents_row = QHBoxLayout()
+        self._recents_row.setSpacing(10)
+        self._recents_row.setContentsMargins(0, 0, 0, 0)
+
+        col = QVBoxLayout(self._recents_frame)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(6)
+        col.addWidget(title)
+        col.addLayout(self._recents_row)
+        return self._recents_frame
+
+    def _build_recipes_section_header(self):
         section_label = QLabel('Recipes')
         section_label.setStyleSheet('font-size: 13pt; font-weight: bold; padding: 4px 0;')
 
@@ -226,24 +345,17 @@ class HomeTab(QWidget):
         self.filter_edit.setClearButtonEnabled(True)
         self.filter_edit.setMaximumWidth(280)
 
-        section_row = QHBoxLayout()
-        section_row.addWidget(section_label)
-        section_row.addStretch()
-        section_row.addWidget(self.filter_edit)
+        row = QHBoxLayout()
+        row.addWidget(section_label)
+        row.addStretch()
+        row.addWidget(self.filter_edit)
+        return row
 
-        self.gallery = _RecipeGallery(recipes_model)
-        self.gallery.recipeClicked.connect(self.recipeClicked.emit)
-        self.filter_edit.textChanged.connect(self.gallery.setFilterText)
+    # --- data refresh ---
 
-        layout = QVBoxLayout(self)
-        layout.addLayout(cards_row)
-        layout.addSpacing(8)
-        layout.addLayout(section_row)
-        layout.addWidget(self.gallery, stretch=1)
-
-        ingredients_model.modelReset.connect(self._refresh_counts)
-        recipes_model.modelReset.connect(self._refresh_counts)
+    def _on_data_changed(self):
         self._refresh_counts()
+        self._refresh_recents()
 
     def _refresh_counts(self):
         self.ingredients_card.set_value(self._ingredients_model.rowCount())
@@ -251,6 +363,30 @@ class HomeTab(QWidget):
         # Suppliers don't have a top-level model in MainWindow; query directly.
         # Cheap (small table) and runs only on a model reset.
         self.suppliers_card.set_value(len(db.get_suppliers()))
+
+    def _refresh_recents(self):
+        # Tear down existing cards. Recents are rebuilt on every change
+        # rather than diffed — at most MAX_RECENTS widgets and the wedge
+        # cache makes thumbnail regeneration nearly free.
+        while self._recents_row.count():
+            item = self._recents_row.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        rows = db.get_recently_edited(limit=self.MAX_RECENTS)
+        if not rows:
+            placeholder = QLabel('No items yet — add a recipe or ingredient to get started.')
+            placeholder.setStyleSheet('color: #999; padding: 8px;')
+            self._recents_row.addWidget(placeholder)
+            self._recents_row.addStretch()
+            return
+
+        for row in rows:
+            card = RecentItemCard(row['kind'], row['id'], row['name'], row['updated_at'])
+            card.activated.connect(self.itemActivated.emit)
+            self._recents_row.addWidget(card)
+        self._recents_row.addStretch()
 
     def focus_filter(self):
         '''Called by the main window's Ctrl+F shortcut when Home is active.'''
