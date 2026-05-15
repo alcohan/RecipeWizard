@@ -35,4 +35,5 @@ def export_tables_to_file(database_file):
 
 
 if __name__ == '__main__':
-    export_tables_to_file("builder.db")
+    import config
+    export_tables_to_file(config.DATABASE)
