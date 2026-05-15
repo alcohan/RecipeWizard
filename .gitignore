@@ -19,8 +19,7 @@ wheels/
 *.egg-info/ 
 .installed.cfg 
 *.egg 
-*.manifest 
-export/
+*.manifest
 
 # Transient data file
 builder.db
