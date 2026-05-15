@@ -33,6 +33,7 @@ CREATE TABLE Ingredients (
 	, SugarGrams NUMERIC (6,2)
 	, ProteinGrams NUMERIC (6,2)
 	, ImageFilename TEXT
+	, updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE Recipes (
@@ -40,6 +41,7 @@ CREATE TABLE Recipes (
 	, Name NVarchar(100)
 	, Unit NVarchar(30)
 	, OutputQty float
+	, updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE Connections (
@@ -144,6 +146,40 @@ CREATE TABLE ingredient_allergens (
   , FOREIGN KEY (ingredient_id) REFERENCES ingredients(id)
   , FOREIGN KEY (allergen_id) REFERENCES allergens(id)
 );
+
+-- Bump updated_at on every UPDATE so the home tab can list "recently
+-- edited" items. The WHEN guard breaks the recursion: when our own
+-- UPDATE fires the trigger again, NEW.updated_at != OLD.updated_at, so
+-- the guard fails and the trigger is a no-op.
+CREATE TRIGGER ingredients_bump_updated_at AFTER UPDATE ON Ingredients
+WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+  UPDATE Ingredients SET updated_at = datetime('now') WHERE Id = NEW.Id;
+END;
+
+CREATE TRIGGER recipes_bump_updated_at AFTER UPDATE ON Recipes
+WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+  UPDATE Recipes SET updated_at = datetime('now') WHERE Id = NEW.Id;
+END;
+
+-- A recipe's "last edited" should also bump when its components change,
+-- not just its demographic fields. Adding/removing/reordering an
+-- ingredient or sub-recipe counts as editing the recipe.
+CREATE TRIGGER connections_bump_recipe_after_insert AFTER INSERT ON Connections
+BEGIN
+  UPDATE Recipes SET updated_at = datetime('now') WHERE Id = NEW.ParentRecipe;
+END;
+
+CREATE TRIGGER connections_bump_recipe_after_update AFTER UPDATE ON Connections
+BEGIN
+  UPDATE Recipes SET updated_at = datetime('now') WHERE Id = NEW.ParentRecipe;
+END;
+
+CREATE TRIGGER connections_bump_recipe_after_delete AFTER DELETE ON Connections
+BEGIN
+  UPDATE Recipes SET updated_at = datetime('now') WHERE Id = OLD.ParentRecipe;
+END;
 
 -- When we add a new price history, check if we need to update the current ingredient price
 CREATE TRIGGER update_ingredient_price AFTER INSERT ON ingredient_prices
