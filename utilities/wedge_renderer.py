@@ -105,7 +105,7 @@ def _hex_to_rgba(hex_str, alpha):
         return (200, 200, 200, alpha)
 
 
-_KNOWN_SHAPES = {'ring', 'bowl', 'wrap', 'tray'}
+_KNOWN_SHAPES = {'ring', 'bowl', 'wrap', 'tray', 'jar', 'box', 'cone', 'plate'}
 
 
 def _paint_silhouette(canvas, shape, color_hex, render_size):
@@ -164,6 +164,48 @@ def _paint_silhouette(canvas, shape, color_hex, render_size):
             (margin, margin, sz - margin, sz - margin),
             radius=sz * 0.07, fill=fill,
         )
+    elif shape == 'jar':
+        # Tall narrow rounded rectangle — reads as a catering jar / mason
+        # jar / smoothie cup. Verticality is what distinguishes it from
+        # 'tray' and 'box'; the wedge covers the middle and the jar
+        # extends well above and below.
+        rect_w = sz * 0.55
+        rect_h = sz * 0.96
+        corner_r = rect_w * 0.22
+        cx, cy = sz / 2, sz / 2
+        x0 = cx - rect_w / 2
+        y0 = cy - rect_h / 2
+        draw.rounded_rectangle(
+            (x0, y0, x0 + rect_w, y0 + rect_h),
+            radius=corner_r, fill=fill,
+        )
+    elif shape == 'box':
+        # Sharp-cornered square — bento / takeout box silhouette. The
+        # corners distinguish it from 'tray', which has the same overall
+        # footprint but rounded corners.
+        margin = sz * 0.04
+        draw.rectangle(
+            (margin, margin, sz - margin, sz - margin), fill=fill,
+        )
+    elif shape == 'cone':
+        # Downward-pointing triangle — taco / cone / hand-held silhouette.
+        # Apex at the bottom-center, base across the top so it reads as
+        # something held narrow-end-down.
+        apex = (sz / 2, sz * 0.97)
+        top_left = (sz * 0.04, sz * 0.18)
+        top_right = (sz * 0.96, sz * 0.18)
+        draw.polygon([top_left, top_right, apex], fill=fill)
+    elif shape == 'plate':
+        # Plate viewed from a slight angle — a wide horizontal ellipse
+        # bigger than the canvas, biased downward so the bottom rim is
+        # visible beneath the wedge. Distinguishable from 'ring' (which
+        # is concentric and uniform) by its horizontal stretch + offset.
+        cx, cy = sz / 2, sz * 0.55
+        width = sz * 1.20
+        height = sz * 0.90
+        bbox = (cx - width / 2, cy - height / 2,
+                cx + width / 2, cy + height / 2)
+        draw.ellipse(bbox, fill=fill)
 
 
 def _render_uncached(components, size, shape, shape_color):

@@ -209,6 +209,27 @@ def migrateDB():
     # Backfill missing colors so badges always have a color to paint with.
     cursor.execute("UPDATE tags SET color = ? WHERE color IS NULL OR color = ''", ('#64748b',))
 
+    # Repair fallout from the recipes-in-templates bug: an earlier version
+    # of the templates editor let the user pick a sub-recipe in the
+    # "+ Add Item" dialog. Adding a recipe that was itself tagged with the
+    # template produced a self-referential Connections row when the
+    # template was reconciled, and the recursive CTE in
+    # RecipesWithNutrition hangs forever on that cycle. Two-step repair:
+    cursor.execute(
+        'SELECT COUNT(*) FROM tag_components WHERE child_recipe IS NOT NULL;'
+    )
+    bad_components = cursor.fetchone()[0]
+    if bad_components:
+        print(f'Migrating: removing {bad_components} recipe-typed tag_components row(s)')
+        cursor.execute('DELETE FROM tag_components WHERE child_recipe IS NOT NULL;')
+    cursor.execute(
+        'SELECT COUNT(*) FROM Connections WHERE ParentRecipe = ChildRecipe;'
+    )
+    self_refs = cursor.fetchone()[0]
+    if self_refs:
+        print(f'Migrating: removing {self_refs} self-referential Connections row(s)')
+        cursor.execute('DELETE FROM Connections WHERE ParentRecipe = ChildRecipe;')
+
     connection.commit()
     connection.close()
 

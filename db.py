@@ -360,11 +360,19 @@ def get_tag_components(tag_id):
 
 
 def add_tag_component(tag_id, mode, child_id, quantity=1.0):
-    '''Add an item to a template. `mode` is 'ingredient' or 'recipe'.'''
+    '''Add an item to a template. `mode` must be 'ingredient' — sub-recipes
+    are intentionally rejected here, because a recipe tagged with this
+    template would gain itself as a Connections row during reconcile and
+    the recursive CTE in RecipesWithNutrition hangs forever on the cycle.
+    The schema still accepts `child_recipe` (legacy / forward-compat), but
+    the code never inserts one.'''
     if mode == 'ingredient':
         recipe, ingredient = None, child_id
     elif mode == 'recipe':
-        recipe, ingredient = child_id, None
+        raise ValueError(
+            'Templates cannot contain sub-recipes — adding one risks a '
+            'cycle when the template is applied. Add ingredients only.'
+        )
     else:
         raise ValueError(f'Invalid mode: {mode}')
     return query(
@@ -538,6 +546,79 @@ def transition_recipe_format(recipe_id, old_tag_id, new_tag_id):
                      );''',
                 (mult, recipe_id, m['category_tag_id']),
             )
+
+
+def reconcile_recipe_template(recipe_id):
+    '''Bring the recipe's Connections rows back in line with its current
+    format template — without re-applying multipliers.
+
+    Three steps:
+      1. Backfill `from_template_tag_id` on existing rows whose (mode,
+         child) matches a template item but whose provenance is NULL.
+         Without this, sample-seeded rows look like manual additions and
+         a future format switch can't remove them cleanly.
+      2. INSERT any template item the recipe is missing, tagged with the
+         current `from_template_tag_id`.
+      3. DELETE rows still attributed to the current template that aren't
+         in the spec anymore (orphaned by a template edit). Manual rows
+         (`from_template_tag_id IS NULL`) are never touched.
+
+    Multipliers are deliberately NOT re-applied — they're not idempotent
+    and we can't tell whether existing quantities have already been
+    scaled. Quantity adjustments stay an explicit, user-driven operation.
+    '''
+    tag = get_recipe_tag(recipe_id)
+    if not tag:
+        return
+    tag_id = tag['id']
+    # Defensive filter: tag_components rows with a non-NULL child_recipe
+    # are legacy data from before recipes-in-templates were disallowed.
+    # Reconciling one would re-create the cycle that crashed the app, so
+    # they're skipped here. The cleanup pass in setup.migrateDB removes
+    # such rows; this guard means a stale DB doesn't crash if migration
+    # hasn't run yet.
+    template_items = [
+        c for c in get_tag_components(tag_id) if c['child_ingredient']
+    ]
+    template_keys = set()
+    for c in template_items:
+        template_keys.add(('ingredient', c['child_ingredient']))
+
+    rows = query(
+        'SELECT rowid, ChildRecipe, ChildIngredient, from_template_tag_id '
+        'FROM Connections WHERE ParentRecipe=?;',
+        (recipe_id,),
+    )['data']
+    existing_keys = set()
+    for r in rows:
+        mode = 'ingredient' if r['ChildIngredient'] else 'recipe'
+        child = r['ChildIngredient'] or r['ChildRecipe']
+        existing_keys.add((mode, child))
+        if (mode, child) in template_keys and r['from_template_tag_id'] is None:
+            query(
+                'UPDATE Connections SET from_template_tag_id=? WHERE rowid=?;',
+                (tag_id, r['rowid']),
+            )
+        elif r['from_template_tag_id'] == tag_id and (mode, child) not in template_keys:
+            query('DELETE FROM Connections WHERE rowid=?;', (r['rowid'],))
+
+    # Template items are always ingredients (recipes are filtered out above).
+    for c in template_items:
+        child_id = c['child_ingredient']
+        if ('ingredient', child_id) in existing_keys:
+            continue
+        next_order = query(
+            'SELECT COALESCE(MAX(SortOrder), 0) + 1 AS next FROM Connections WHERE ParentRecipe=?;',
+            (recipe_id,), one=True,
+        )
+        sort_order = (next_order or {}).get('next', 1) or 1
+        qty = c['quantity'] if c['quantity'] is not None else 1.0
+        query(
+            'INSERT INTO Connections '
+            '(ParentRecipe, ChildRecipe, ChildIngredient, Quantity, SortOrder, from_template_tag_id) '
+            'VALUES (?, ?, ?, ?, ?, ?);',
+            (recipe_id, None, child_id, qty, sort_order, tag_id),
+        )
 
 
 def snapshot_recipe_connections(recipe_id):
