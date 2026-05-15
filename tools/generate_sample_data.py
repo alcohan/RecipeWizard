@@ -1,14 +1,35 @@
-"""Read RecipeBuilder XLSX and write sql/setup/sampledata.sql.
+"""Read a RecipeBuilder-format XLSX workbook and emit SQL that seeds the
+sample data tables. Intended for generating *internal* sample data from a
+proprietary workbook on a developer's machine — the repo ships a separate
+generic sampledata.sql that the app loads by default.
 
-Run from anywhere: `python tools/generate_sample_data.py`
+Run from anywhere:
+
+    python tools/generate_sample_data.py --xlsx PATH [--out PATH]
+
+By default --out writes to sql/setup/sampledata.regenerated.sql (gitignored)
+rather than overwriting sampledata.local.sql. The "local" file is the one
+the app actually loads; it may contain hand-curated additions (image
+filenames, tag colors, recipe-format templates) that the generator can't
+reproduce. After regenerating, diff the two files and merge by hand if you
+want the new data in your live seed.
 """
+import argparse
 import openpyxl
 from datetime import datetime, date
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-PATH = r'C:\Users\Adrian\Downloads\RecipeBuilder 2025 JULY.xlsx'
-OUT = PROJECT_ROOT / 'sql' / 'setup' / 'sampledata.sql'
+DEFAULT_OUT = PROJECT_ROOT / 'sql' / 'setup' / 'sampledata.regenerated.sql'
+
+parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+parser.add_argument('--xlsx', required=True, help='Path to the source RecipeBuilder XLSX workbook.')
+parser.add_argument('--out', default=str(DEFAULT_OUT),
+                    help=f'Output SQL path (default: {DEFAULT_OUT.relative_to(PROJECT_ROOT)}).')
+args = parser.parse_args()
+
+PATH = args.xlsx
+OUT = Path(args.out)
 
 
 def sql_str(s):
@@ -161,11 +182,16 @@ for row in ph_rows:
 print(f'{len(prices)} price rows ({skipped_prices} skipped)')
 
 lines = []
-lines.append('-- Generated from "RecipeBuilder 2025 JULY.xlsx"')
+lines.append(f'-- Generated from "{Path(PATH).name}"')
 lines.append(f'-- {len(ingredients)} ingredients, {len(recipe_names)} recipes, {len(connections)} connections, {len(prices)} price rows')
 lines.append('')
 
-lines.append('INSERT INTO Ingredients Values')
+lines.append(
+    'INSERT INTO Ingredients '
+    '(Id, Name, Unit, Portion, Weight, Cost, Calories, TTLFatGrams, SatFatGrams, '
+    'CholesterolMilligrams, SodiumMilligrams, CarbGrams, FiberGrams, SugarGrams, ProteinGrams) '
+    'VALUES'
+)
 ing_rows = []
 for ing in ingredients:
     ing_rows.append(
@@ -179,13 +205,13 @@ lines.append('\n,'.join(ing_rows))
 lines.append(';')
 lines.append('')
 
-lines.append('INSERT INTO Recipes Values')
+lines.append('INSERT INTO Recipes (Id, Name, Unit, OutputQty) VALUES')
 rec_rows = [f"({i},{sql_str(rname)},'each',1)" for i, rname in enumerate(recipe_names, start=1)]
 lines.append('\n,'.join(rec_rows))
 lines.append(';')
 lines.append('')
 
-lines.append('INSERT INTO CONNECTIONS Values')
+lines.append('INSERT INTO Connections (ParentRecipe, ChildRecipe, ChildIngredient, Quantity) VALUES')
 conn_rows = [f"({p},NULL,{c},{sql_num(q)})" for (p, _, c, q) in connections]
 lines.append('\n,'.join(conn_rows))
 lines.append(';')

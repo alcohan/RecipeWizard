@@ -23,12 +23,12 @@ wheels/
 export/
 
 # Transient data file
-static/data.js
 builder.db
 builder.db.demo
 
-# Proprietary ingredient photo archive
-static/ingredients/
+# Hand-curated proprietary sample data + machine-regenerated companion
+sql/setup/sampledata.local.sql
+sql/setup/sampledata.regenerated.sql
 
 # Sandbox / testing file
 sandbox.py

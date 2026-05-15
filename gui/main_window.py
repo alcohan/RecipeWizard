@@ -333,7 +333,7 @@ class MainWindow(QMainWindow):
         from utilities import import_data_to_tables
         try:
             setup.initializeDB(includeSampleData=False)
-            import_data_to_tables('builder.db')
+            import_data_to_tables(config.DATABASE)
             setup.auto_assign_images()
         except Exception as exc:
             QMessageBox.critical(self, 'Import Failed', str(exc))
@@ -344,7 +344,7 @@ class MainWindow(QMainWindow):
     def _on_export_csv(self):
         from utilities import export_tables_to_file
         try:
-            export_tables_to_file('builder.db')
+            export_tables_to_file(config.DATABASE)
         except Exception as exc:
             QMessageBox.critical(self, 'Export Failed', str(exc))
             return
