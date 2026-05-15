@@ -1,11 +1,12 @@
 from PySide6.QtCore import Qt, QSettings, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QLineEdit,
     QMainWindow, QMenu, QMessageBox, QPushButton, QTableView, QTabWidget,
     QVBoxLayout, QWidget,
 )
 
+import api.usda
 import config
 import db
 import setup
@@ -14,6 +15,7 @@ from gui.dialogs.bulk_image_assign import BulkImageAssignDialog
 from gui.dialogs.ingredient_create import IngredientCreateDialog
 from gui.dialogs.ingredient_create_from_usda import IngredientCreateFromUsdaDialog
 from gui.dialogs.ingredient_edit import IngredientEditDialog
+from gui.dialogs.preferences import PreferencesDialog
 from gui.dialogs.recipe_create import RecipeCreateDialog
 from gui.dialogs.recipe_edit import RecipeEditDialog
 from gui.dialogs.suppliers_manager import SuppliersManagerDialog
@@ -102,6 +104,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(config.APPNAME)
         self.resize(1100, 760)
+        # Push the user's saved USDA API key into the API client before any
+        # USDA-dependent dialog can open. Empty string = use DEMO_KEY fallback.
+        api.usda.set_api_key(QSettings().value('usda/apiKey', '', type=str))
         self._build_menus()
         self._build_tabs()
         self._restore_state()
@@ -204,9 +209,6 @@ class MainWindow(QMainWindow):
         new_ingredient_action = file_menu.addAction('New &Ingredient', self._on_new_ingredient_blank)
         new_ingredient_action.setShortcut('Ctrl+Shift+N')
         file_menu.addSeparator()
-        file_menu.addAction('&Import from CSV', self._on_import_csv)
-        file_menu.addAction('&Export to CSV', self._on_export_csv)
-        file_menu.addSeparator()
         file_menu.addAction('E&xit', self.close)
 
         manage_menu = bar.addMenu('&Manage')
@@ -222,6 +224,11 @@ class MainWindow(QMainWindow):
         tools_menu.addSeparator()
         tools_menu.addAction('Auto-assign Images', self._on_auto_assign_images)
         tools_menu.addAction('Bulk Assign Images', self._on_bulk_assign_images)
+        tools_menu.addSeparator()
+        # MenuRole.PreferencesRole tells Qt to relocate this to the native
+        # app-menu Preferences slot on macOS; on Windows/Linux it stays here.
+        prefs_action = tools_menu.addAction('&Preferences…', self._on_preferences)
+        prefs_action.setMenuRole(QAction.MenuRole.PreferencesRole)
 
         help_menu = bar.addMenu('&Help')
         help_menu.addAction('&About', self._on_about)
@@ -322,34 +329,6 @@ class MainWindow(QMainWindow):
 
     # --- functional handlers wired to existing business layer ---
 
-    def _on_import_csv(self):
-        confirm = QMessageBox.warning(
-            self, 'Import from CSV',
-            'This will ERASE all current data and reload from export/*.csv. Continue?',
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-        )
-        if confirm != QMessageBox.Yes:
-            return
-        from utilities import import_data_to_tables
-        try:
-            setup.initializeDB(includeSampleData=False)
-            import_data_to_tables(config.DATABASE)
-            setup.auto_assign_images()
-        except Exception as exc:
-            QMessageBox.critical(self, 'Import Failed', str(exc))
-            return
-        self.refresh()
-        self._flash_status('Imported from CSV')
-
-    def _on_export_csv(self):
-        from utilities import export_tables_to_file
-        try:
-            export_tables_to_file(config.DATABASE)
-        except Exception as exc:
-            QMessageBox.critical(self, 'Export Failed', str(exc))
-            return
-        self._flash_status('Exported to export/*.csv')
-
     def _on_reset_clean(self):
         confirm = QMessageBox.warning(
             self, 'Reset Database',
@@ -409,3 +388,6 @@ class MainWindow(QMainWindow):
 
     def _on_about(self):
         AboutDialog(parent=self).exec()
+
+    def _on_preferences(self):
+        PreferencesDialog(parent=self).exec()
