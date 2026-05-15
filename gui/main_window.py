@@ -23,7 +23,8 @@ from gui.dialogs.preferences import PreferencesDialog
 from gui.dialogs.recipe_create import RecipeCreateDialog
 from gui.dialogs.recipe_edit import RecipeEditDialog
 from gui.dialogs.suppliers_manager import SuppliersManagerDialog
-from gui.dialogs.tags_manager import IngredientTagsDialog, RecipeTemplatesDialog
+from gui.dialogs.tags_manager import IngredientTagsDialog
+from gui.dialogs.template_editor import TemplatesManagerDialog
 from gui.models.filter_proxy import MultiColumnFilterProxy
 from gui.models.ingredients_model import IngredientsModel
 from gui.models.recipes_model import RecipesModel
@@ -444,7 +445,7 @@ class MainWindow(QMainWindow):
         self.refresh()
 
     def _on_recipe_templates(self):
-        RecipeTemplatesDialog(parent=self).exec()
+        TemplatesManagerDialog(parent=self).exec()
         # Templates affect what wedges and badges show, so a refresh sweeps
         # any edits (e.g. shape changes) back into the home gallery.
         self.refresh()

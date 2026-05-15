@@ -90,7 +90,11 @@ class _ComponentTypeBadgeDelegate(QStyledItemDelegate):
 
 
 class RecipeComponentAddDialog(QDialog):
-    def __init__(self, recipe_id, recipe_name, parent=None):
+    def __init__(self, recipe_id, recipe_name, parent=None, ingredients_only=False):
+        '''`ingredients_only=True` hides sub-recipe rows from the picker.
+        Used by the templates manager — templates only hold ingredients,
+        and offering recipes there can create circular references when the
+        template is later applied to a recipe in the cycle.'''
         super().__init__(parent)
         self.setWindowTitle(f'{config.APPNAME} | {recipe_name} | > NEW <')
         self.resize(520, 520)
@@ -102,6 +106,8 @@ class RecipeComponentAddDialog(QDialog):
 
         # tuples come back as (id, mode, name, unit, tag_name, tag_color)
         self._eligible = db.get_eligible_ingredients(recipe_id)
+        if ingredients_only:
+            self._eligible = [row for row in self._eligible if row[1] != 'recipe']
 
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText(
