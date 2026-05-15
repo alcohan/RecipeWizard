@@ -388,6 +388,15 @@ class HomeTab(QWidget):
             self._recents_row.addWidget(card)
         self._recents_row.addStretch()
 
+    def showEvent(self, event):
+        '''Re-render the recents strip whenever Home becomes visible. The
+        relative-time labels drift ("just now" → "5m ago") and the order
+        can change without a model reset (e.g. after the user edited
+        something in the Recipes tab). Counts come from model row counts
+        so they don't need a re-query here.'''
+        super().showEvent(event)
+        self._refresh_recents()
+
     def focus_filter(self):
         '''Called by the main window's Ctrl+F shortcut when Home is active.'''
         self.filter_edit.setFocus()

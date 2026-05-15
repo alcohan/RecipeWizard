@@ -13,6 +13,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
 
 import config
+import db
 from gui.widgets.wedge_view import WedgeView
 
 
@@ -85,6 +86,7 @@ class RecentItemCard(QFrame):
 
         time_label = QLabel(_relative_time(when_str))
         time_label.setStyleSheet('color: #888; font-size: 9pt;')
+        time_label.setToolTip(when_str or '')
         time_label.setAttribute(Qt.WA_TransparentForMouseEvents)
 
         text_col = QVBoxLayout()
@@ -117,36 +119,43 @@ class RecentItemCard(QFrame):
 
 
 class _IngredientThumb(QLabel):
-    '''Square thumbnail for an ingredient. Loads ImageFilename from
-    INGREDIENTS_PATH when present, otherwise shows a flat gray tile.'''
+    '''Square thumbnail for an ingredient. Prefers ImageFilename; falls
+    back to a tag-colored tile with the ingredient's first initial so
+    image-less ingredients still convey their category at a glance.'''
 
     def __init__(self, ingredient_id, size, parent=None):
         super().__init__(parent)
         self.setFixedSize(size, size)
         self.setAlignment(Qt.AlignCenter)
-        self.setStyleSheet(
-            'background-color: #eee; border-radius: 4px; color: #aaa; font-size: 9pt;'
-        )
-        pixmap = self._load_pixmap(ingredient_id, size)
-        if pixmap is not None:
-            self.setPixmap(pixmap)
-        else:
-            self.setText('🥬')
 
-    @staticmethod
-    def _load_pixmap(ingredient_id, size):
-        import db  # local to avoid a circular at import-time
         try:
-            ing = db.get_ingredients(ingredient_id)
+            ing = db.get_ingredients(ingredient_id) or {}
         except Exception:
-            return None
-        filename = (ing or {}).get('ImageFilename')
-        if not filename:
-            return None
-        path = os.path.join(config.INGREDIENTS_PATH, filename)
-        if not os.path.isfile(path):
-            return None
-        pixmap = QPixmap(path)
-        if pixmap.isNull():
-            return None
-        return pixmap.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            ing = {}
+
+        pixmap = _load_ingredient_pixmap(ing.get('ImageFilename'), size)
+        if pixmap is not None:
+            self.setStyleSheet('background: transparent; border-radius: 4px;')
+            self.setPixmap(pixmap)
+            return
+
+        color = ing.get('TagColor') or '#bbb'
+        name = (ing.get('Name') or '').strip()
+        initial = name[0].upper() if name else '?'
+        self.setStyleSheet(
+            f'background-color: {color}; border-radius: 4px;'
+            f' color: white; font-weight: bold; font-size: 20pt;'
+        )
+        self.setText(initial)
+
+
+def _load_ingredient_pixmap(filename, size):
+    if not filename:
+        return None
+    path = os.path.join(config.INGREDIENTS_PATH, filename)
+    if not os.path.isfile(path):
+        return None
+    pixmap = QPixmap(path)
+    if pixmap.isNull():
+        return None
+    return pixmap.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
