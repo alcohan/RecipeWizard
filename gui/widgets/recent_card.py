@@ -5,15 +5,12 @@ the item's name, and a relative timestamp. Clicking anywhere on the
 card emits `activated(kind, id)` so the home tab can route to the right
 edit dialog without callers needing to know which is which.
 '''
-import os
 from datetime import datetime
 
 from PySide6.QtCore import Qt, Signal, QThreadPool
-from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
 
-import config
-import db
+from gui.widgets.ingredient_thumb import IngredientThumb
 from gui.widgets.wedge_view import WedgeView
 
 
@@ -109,53 +106,10 @@ class RecentItemCard(QFrame):
             wedge = WedgeView(item_id, size=_THUMB_SIZE, defer=True)
             wedge.render_async(QThreadPool.globalInstance())
             return wedge
-        # Ingredient: scaled image if we have one, otherwise a neutral placeholder.
-        return _IngredientThumb(item_id, size=_THUMB_SIZE)
+        # Ingredient: scaled image if we have one, otherwise a tag-colored letter.
+        return IngredientThumb(item_id, size=_THUMB_SIZE)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.activated.emit(self.kind, self.item_id)
         super().mousePressEvent(event)
-
-
-class _IngredientThumb(QLabel):
-    '''Square thumbnail for an ingredient. Prefers ImageFilename; falls
-    back to a tag-colored tile with the ingredient's first initial so
-    image-less ingredients still convey their category at a glance.'''
-
-    def __init__(self, ingredient_id, size, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(size, size)
-        self.setAlignment(Qt.AlignCenter)
-
-        try:
-            ing = db.get_ingredients(ingredient_id) or {}
-        except Exception:
-            ing = {}
-
-        pixmap = _load_ingredient_pixmap(ing.get('ImageFilename'), size)
-        if pixmap is not None:
-            self.setStyleSheet('background: transparent; border-radius: 4px;')
-            self.setPixmap(pixmap)
-            return
-
-        color = ing.get('TagColor') or '#bbb'
-        name = (ing.get('Name') or '').strip()
-        initial = name[0].upper() if name else '?'
-        self.setStyleSheet(
-            f'background-color: {color}; border-radius: 4px;'
-            f' color: white; font-weight: bold; font-size: 20pt;'
-        )
-        self.setText(initial)
-
-
-def _load_ingredient_pixmap(filename, size):
-    if not filename:
-        return None
-    path = os.path.join(config.INGREDIENTS_PATH, filename)
-    if not os.path.isfile(path):
-        return None
-    pixmap = QPixmap(path)
-    if pixmap.isNull():
-        return None
-    return pixmap.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)

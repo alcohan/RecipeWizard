@@ -29,6 +29,7 @@ from gui.models.filter_proxy import MultiColumnFilterProxy
 from gui.models.ingredients_model import IngredientsModel
 from gui.models.recipes_model import RecipesModel
 from gui.tabs.home_tab import HomeTab
+from gui.tabs.ingredients_tab import IngredientsTab
 from gui.widgets.tag_badge import TagBadgeCellDelegate
 
 
@@ -197,20 +198,16 @@ class MainWindow(QMainWindow):
         new_search_btn.clicked.connect(self._on_new_ingredient_search)
         new_blank_btn = QPushButton('New From Blank')
         new_blank_btn.clicked.connect(self._on_new_ingredient_blank)
-        pane = _BrowsePane(
-            placeholder='\U0001F50D  Filter ingredients…',
+        tab = IngredientsTab(
             source_model=self.ingredients_model,
-            action_buttons=[new_search_btn, new_blank_btn],
             context_actions=[
                 ('Edit…', self._on_ingredient_edit),
                 ('Delete', self._on_ingredient_delete),
             ],
+            action_buttons=[new_search_btn, new_blank_btn],
         )
-        # Paint the Tag column as a colored pill badge.
-        tag_col = self.ingredients_model.COLUMNS.index('Tag')
-        pane.table.setItemDelegateForColumn(tag_col, TagBadgeCellDelegate(pane.table))
-        pane.rowActivated.connect(self._on_ingredient_edit)
-        return pane
+        tab.rowActivated.connect(self._on_ingredient_edit)
+        return tab
 
     def _recipes_tab(self):
         new_recipe_btn = QPushButton('New Recipe')
