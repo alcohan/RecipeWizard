@@ -68,22 +68,33 @@ class IngredientGallery(QWidget):
 
     def _relayout(self):
         '''Re-place existing cards in the grid for the current column
-        count and active filter. No widgets are destroyed.'''
+        count and active filter. No widgets are destroyed.
+
+        Visibility ordering matters: setVisible(True) on a widget that
+        hasn't been parented (no addWidget yet) promotes it to a
+        top-level window briefly — the OS shows it as its own window
+        until the next addWidget reparents it. On cold open with N
+        ingredients that flashes N tiny windows. So we hide everything
+        first (False on an unparented widget is safe — it never goes
+        to top-level), then addWidget to parent, and only then
+        setVisible(True) on the now-parented widget.'''
         self.grid_container.setUpdatesEnabled(False)
         try:
             for card in self._cards:
                 self.grid.removeWidget(card)
+                card.setVisible(False)
             visible_index = 0
             for card in self._cards:
                 matches_filter = not self._filter or self._filter in card._search_text
-                card.setVisible(matches_filter)
-                if matches_filter:
-                    self.grid.addWidget(
-                        card,
-                        visible_index // self._current_columns,
-                        visible_index % self._current_columns,
-                    )
-                    visible_index += 1
+                if not matches_filter:
+                    continue
+                self.grid.addWidget(
+                    card,
+                    visible_index // self._current_columns,
+                    visible_index % self._current_columns,
+                )
+                card.setVisible(True)
+                visible_index += 1
         finally:
             self.grid_container.setUpdatesEnabled(True)
 
