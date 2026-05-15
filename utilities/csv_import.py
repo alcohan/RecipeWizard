@@ -37,4 +37,5 @@ def import_data_to_tables(database_file, tables=tables):
     conn.close()
 
 if __name__ == '__main__':
-    import_data_to_tables('builder.db', tables)
+    import config
+    import_data_to_tables(config.DATABASE, tables)

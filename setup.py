@@ -39,17 +39,42 @@ def initializeDB(includeSampleData=True):
     connection = sqlite3.connect(config.DATABASE)
     cursor = connection.cursor()
 
-    files = ('sql/setup/tables.sql', 'sql/setup/views.sql')
-    if includeSampleData:
-        files += ('sql/setup/sampledata.sql',)
-
-    for file in files:
+    for file in ('sql/setup/tables.sql', 'sql/setup/views.sql'):
         print(f'Executing script {file}')
         sql = config.get_resource(file)
         cursor.executescript(sql)
 
     connection.commit()
     connection.close()
+
+    if includeSampleData:
+        # Prefer a locally generated proprietary sample if present, otherwise
+        # fall back to the generic seed shipped in the repo. Lets internal
+        # users run `tools/generate_sample_data.py --xlsx ...` once to drop a
+        # gitignored sampledata.local.sql in place that this file picks up
+        # automatically on first init.
+        try:
+            sql = config.get_resource('sql/setup/sampledata.local.sql')
+            print('Loading sample data: sampledata.local.sql (proprietary override)')
+        except (FileNotFoundError, OSError):
+            sql = config.get_resource('sql/setup/sampledata.sql')
+            print('Loading sample data: sampledata.sql (generic)')
+        connection = sqlite3.connect(config.DATABASE)
+        cursor = connection.cursor()
+        cursor.executescript(sql)
+        connection.commit()
+        connection.close()
+
+    # Run after sample data so any tags the sample inserts (with their own
+    # numeric ids) are present first; migrateDB's tag seed is idempotent and
+    # only fills in canonical tags that aren't already there by (name, kind).
+    migrateDB()
+
+    # Fill in ImageFilename for any ingredient that didn't ship with one —
+    # matches by normalized name against files in INGREDIENTS_PATH. Skips
+    # rows that already have an image, so it's safe even when the sample
+    # data populated images itself.
+    auto_assign_images()
 
     print('Database initialized')
 
