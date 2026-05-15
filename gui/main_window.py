@@ -1,7 +1,11 @@
-from PySide6.QtCore import Qt, QSettings, Signal
-from PySide6.QtGui import QAction, QKeySequence, QShortcut
+import datetime
+import os
+import shutil
+
+from PySide6.QtCore import Qt, QSettings, QUrl, Signal
+from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QLineEdit,
+    QAbstractItemView, QDialog, QFileDialog, QHBoxLayout, QHeaderView, QLineEdit,
     QMainWindow, QMenu, QMessageBox, QPushButton, QTableView, QTabWidget,
     QVBoxLayout, QWidget,
 )
@@ -209,6 +213,11 @@ class MainWindow(QMainWindow):
         new_ingredient_action = file_menu.addAction('New &Ingredient', self._on_new_ingredient_blank)
         new_ingredient_action.setShortcut('Ctrl+Shift+N')
         file_menu.addSeparator()
+        # MenuRole.PreferencesRole tells Qt to relocate this to the native
+        # app-menu Preferences slot on macOS; on Windows/Linux it stays here.
+        prefs_action = file_menu.addAction('&Preferences…', self._on_preferences)
+        prefs_action.setMenuRole(QAction.MenuRole.PreferencesRole)
+        file_menu.addSeparator()
         file_menu.addAction('E&xit', self.close)
 
         manage_menu = bar.addMenu('&Manage')
@@ -216,19 +225,22 @@ class MainWindow(QMainWindow):
         manage_menu.addAction('Ingredient &Tags', self._on_ingredient_tags)
         manage_menu.addAction('Recipe Tem&plates', self._on_recipe_templates)
 
-        tools_menu = bar.addMenu('&Tools')
-        refresh_action = tools_menu.addAction('&Refresh', self.refresh)
+        view_menu = bar.addMenu('&View')
+        refresh_action = view_menu.addAction('&Refresh', self.refresh)
         refresh_action.setShortcut('F5')
-        tools_menu.addAction('Reset Database', self._on_reset_clean)
-        tools_menu.addAction('Reset With Sample Data', self._on_reset_sample)
+
+        tools_menu = bar.addMenu('&Tools')
+        tools_menu.addAction('&Auto-assign Images', self._on_auto_assign_images)
+        tools_menu.addAction('&Bulk Assign Images…', self._on_bulk_assign_images)
         tools_menu.addSeparator()
-        tools_menu.addAction('Auto-assign Images', self._on_auto_assign_images)
-        tools_menu.addAction('Bulk Assign Images', self._on_bulk_assign_images)
+        tools_menu.addAction('&Open Data Folder', self._on_open_data_folder)
+        tools_menu.addAction('Back&up Database…', self._on_backup_database)
+        tools_menu.addAction('&Restore Database…', self._on_restore_database)
         tools_menu.addSeparator()
-        # MenuRole.PreferencesRole tells Qt to relocate this to the native
-        # app-menu Preferences slot on macOS; on Windows/Linux it stays here.
-        prefs_action = tools_menu.addAction('&Preferences…', self._on_preferences)
-        prefs_action.setMenuRole(QAction.MenuRole.PreferencesRole)
+        # Destructive ops live at the bottom so they're physically farther
+        # from common actions and harder to hit by accident.
+        tools_menu.addAction('Reset &Database…', self._on_reset_clean)
+        tools_menu.addAction('Reset With &Sample Data…', self._on_reset_sample)
 
         help_menu = bar.addMenu('&Help')
         help_menu.addAction('&About', self._on_about)
@@ -328,6 +340,57 @@ class MainWindow(QMainWindow):
         self._flash_status(edit_dlg.status_message or create_dlg.status_message)
 
     # --- functional handlers wired to existing business layer ---
+
+    def _on_open_data_folder(self):
+        '''Reveal the per-user data directory (DB + ingredient images) in
+        the system file browser. Useful for manual backups or for dropping
+        ingredient image files in by hand.'''
+        QDesktopServices.openUrl(QUrl.fromLocalFile(config.user_data_dir()))
+
+    def _on_backup_database(self):
+        default_name = f'RecipeWizard_backup_{datetime.date.today().isoformat()}.db'
+        path, _ = QFileDialog.getSaveFileName(
+            self, 'Backup Database', default_name, 'SQLite Database (*.db)',
+        )
+        if not path:
+            return
+        try:
+            shutil.copy(config.DATABASE, path)
+        except OSError as exc:
+            QMessageBox.critical(self, 'Backup Failed', str(exc))
+            return
+        self._flash_status(f'Backed up to {path}')
+
+    def _on_restore_database(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, 'Restore Database', '', 'SQLite Database (*.db);;All Files (*)',
+        )
+        if not path:
+            return
+        if os.path.abspath(path) == os.path.abspath(config.DATABASE):
+            QMessageBox.warning(
+                self, 'Restore Database',
+                "That's the current database — pick a different backup file.",
+            )
+            return
+        confirm = QMessageBox.warning(
+            self, 'Restore Database',
+            f'This will REPLACE your current data with the contents of:'
+            f'\n\n{path}\n\nContinue?',
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        try:
+            shutil.copy(path, config.DATABASE)
+            # Older backups may predate later schema migrations; bring them
+            # up to date before any query can hit a missing column.
+            setup.migrateDB()
+        except Exception as exc:
+            QMessageBox.critical(self, 'Restore Failed', str(exc))
+            return
+        self.refresh()
+        self._flash_status(f'Restored from {os.path.basename(path)}')
 
     def _on_reset_clean(self):
         confirm = QMessageBox.warning(
