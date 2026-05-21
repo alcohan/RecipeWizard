@@ -28,6 +28,7 @@ from gui.dialogs.template_editor import TemplatesManagerDialog
 from gui.models.filter_proxy import MultiColumnFilterProxy
 from gui.models.ingredients_model import IngredientsModel
 from gui.models.recipes_model import RecipesModel
+from gui.tabs.analytics_tab import AnalyticsTab
 from gui.tabs.home_tab import HomeTab
 from gui.tabs.ingredients_tab import IngredientsTab
 from gui.widgets.tag_badge import TagBadgeCellDelegate
@@ -152,6 +153,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._home_tab(), 'Home')
         self.tabs.addTab(self._ingredients_tab(), 'Ingredients')
         self.tabs.addTab(self._recipes_tab(), 'Recipes')
+        self.tabs.addTab(self._analytics_tab(), 'Analytics')
         self.setCentralWidget(self.tabs)
 
         # Ctrl+F focuses whichever tab's filter is active.
@@ -223,6 +225,13 @@ class MainWindow(QMainWindow):
         )
         pane.rowActivated.connect(self._on_recipe_edit)
         return pane
+
+    def _analytics_tab(self):
+        tab = AnalyticsTab(self.recipes_model)
+        # Double-clicking a recipe row jumps into its edit dialog so the
+        # spreadsheet is a launching pad, not a dead end.
+        tab.recipeActivated.connect(self._on_recipe_edit_by_id)
+        return tab
 
     def _build_menus(self):
         bar = self.menuBar()
