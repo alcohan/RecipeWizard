@@ -23,7 +23,8 @@ class IngredientCard(QFrame):
 
     clicked = Signal(int)
 
-    def __init__(self, ingredient_id, name, tag_name=None, tag_color=None, parent=None):
+    def __init__(self, ingredient_id, name, tag_name=None, tag_color=None,
+                 image_filename=None, parent=None):
         super().__init__(parent)
         self.ingredient_id = ingredient_id
         self.name = name or ''
@@ -43,7 +44,13 @@ class IngredientCard(QFrame):
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedSize(CARD_WIDTH, CARD_HEIGHT)
 
-        thumb = IngredientThumb(ingredient_id, size=_THUMB_SIZE)
+        # Pass model data through to the thumb so it doesn't issue its own
+        # db.get_ingredients() — building hundreds of cards at startup was
+        # generating one SQL query each, which made cold-open take seconds.
+        thumb = IngredientThumb(
+            ingredient_id, size=_THUMB_SIZE,
+            name=name, image_filename=image_filename, tag_color=tag_color,
+        )
         thumb.setAttribute(Qt.WA_TransparentForMouseEvents)
 
         name_label = QLabel(self.name)

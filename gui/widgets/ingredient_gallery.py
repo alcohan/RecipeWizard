@@ -33,6 +33,11 @@ class IngredientGallery(QWidget):
         self._cards = []
         self._current_columns = 4
         self._filter = ''
+        # Lazy build: don't construct any cards until the gallery is first
+        # shown. On app launch the user is on the Home tab and may never
+        # switch to Ingredients; building hundreds of cards eagerly was
+        # making cold-open slow for users with large libraries.
+        self._stale = True
 
         self.grid_container = QWidget()
         self.grid = QGridLayout(self.grid_container)
@@ -48,8 +53,7 @@ class IngredientGallery(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.scroll)
 
-        self._model.modelReset.connect(self.refresh)
-        self.refresh()
+        self._model.modelReset.connect(self._on_model_reset)
 
     def setFilterText(self, text):
         self._filter = (text or '').strip().lower()
@@ -57,6 +61,34 @@ class IngredientGallery(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._sync_columns()
+
+    def showEvent(self, event):
+        '''On first show, build the cards. Then (and on every subsequent
+        show) recompute columns — resizeEvent doesn't reliably fire when
+        this widget is the inactive child of a QStackedWidget (the
+        ingredients tab's gallery/table stack), so if the user resized
+        the window while the table was active, the gallery would
+        otherwise carry the old column count when it next appears.'''
+        super().showEvent(event)
+        if self._stale:
+            self.refresh()
+            self._stale = False
+        self._sync_columns()
+
+    def _on_model_reset(self):
+        '''Mark stale, but only do the expensive rebuild if we're
+        actually visible. Otherwise wait for the next showEvent. This is
+        what makes startup cheap: the IngredientsModel resets on every
+        save (including saves the user does on other tabs), which would
+        otherwise force a rebuild of every card whether the gallery is
+        showing or not.'''
+        self._stale = True
+        if self.isVisible():
+            self.refresh()
+            self._stale = False
+
+    def _sync_columns(self):
         new_cols = self._columns_for_width(self.scroll.viewport().width())
         if new_cols != self._current_columns:
             self._current_columns = new_cols
@@ -111,6 +143,7 @@ class IngredientGallery(QWidget):
                 row['Id'], row.get('Name'),
                 tag_name=row.get('TagName'),
                 tag_color=row.get('TagColor'),
+                image_filename=row.get('ImageFilename'),
             )
             # Stamp the source-row index on the card so context-menu actions
             # can call back to the same handlers as the table view.
