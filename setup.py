@@ -209,6 +209,58 @@ def migrateDB():
     # Backfill missing colors so badges always have a color to paint with.
     cursor.execute("UPDATE tags SET color = ? WHERE color IS NULL OR color = ''", ('#64748b',))
 
+    # updated_at on Ingredients and Recipes powers the home tab's
+    # "recently edited" strip. SQLite's ALTER TABLE ADD COLUMN forbids
+    # a non-constant default expression, so the migrated column is
+    # nullable with no default; existing rows get backfilled, and
+    # future INSERTs go through create_ingredient.sql/create_recipe.sql
+    # which set datetime('now') explicitly.
+    if not column_exists('Ingredients', 'updated_at'):
+        print('Migrating: adding Ingredients.updated_at')
+        cursor.execute('ALTER TABLE Ingredients ADD COLUMN updated_at TEXT')
+        cursor.execute("UPDATE Ingredients SET updated_at = datetime('now') WHERE updated_at IS NULL")
+    if not column_exists('Recipes', 'updated_at'):
+        print('Migrating: adding Recipes.updated_at')
+        cursor.execute('ALTER TABLE Recipes ADD COLUMN updated_at TEXT')
+        cursor.execute("UPDATE Recipes SET updated_at = datetime('now') WHERE updated_at IS NULL")
+
+    # Trigger set is rebuilt on every migration so changes to the bump
+    # logic propagate without bespoke migration steps. The WHEN guard on
+    # the row-self-update triggers prevents infinite recursion.
+    cursor.executescript('''
+        DROP TRIGGER IF EXISTS ingredients_bump_updated_at;
+        CREATE TRIGGER ingredients_bump_updated_at AFTER UPDATE ON Ingredients
+        WHEN NEW.updated_at = OLD.updated_at
+        BEGIN
+          UPDATE Ingredients SET updated_at = datetime('now') WHERE Id = NEW.Id;
+        END;
+
+        DROP TRIGGER IF EXISTS recipes_bump_updated_at;
+        CREATE TRIGGER recipes_bump_updated_at AFTER UPDATE ON Recipes
+        WHEN NEW.updated_at = OLD.updated_at
+        BEGIN
+          UPDATE Recipes SET updated_at = datetime('now') WHERE Id = NEW.Id;
+        END;
+
+        DROP TRIGGER IF EXISTS connections_bump_recipe_after_insert;
+        CREATE TRIGGER connections_bump_recipe_after_insert AFTER INSERT ON Connections
+        BEGIN
+          UPDATE Recipes SET updated_at = datetime('now') WHERE Id = NEW.ParentRecipe;
+        END;
+
+        DROP TRIGGER IF EXISTS connections_bump_recipe_after_update;
+        CREATE TRIGGER connections_bump_recipe_after_update AFTER UPDATE ON Connections
+        BEGIN
+          UPDATE Recipes SET updated_at = datetime('now') WHERE Id = NEW.ParentRecipe;
+        END;
+
+        DROP TRIGGER IF EXISTS connections_bump_recipe_after_delete;
+        CREATE TRIGGER connections_bump_recipe_after_delete AFTER DELETE ON Connections
+        BEGIN
+          UPDATE Recipes SET updated_at = datetime('now') WHERE Id = OLD.ParentRecipe;
+        END;
+    ''')
+
     # Repair fallout from the recipes-in-templates bug: an earlier version
     # of the templates editor let the user pick a sub-recipe in the
     # "+ Add Item" dialog. Adding a recipe that was itself tagged with the

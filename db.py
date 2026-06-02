@@ -200,6 +200,28 @@ def delete_recipe(id):
         raise Exception(f'Unable to delete. Recipe used in {number_of_references} other recipe(s). {readable}')
 
 
+def get_recently_edited(limit=6):
+    '''Return the most-recently-touched ingredients and recipes, mixed
+    together and sorted by updated_at DESC. Each row is a dict with
+    keys: kind ('ingredient'|'recipe'), id, name, updated_at.
+
+    The home tab's "Recently edited" strip consumes this. Mixing the
+    two kinds means a single sorted strip reflects whatever the user
+    most recently worked on, regardless of type.'''
+    rows = query('''
+        SELECT 'recipe' AS kind, Id AS id, Name AS name, updated_at
+        FROM Recipes
+        WHERE updated_at IS NOT NULL
+        UNION ALL
+        SELECT 'ingredient' AS kind, Id AS id, Name AS name, updated_at
+        FROM Ingredients
+        WHERE updated_at IS NOT NULL
+        ORDER BY updated_at DESC
+        LIMIT ?;
+    ''', (limit,))['data']
+    return rows
+
+
 # Get summmary data for recipes. If no Id is passed, we get all records
 def recipe_info(id=0):
     if id:

@@ -1,23 +1,25 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout
 
 
 class SummaryCard(QFrame):
     '''A flat stat tile: big number on top, small label underneath. Reused
-    on the home tab and intended to be reused on any future dashboard.'''
+    on the home tab and intended to be reused on any future dashboard.
 
-    def __init__(self, label, value=0, parent=None):
+    When `clickable=True` the card emits `clicked` on left-press and gets
+    a hover effect — used on the home tab so the count card doubles as a
+    shortcut to its tab.'''
+
+    clicked = Signal()
+
+    def __init__(self, label, value=0, clickable=False, parent=None):
         super().__init__(parent)
         self.setObjectName('SummaryCard')
-        self.setStyleSheet('''
-            QFrame#SummaryCard {
-                background-color: white;
-                border: 1px solid #ddd;
-                border-radius: 8px;
-            }
-            QFrame#SummaryCard QLabel { border: 0; }
-        ''')
+        self._clickable = clickable
+        self._apply_style()
         self.setMinimumSize(140, 96)
+        if clickable:
+            self.setCursor(Qt.PointingHandCursor)
 
         self.value_label = QLabel(str(value))
         self.value_label.setAlignment(Qt.AlignCenter)
@@ -32,5 +34,27 @@ class SummaryCard(QFrame):
         layout.addWidget(self.value_label)
         layout.addWidget(self.text_label)
 
+    def _apply_style(self):
+        hover_rule = '''
+            QFrame#SummaryCard:hover {
+                border-color: #2a7;
+                background-color: #f5fff5;
+            }
+        ''' if self._clickable else ''
+        self.setStyleSheet(f'''
+            QFrame#SummaryCard {{
+                background-color: white;
+                border: 1px solid #ddd;
+                border-radius: 8px;
+            }}
+            {hover_rule}
+            QFrame#SummaryCard QLabel {{ border: 0; }}
+        ''')
+
     def set_value(self, value):
         self.value_label.setText(str(value))
+
+    def mousePressEvent(self, event):
+        if self._clickable and event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
