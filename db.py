@@ -200,6 +200,20 @@ def delete_recipe(id):
         raise Exception(f'Unable to delete. Recipe used in {number_of_references} other recipe(s). {readable}')
 
 
+def get_recipe_category_details():
+    '''Flat per-(recipe, ingredient) rows for the analytics spreadsheet.
+
+    One row per ingredient appearance inside a recipe, with the
+    ingredient's category and per-serving cost + nutrition values
+    already scaled by quantity and recipe yield. Sub-recipes flatten
+    to their leaf ingredients via recipe_ingredients_expanded.
+
+    Caller pivots this in Python: group by (recipe_id, category) for
+    the spreadsheet cells, and keep the per-ingredient rows around for
+    tooltip detail.'''
+    return query_from_file('sql\\get_recipe_category_details.sql')['data']
+
+
 def get_recently_edited(limit=6):
     '''Return the most-recently-touched ingredients and recipes, mixed
     together and sorted by updated_at DESC. Each row is a dict with
