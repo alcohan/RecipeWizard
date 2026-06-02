@@ -168,7 +168,29 @@ class MainWindow(QMainWindow):
     def _home_tab(self):
         tab = HomeTab(self.ingredients_model, self.recipes_model)
         tab.recipeClicked.connect(self._on_recipe_edit_by_id)
+        # Clickable count cards jump to the matching tab. Tab indices match
+        # the order added in _build_tabs.
+        tab.ingredientsRequested.connect(lambda: self.tabs.setCurrentIndex(1))
+        tab.recipesRequested.connect(lambda: self.tabs.setCurrentIndex(2))
+        tab.suppliersRequested.connect(self._on_suppliers)
+        # Quick-action buttons reuse the existing create handlers.
+        tab.newRecipeRequested.connect(self._on_new_recipe)
+        tab.newIngredientUsdaRequested.connect(self._on_new_ingredient_search)
+        tab.newIngredientBlankRequested.connect(self._on_new_ingredient_blank)
+        # Recently-edited strip → open the right edit dialog by kind.
+        tab.itemActivated.connect(self._on_recent_activated)
         return tab
+
+    def _on_recent_activated(self, kind, item_id):
+        if kind == 'recipe':
+            self._on_recipe_edit_by_id(item_id)
+            return
+        if kind == 'ingredient':
+            dlg = IngredientEditDialog(item_id, parent=self)
+            dlg.exec()
+            if dlg.modified:
+                self.refresh()
+            self._flash_status(dlg.status_message)
 
     def _ingredients_tab(self):
         new_search_btn = QPushButton('New (Search Database)')
