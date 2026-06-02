@@ -8,8 +8,16 @@ a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
-    datas=[('sql/*','sql'),('sql/setup/sampledata.sql','sql/setup'),('sql/setup/tables.sql','sql/setup'),('sql/setup/views.sql','sql/setup'),('.env','.')],
-    hiddenimports=[],
+    datas=[
+        ('sql/*', 'sql'),
+        ('sql/setup/sampledata.sql', 'sql/setup'),
+        ('sql/setup/tables.sql', 'sql/setup'),
+        ('sql/setup/views.sql', 'sql/setup'),
+    ],
+    # matplotlib.backends.backend_qtagg is loaded via the FigureCanvasQTAgg
+    # import in price_history.py; PyInstaller's static analysis misses
+    # backend modules, so list it explicitly.
+    hiddenimports=['matplotlib.backends.backend_qtagg'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
