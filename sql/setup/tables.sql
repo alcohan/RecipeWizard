@@ -41,7 +41,9 @@ CREATE TABLE Recipes (
 	, Name NVarchar(100)
 	, Unit NVarchar(30)
 	, OutputQty float
-	, menu_price NUMERIC   -- NULL = not on menu / price unknown; drives food-cost %
+	, menu_price NUMERIC            -- NULL = not on menu / price unknown; drives food-cost %
+	, cost_snapshot NUMERIC         -- Last cost the user saw. Set on editor close.
+	, cost_snapshot_at TEXT         -- When that snapshot was taken (sqlite datetime).
 	, updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -158,8 +160,13 @@ BEGIN
   UPDATE Ingredients SET updated_at = datetime('now') WHERE Id = NEW.Id;
 END;
 
+-- Snapshot-only writes (updating cost_snapshot / cost_snapshot_at after
+-- an editor close) shouldn't count as "the user edited this recipe", so
+-- we skip the bump when the only columns that moved are the snapshot ones.
 CREATE TRIGGER recipes_bump_updated_at AFTER UPDATE ON Recipes
 WHEN NEW.updated_at = OLD.updated_at
+  AND NOT (NEW.cost_snapshot IS NOT OLD.cost_snapshot
+           OR NEW.cost_snapshot_at IS NOT OLD.cost_snapshot_at)
 BEGIN
   UPDATE Recipes SET updated_at = datetime('now') WHERE Id = NEW.Id;
 END;
