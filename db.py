@@ -265,8 +265,12 @@ def recipe_components(id: int):
         row['Cost'] = "$ {:.2f}".format(row['Cost'])
     return(result)
 
-def update_recipe_info(id: int, name: str, unit: str, outputqty: float):
-    return query_from_file('sql\\update_recipe_info.sql', (name, unit, outputqty, id))
+def update_recipe_info(id: int, name: str, unit: str, outputqty: float, menu_price=None):
+    '''menu_price is None when the recipe isn't on the menu / price unknown;
+    stored as NULL so food-cost % logic skips cleanly.'''
+    return query_from_file(
+        'sql\\update_recipe_info.sql', (name, unit, outputqty, menu_price, id),
+    )
 
 def create_recipe(name: str, unit: str, outputqty: float):
     result = query_from_file('sql\\create_recipe.sql', (name, unit, outputqty))

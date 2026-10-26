@@ -44,6 +44,9 @@ from gui.widgets.wedge_view import WedgeView
 WEDGE_SIZE = 220
 # Order matters — the info strip in _build_summary joins these in order.
 INFO_FIELDS = (('Weight', 'Weight (g)'), ('Cost', 'Cost'), ('Components', 'Components'))
+# Fallback target food cost when the user hasn't set one. Stored in
+# QSettings('food_cost/target_pct') as a float in [0, 1].
+_DEFAULT_FOOD_COST_TARGET = 0.28
 
 
 class _QuantityDelegate(QStyledItemDelegate):
@@ -143,11 +146,18 @@ class RecipeEditDialog(QDialog):
         self.yield_edit = QLineEdit(str(recipe['OutputQty']))
         self.yield_edit.setValidator(QDoubleValidator(0.0, 1_000_000.0, 4))
         self.yield_edit.editingFinished.connect(self._maybe_commit_info)
+        # Blank is meaningful: "not on the menu / no food-cost %". We parse
+        # that in _maybe_commit_info rather than relying on a validator that
+        # would reject empty.
+        self.menu_price_edit = QLineEdit(_format_menu_price(recipe.get('MenuPrice')))
+        self.menu_price_edit.setPlaceholderText('— not on menu')
+        self.menu_price_edit.editingFinished.connect(self._maybe_commit_info)
 
         demo_form = QFormLayout(demo_box)
         demo_form.addRow('Name', self.name_edit)
         demo_form.addRow('Yield Unit', self.unit_edit)
         demo_form.addRow('Recipe Yield', self.yield_edit)
+        demo_form.addRow('Menu Price', self.menu_price_edit)
 
         # Components table — inline editing on Quantity, right-click for Edit/Remove.
         comp_box = QGroupBox('Components')
@@ -267,7 +277,10 @@ class RecipeEditDialog(QDialog):
     # --- helpers ---
 
     def _snapshot(self, recipe):
-        return (recipe['Name'], recipe['Unit'], float(recipe['OutputQty']))
+        return (
+            recipe['Name'], recipe['Unit'], float(recipe['OutputQty']),
+            _coerce_menu_price(recipe.get('MenuPrice')),
+        )
 
     def _refresh(self):
         '''Re-read recipe state from DB and update every dependent view.
@@ -278,14 +291,20 @@ class RecipeEditDialog(QDialog):
 
         self.components_model.refresh()
 
-        # One-line info strip — "Per {unit}: Weight • Cost • N components".
-        # Replaces the multi-row info box; the same fields, just compact.
+        # One-line info strip — Weight / Cost / Food cost % / Components.
+        # Food cost appears only when the recipe has a menu_price; its
+        # color goes amber when above the user's target.
         strip_parts = []
         for key, label_text in INFO_FIELDS:
             value = recipe.get(key)
             if value is None or value == '':
                 continue
             strip_parts.append(f"<b>{label_text}</b> {value}")
+        food_cost_html = _food_cost_html(recipe.get('CostRaw'), recipe.get('MenuPrice'))
+        if food_cost_html:
+            # Insert after Cost (index 1 in INFO_FIELDS) when present, else at end.
+            insert_at = 2 if len(strip_parts) >= 2 else len(strip_parts)
+            strip_parts.insert(insert_at, food_cost_html)
         sep = '  •  '
         self.info_strip.setText(
             f"Per {recipe['Unit']} — {sep.join(strip_parts)}" if strip_parts else ''
@@ -310,6 +329,7 @@ class RecipeEditDialog(QDialog):
             (self.name_edit, recipe['Name']),
             (self.unit_edit, recipe['Unit']),
             (self.yield_edit, str(recipe['OutputQty'])),
+            (self.menu_price_edit, _format_menu_price(recipe.get('MenuPrice'))),
         ):
             if edit.hasFocus():
                 continue
@@ -347,7 +367,15 @@ class RecipeEditDialog(QDialog):
             self.yield_edit.setText(str(self._recipe_snapshot[2]))
             self.yield_edit.blockSignals(False)
             return
-        after = (name, unit, yield_qty)
+        try:
+            menu_price = _parse_menu_price(self.menu_price_edit.text())
+        except ValueError:
+            # Restore last-committed value so a bogus edit doesn't commit.
+            self.menu_price_edit.blockSignals(True)
+            self.menu_price_edit.setText(_format_menu_price(self._recipe_snapshot[3]))
+            self.menu_price_edit.blockSignals(False)
+            return
+        after = (name, unit, yield_qty, menu_price)
         if after == self._recipe_snapshot:
             return
         self.undo_stack.push(UpdateRecipeInfoCommand(self.recipe_id, self._recipe_snapshot, after))
@@ -462,3 +490,57 @@ class RecipeEditDialog(QDialog):
         self.modified = True
         self.status_message = f"Deleted '{name}'"
         self.accept()
+
+
+def _parse_menu_price(text):
+    '''Accept blank / '-' / '$3.42' / '13.95' etc. Returns float or None;
+    raises ValueError on anything else so the caller can refuse the edit.'''
+    s = (text or '').strip().lstrip('$').strip()
+    if not s or s == '-' or s == '—':
+        return None
+    return float(s)
+
+
+def _format_menu_price(value):
+    '''Inverse of _parse_menu_price for display.'''
+    if value is None or value == '':
+        return ''
+    try:
+        return '${:.2f}'.format(float(value))
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _coerce_menu_price(value):
+    '''DB → in-memory. None stays None; everything else becomes a float.'''
+    if value is None or value == '':
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _food_cost_html(cost_raw, menu_price):
+    '''Return the HTML fragment for the info-strip's food-cost field, or
+    '' when there isn't enough data to compute it. Amber-tints the value
+    when it exceeds the user's target (QSettings food_cost/target_pct,
+    default 28%). The user sets a food-cost target because a recipe
+    whose cost takes too much of its menu price doesn't make money.'''
+    try:
+        cost = float(cost_raw) if cost_raw is not None else 0.0
+        price = float(menu_price) if menu_price not in (None, '') else 0.0
+    except (TypeError, ValueError):
+        return ''
+    if price <= 0 or cost <= 0:
+        return ''
+    pct = cost / price
+    target = QSettings().value('food_cost/target_pct', _DEFAULT_FOOD_COST_TARGET, type=float)
+    pct_label = f'{pct * 100:.1f}%'
+    price_label = '${:.2f}'.format(price)
+    if pct > target:
+        return (
+            f'<b>Food cost</b> <span style="color: #8A3F0C; background: #FBEADB;'
+            f' padding: 0 5px; border-radius: 4px">{pct_label}</span> of {price_label}'
+        )
+    return f'<b>Food cost</b> {pct_label} of {price_label}'
