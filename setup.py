@@ -209,6 +209,17 @@ def migrateDB():
     # Backfill missing colors so badges always have a color to paint with.
     cursor.execute("UPDATE tags SET color = ? WHERE color IS NULL OR color = ''", ('#64748b',))
 
+    # Palette alignment: bring canonical ingredient-category colors into
+    # the new design values. We only migrate when the user's current
+    # color still matches the OLD auto-seeded value (case-insensitive) —
+    # if someone changed it in Tags Manager, their choice stands.
+    for name, old_hex, new_hex in _PALETTE_MIGRATIONS:
+        cursor.execute(
+            "UPDATE tags SET color = ?"
+            " WHERE kind = 'ingredient' AND name = ? AND lower(color) = lower(?)",
+            (new_hex, name, old_hex),
+        )
+
     # updated_at on Ingredients and Recipes powers the home tab's
     # "recently edited" strip. SQLite's ALTER TABLE ADD COLUMN forbids
     # a non-constant default expression, so the migrated column is
@@ -223,6 +234,12 @@ def migrateDB():
         print('Migrating: adding Recipes.updated_at')
         cursor.execute('ALTER TABLE Recipes ADD COLUMN updated_at TEXT')
         cursor.execute("UPDATE Recipes SET updated_at = datetime('now') WHERE updated_at IS NULL")
+
+    # menu_price powers food-cost %. Nullable: a recipe without a menu
+    # price just skips the food-cost display and the "on the menu" chip.
+    if not column_exists('Recipes', 'menu_price'):
+        print('Migrating: adding Recipes.menu_price')
+        cursor.execute('ALTER TABLE Recipes ADD COLUMN menu_price NUMERIC')
 
     # Trigger set is rebuilt on every migration so changes to the bump
     # logic propagate without bespoke migration steps. The WHEN guard on
@@ -303,21 +320,40 @@ _CANONICAL_RECIPE_SHAPES = {
 # Note: legacy tags (Base, Veggies) are NOT auto-removed for users upgrading.
 # Migration is additive — old tags stay around with whatever mappings the user
 # had, and they can be manually deleted in the Tags Manager when ready.
+# Ingredient category hexes come from the design system (see the design
+# canvas's color grid). Recipe-tag colors are kept at their old values —
+# the design doesn't specify them, and they only appear as small accents.
 _DEFAULT_TAGS = (
     ('Salad', 'recipe', '#16a34a', 'ring'),
     ('Wrap', 'recipe', '#b45309', 'wrap'),
     ('Bowl', 'recipe', '#ea580c', 'bowl'),
     ('Catering', 'recipe', '#7c3aed', 'tray'),
-    ('Greens', 'ingredient', '#15803d', 'none'),
-    ('Grains', 'ingredient', '#92400e', 'none'),
-    ('Toppings', 'ingredient', '#dc2626', 'none'),
-    ('Cheese', 'ingredient', '#eab308', 'none'),
-    ('Crunchies', 'ingredient', '#a16207', 'none'),
-    ('Premiums', 'ingredient', '#9333ea', 'none'),
-    ('Protein', 'ingredient', '#be185d', 'none'),
-    ('Dressing', 'ingredient', '#0891b2', 'none'),
+    ('Greens', 'ingredient', '#3E7D3A', 'none'),
+    ('Grains', 'ingredient', '#D4A657', 'none'),
+    ('Toppings', 'ingredient', '#D8794A', 'none'),
+    ('Cheese', 'ingredient', '#F0CF5B', 'none'),
+    ('Crunchies', 'ingredient', '#8A5A3B', 'none'),
+    ('Premiums', 'ingredient', '#7A4E92', 'none'),
+    ('Protein', 'ingredient', '#B4492F', 'none'),
+    ('Dressing', 'ingredient', '#3D8C86', 'none'),
     ('Finish', 'ingredient', '#db2777', 'none'),
-    ('Packaging', 'ingredient', '#475569', 'none'),
+    ('Packaging', 'ingredient', '#A3A396', 'none'),
+)
+
+# Design-palette migration map: for a canonical ingredient-category tag,
+# update color ONLY where the user's current color still matches the old
+# auto-seeded value. Customized colors (anything else) are preserved.
+_PALETTE_MIGRATIONS = (
+    # (name, old_hex, new_hex)
+    ('Greens',    '#15803d', '#3E7D3A'),
+    ('Grains',    '#92400e', '#D4A657'),
+    ('Toppings',  '#dc2626', '#D8794A'),
+    ('Cheese',    '#eab308', '#F0CF5B'),
+    ('Crunchies', '#a16207', '#8A5A3B'),
+    ('Premiums',  '#9333ea', '#7A4E92'),
+    ('Protein',   '#be185d', '#B4492F'),
+    ('Dressing',  '#0891b2', '#3D8C86'),
+    ('Packaging', '#475569', '#A3A396'),
 )
 
 if __name__=="__main__":

@@ -11,8 +11,9 @@ import db
 
 
 class UpdateRecipeInfoCommand(QUndoCommand):
-    '''Capture changes to Name / Unit / OutputQty as a single undoable action.
-    `before` and `after` are (name, unit, outputqty) tuples.'''
+    '''Capture changes to Name / Unit / OutputQty / menu_price as a single
+    undoable action. `before` and `after` are
+    (name, unit, outputqty, menu_price) tuples; menu_price may be None.'''
 
     def __init__(self, recipe_id, before, after):
         super().__init__('Edit recipe info')

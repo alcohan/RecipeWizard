@@ -41,6 +41,7 @@ CREATE TABLE Recipes (
 	, Name NVarchar(100)
 	, Unit NVarchar(30)
 	, OutputQty float
+	, menu_price NUMERIC   -- NULL = not on menu / price unknown; drives food-cost %
 	, updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
