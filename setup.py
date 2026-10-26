@@ -241,6 +241,16 @@ def migrateDB():
         print('Migrating: adding Recipes.menu_price')
         cursor.execute('ALTER TABLE Recipes ADD COLUMN menu_price NUMERIC')
 
+    # cost_snapshot powers the "prices changed since you last looked"
+    # badge: the editor stamps a snapshot on close, and anywhere a
+    # recipe is listed we compare its live cost to that snapshot. Both
+    # columns are nullable — recipes you've never opened in the new
+    # editor just don't show the badge.
+    if not column_exists('Recipes', 'cost_snapshot'):
+        print('Migrating: adding Recipes.cost_snapshot + cost_snapshot_at')
+        cursor.execute('ALTER TABLE Recipes ADD COLUMN cost_snapshot NUMERIC')
+        cursor.execute('ALTER TABLE Recipes ADD COLUMN cost_snapshot_at TEXT')
+
     # Trigger set is rebuilt on every migration so changes to the bump
     # logic propagate without bespoke migration steps. The WHEN guard on
     # the row-self-update triggers prevents infinite recursion.
@@ -252,9 +262,15 @@ def migrateDB():
           UPDATE Ingredients SET updated_at = datetime('now') WHERE Id = NEW.Id;
         END;
 
+        -- Snapshot-only writes (updating cost_snapshot / cost_snapshot_at
+        -- after an editor close) shouldn't count as "the user edited this
+        -- recipe", so we skip the bump when the only columns that moved
+        -- are the snapshot ones.
         DROP TRIGGER IF EXISTS recipes_bump_updated_at;
         CREATE TRIGGER recipes_bump_updated_at AFTER UPDATE ON Recipes
         WHEN NEW.updated_at = OLD.updated_at
+          AND NOT (NEW.cost_snapshot IS NOT OLD.cost_snapshot
+                   OR NEW.cost_snapshot_at IS NOT OLD.cost_snapshot_at)
         BEGIN
           UPDATE Recipes SET updated_at = datetime('now') WHERE Id = NEW.Id;
         END;

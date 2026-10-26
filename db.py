@@ -274,6 +274,22 @@ def update_recipe_info(id: int, name: str, unit: str, outputqty: float, menu_pri
         'sql\\update_recipe_info.sql', (name, unit, outputqty, menu_price, id),
     )
 
+
+def update_recipe_cost_snapshot(recipe_id):
+    '''Stamp the "last cost the user saw" onto the recipe. Reads the
+    recipe's current live cost from RecipeTotalValues (which already
+    aggregates through sub-recipes) and stores it along with a now
+    timestamp. The editor calls this when the user closes the dialog,
+    so the "prices changed since you last looked" badge disappears
+    only when the user has actually seen the new numbers.'''
+    return query(
+        'UPDATE Recipes SET'
+        '  cost_snapshot = (SELECT Cost FROM RecipeTotalValues WHERE Id = ?),'
+        '  cost_snapshot_at = datetime(\'now\')'
+        ' WHERE Id = ?',
+        (recipe_id, recipe_id),
+    )
+
 def create_recipe(name: str, unit: str, outputqty: float):
     result = query_from_file('sql\\create_recipe.sql', (name, unit, outputqty))
     return result['lastrowid']

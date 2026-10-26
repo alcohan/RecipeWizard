@@ -131,6 +131,17 @@ class RecipeEditDialog(QDialog):
         # (editingFinished doesn't fire on the focused widget when the
         # dialog goes away via the Close button).
         self._maybe_commit_info()
+        # Stamp the "last cost you saw" snapshot so the Prices-changed
+        # badge disappears for this recipe until supplier prices move.
+        # Skipped on destructive-close (reject-from-delete) since the
+        # recipe may no longer exist.
+        if not getattr(self, '_being_deleted', False):
+            try:
+                db.update_recipe_cost_snapshot(self.recipe_id)
+            except Exception:
+                # A failure here is a UX nicety, not correctness —
+                # swallow so a flaky DB doesn't block closing the dialog.
+                pass
         QSettings().setValue('recipeEditDialog/splitter', self.splitter.saveState())
         super().done(result)
 
@@ -306,6 +317,15 @@ class RecipeEditDialog(QDialog):
             # Insert after Cost (index 1 in INFO_FIELDS) when present, else at end.
             insert_at = 2 if len(strip_parts) >= 2 else len(strip_parts)
             strip_parts.insert(insert_at, food_cost_html)
+        # "Prices changed" chip: live cost drifted away from the snapshot
+        # the user last confirmed by closing the dialog. Appears to the
+        # right of Food cost so a glance shows "costs me this much / X of
+        # Y / up Z since I last looked".
+        prices_changed_html = _prices_changed_html(
+            recipe.get('CostRaw'), recipe.get('CostSnapshot'),
+        )
+        if prices_changed_html:
+            strip_parts.append(prices_changed_html)
         sep = '  •  '
         self.info_strip.setText(
             f"Per {recipe['Unit']} — {sep.join(strip_parts)}" if strip_parts else ''
@@ -507,6 +527,9 @@ class RecipeEditDialog(QDialog):
             return
         self.modified = True
         self.status_message = f"Deleted '{name}'"
+        # Flag so done() skips the cost-snapshot stamp (the recipe row
+        # is already gone from the DB).
+        self._being_deleted = True
         self.accept()
 
 
@@ -537,6 +560,31 @@ def _coerce_menu_price(value):
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _prices_changed_html(cost_raw, cost_snapshot):
+    '''"+$0.19 vs saved" chip when the recipe's current cost has drifted
+    from the snapshot the user last confirmed. Returns '' when either
+    value is missing or the drift is under a penny (ignored jitter).'''
+    try:
+        cost = float(cost_raw) if cost_raw is not None else None
+        snap = float(cost_snapshot) if cost_snapshot is not None else None
+    except (TypeError, ValueError):
+        return ''
+    if cost is None or snap is None:
+        return ''
+    delta = cost - snap
+    if abs(delta) < 0.01:
+        return ''
+    sign = '+' if delta > 0 else '−'
+    # Up is bad (we're paying more); use the same amber tone as a food
+    # cost that's gone over target. Down is good — mute green.
+    bg, fg = ('#FBEADB', '#8A3F0C') if delta > 0 else ('#E6EFE3', '#24502A')
+    return (
+        f'<span style="color: {fg}; background: {bg}; padding: 0 5px;'
+        f' border-radius: 4px; font-weight: 600">'
+        f'{sign}${abs(delta):.2f} vs saved</span>'
+    )
 
 
 def _food_cost_html(cost_raw, menu_price):
