@@ -261,7 +261,9 @@ def recipe_components(id: int):
         row['QuantityRaw'] = row['Quantity']
         # Strip trailing zeroes from quantity
         row['Quantity'] = "{:.2f}".format(row['Quantity']).rstrip('0').rstrip('.')
-        # Format cost as "$ 0.00"
+        # Preserve raw cost before formatting so category-group subtotals
+        # don't have to parse a formatted string back into a float.
+        row['CostRaw'] = row['Cost'] or 0.0
         row['Cost'] = "$ {:.2f}".format(row['Cost'])
     return(result)
 
