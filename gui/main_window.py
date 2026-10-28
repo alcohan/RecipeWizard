@@ -2,12 +2,11 @@ import datetime
 import os
 import shutil
 
-from PySide6.QtCore import Qt, QSettings, QUrl, Signal
+from PySide6.QtCore import Qt, QSettings, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractItemView, QDialog, QFileDialog, QHBoxLayout, QHeaderView, QLineEdit,
-    QMainWindow, QMenu, QMessageBox, QPushButton, QTableView, QTabWidget,
-    QVBoxLayout, QWidget,
+    QDialog, QFileDialog, QHBoxLayout, QMainWindow, QMessageBox,
+    QPushButton, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 import api.usda
@@ -22,104 +21,43 @@ from gui.dialogs.ingredient_edit import IngredientEditDialog
 from gui.dialogs.preferences import PreferencesDialog
 from gui.dialogs.recipe_create import RecipeCreateDialog
 from gui.dialogs.recipe_edit import RecipeEditDialog
-from gui.dialogs.suppliers_manager import SuppliersManagerDialog
 from gui.dialogs.tags_manager import IngredientTagsDialog
 from gui.dialogs.template_editor import TemplatesManagerDialog
-from gui.models.filter_proxy import MultiColumnFilterProxy
 from gui.models.ingredients_model import IngredientsModel
 from gui.models.recipes_model import RecipesModel
 from gui.tabs.analytics_tab import AnalyticsTab
-from gui.tabs.home_tab import HomeTab
 from gui.tabs.ingredients_tab import IngredientsTab
-from gui.widgets.tag_badge import TagBadgeCellDelegate
-
-
-class _BrowsePane(QWidget):
-    '''Filter line + virtualized table + action-button row. Emits source-row
-    indices via signals so the parent can map them back to DB ids.'''
-
-    rowActivated = Signal(int)
-
-    def __init__(self, placeholder, source_model, action_buttons, context_actions, parent=None):
-        super().__init__(parent)
-        self.source_model = source_model
-        self._context_actions = context_actions
-
-        self.proxy = MultiColumnFilterProxy(self)
-        self.proxy.setSourceModel(self.source_model)
-
-        self.filter_edit = QLineEdit()
-        self.filter_edit.setPlaceholderText(placeholder)
-        self.filter_edit.setClearButtonEnabled(True)
-        self.filter_edit.textChanged.connect(self.proxy.setFilterText)
-
-        self.table = QTableView()
-        self.table.setModel(self.proxy)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.setSortingEnabled(True)
-        self.table.setAlternatingRowColors(True)
-        self.table.verticalHeader().setVisible(False)
-        # Fixed row height → Qt skips per-row measurement, which is what makes
-        # large lists scroll smoothly. Equivalent to setUniformItemSizes on QListView.
-        self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
-        self.table.verticalHeader().setDefaultSectionSize(24)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table.customContextMenuRequested.connect(self._show_context_menu)
-        self.table.activated.connect(self._on_activated)
-
-        # Resize columns whenever the model resets (refresh, filter clear, etc.)
-        self.source_model.modelReset.connect(self.table.resizeColumnsToContents)
-        self.table.resizeColumnsToContents()
-
-        button_row = QHBoxLayout()
-        for btn in action_buttons:
-            button_row.addWidget(btn)
-        button_row.addStretch()
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(self.filter_edit)
-        layout.addWidget(self.table, stretch=1)
-        layout.addLayout(button_row)
-
-    def _on_activated(self, view_index):
-        if not view_index.isValid():
-            return
-        self.rowActivated.emit(self.proxy.mapToSource(view_index).row())
-
-    def focus_filter(self):
-        '''Called by the global Ctrl+F shortcut when this pane's tab is active.'''
-        self.filter_edit.setFocus()
-        self.filter_edit.selectAll()
-
-    def _show_context_menu(self, point):
-        view_index = self.table.indexAt(point)
-        if not view_index.isValid():
-            return
-        src_row = self.proxy.mapToSource(view_index).row()
-        menu = QMenu(self.table)
-        for label, handler in self._context_actions:
-            action = menu.addAction(label)
-            action.triggered.connect(lambda _checked=False, r=src_row, h=handler: h(r))
-        menu.exec(self.table.viewport().mapToGlobal(point))
+from gui.tabs.library_health_tab import LibraryHealthTab
+from gui.tabs.recipes_tab import RecipesTab
+from gui.tabs.suppliers_tab import SuppliersTab
+from gui.widgets.place_rail import PlaceRail
+from gui.widgets.status_bar import RecipeWizardStatusBar
 
 
 class MainWindow(QMainWindow):
+    '''Shell: five places behind a left rail, with a custom status bar
+    pinned at the bottom.
+
+    The design is strict about the rail — exactly five slots, ⌘1-⌘5,
+    labelled icons. Recipes is the landing place (no separate Home);
+    Compare was previously the Analytics tab; Suppliers was previously
+    a modal dialog; Library Health is new.'''
+
+    _PLACES = ('recipes', 'ingredients', 'compare', 'suppliers', 'health')
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle(config.APPNAME)
-        self.resize(1100, 760)
+        self.resize(1200, 820)
         # Push the user's saved USDA API key into the API client before any
         # USDA-dependent dialog can open. Empty string = use DEMO_KEY fallback.
         api.usda.set_api_key(QSettings().value('usda/apiKey', '', type=str))
         self._build_menus()
-        self._build_tabs()
+        self._build_places()
         self._restore_state()
 
     def _restore_state(self):
-        '''Restore window geometry and last-active tab from QSettings.
+        '''Restore window geometry and last-active place from QSettings.
         First launch has no settings — resize() above is the default.'''
         settings = QSettings()
         geom = settings.value('mainWindow/geometry')
@@ -128,77 +66,109 @@ class MainWindow(QMainWindow):
         state = settings.value('mainWindow/state')
         if state is not None:
             self.restoreState(state)
-        last_tab = settings.value('mainWindow/currentTab', 0)
+        last_place = settings.value('mainWindow/currentPlace', 0)
         try:
-            idx = int(last_tab)
+            idx = int(last_place)
         except (TypeError, ValueError):
             idx = 0
-        if 0 <= idx < self.tabs.count():
-            self.tabs.setCurrentIndex(idx)
+        if 0 <= idx < self.stack.count():
+            self.rail.set_current(idx)
+            self.stack.setCurrentIndex(idx)
 
     def closeEvent(self, event):
         settings = QSettings()
         settings.setValue('mainWindow/geometry', self.saveGeometry())
         settings.setValue('mainWindow/state', self.saveState())
-        settings.setValue('mainWindow/currentTab', self.tabs.currentIndex())
+        settings.setValue('mainWindow/currentPlace', self.rail.current())
         super().closeEvent(event)
 
-    def _build_tabs(self):
-        '''Top-level navigation. To add a tab later, write a `_xxx_tab()`
-        method that returns a QWidget and add one `addTab(...)` line below.'''
+    def _build_places(self):
+        '''Rail + stacked workspace + status bar. One place per rail
+        slot; indices are the order below. Model refs are stashed on
+        self so handlers can call refresh() on them.'''
         self.ingredients_model = IngredientsModel(self)
         self.recipes_model = RecipesModel(self)
 
-        self.tabs = QTabWidget()
-        self.tabs.addTab(self._home_tab(), 'Home')
-        self.tabs.addTab(self._ingredients_tab(), 'Ingredients')
-        self.tabs.addTab(self._recipes_tab(), 'Recipes')
-        self.tabs.addTab(self._analytics_tab(), 'Analytics')
-        self.setCentralWidget(self.tabs)
+        self.rail = PlaceRail(self)
+        self.stack = QStackedWidget()
+        self.rail.placeChanged.connect(self.stack.setCurrentIndex)
 
-        # Ctrl+F focuses whichever tab's filter is active.
+        # Recipes = landing place. Promoted from the old Home tab.
+        self.rail.add_place('Recipes', 'recipes')
+        self.stack.addWidget(self._recipes_place())
+        # Ingredients.
+        self.rail.add_place('Ingredients', 'ingredients')
+        self.stack.addWidget(self._ingredients_place())
+        # Compare (the old Analytics tab — same spreadsheet view, same
+        # category breakdowns; the "tray" scoping comes later).
+        self.rail.add_place('Compare', 'compare')
+        self.stack.addWidget(self._compare_place())
+        # Suppliers (promoted from a modal to a place).
+        self.rail.add_place('Suppliers', 'suppliers')
+        self.stack.addWidget(self._suppliers_place())
+        # Library Health pinned to the bottom of the rail.
+        self.rail.add_spacer()
+        self.rail.add_place('Health', 'health')
+        self.library_health_tab = LibraryHealthTab()
+        self.stack.addWidget(self.library_health_tab)
+
+        self.rail.install_shortcuts(self)
+
+        self.status_bar = RecipeWizardStatusBar()
+        self.status_bar.compareTrayClicked.connect(
+            lambda: self.rail.set_current(self._PLACES.index('compare'))
+        )
+
+        central = QWidget()
+        inner = QHBoxLayout()
+        inner.setContentsMargins(0, 0, 0, 0)
+        inner.setSpacing(0)
+        inner.addWidget(self.rail)
+        inner.addWidget(self.stack, stretch=1)
+
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addLayout(inner, stretch=1)
+        outer.addWidget(self.status_bar)
+        self.setCentralWidget(central)
+
+        # Keep the status bar + Library Health in sync with the models.
+        for m in (self.ingredients_model, self.recipes_model):
+            m.modelReset.connect(self.status_bar.refresh)
+            m.modelReset.connect(self.library_health_tab.mark_stale)
+        self.status_bar.refresh()
+
+        # Ctrl+F focuses whichever place's filter is active.
         find_shortcut = QShortcut(QKeySequence.Find, self)
         find_shortcut.activated.connect(self._focus_active_filter)
 
-        self.statusBar().showMessage('Ready')
-
     def _focus_active_filter(self):
-        tab = self.tabs.currentWidget()
-        focus = getattr(tab, 'focus_filter', None)
+        place = self.stack.currentWidget()
+        focus = getattr(place, 'focus_filter', None)
         if callable(focus):
             focus()
 
-    def _home_tab(self):
-        tab = HomeTab(self.ingredients_model, self.recipes_model)
-        tab.recipeClicked.connect(self._on_recipe_edit_by_id)
-        # Clickable count cards jump to the matching tab. Tab indices match
-        # the order added in _build_tabs.
-        tab.ingredientsRequested.connect(lambda: self.tabs.setCurrentIndex(1))
-        tab.recipesRequested.connect(lambda: self.tabs.setCurrentIndex(2))
-        tab.suppliersRequested.connect(self._on_suppliers)
-        # Quick-action buttons reuse the existing create handlers.
-        tab.newRecipeRequested.connect(self._on_new_recipe)
-        tab.newIngredientUsdaRequested.connect(self._on_new_ingredient_search)
-        tab.newIngredientBlankRequested.connect(self._on_new_ingredient_blank)
-        # Recently-edited strip → open the right edit dialog by kind.
-        tab.itemActivated.connect(self._on_recent_activated)
+    def _recipes_place(self):
+        new_recipe_btn = QPushButton('+ New Recipe')
+        new_recipe_btn.clicked.connect(self._on_new_recipe)
+        new_ing_btn = QPushButton('+ New Ingredient')
+        new_ing_btn.clicked.connect(self._on_new_ingredient_search)
+        tab = RecipesTab(
+            source_model=self.recipes_model,
+            context_actions=[
+                ('Edit…', self._on_recipe_edit),
+                ('Delete', self._on_recipe_delete),
+            ],
+            action_buttons=[new_recipe_btn, new_ing_btn],
+        )
+        tab.rowActivated.connect(self._on_recipe_edit)
         return tab
 
-    def _on_recent_activated(self, kind, item_id):
-        if kind == 'recipe':
-            self._on_recipe_edit_by_id(item_id)
-            return
-        if kind == 'ingredient':
-            dlg = IngredientEditDialog(item_id, parent=self)
-            dlg.exec()
-            if dlg.modified:
-                self.refresh()
-            self._flash_status(dlg.status_message)
-
-    def _ingredients_tab(self):
-        new_search_btn = QPushButton('New (Search Database)')
+    def _ingredients_place(self):
+        new_search_btn = QPushButton('+ New (USDA Search)')
         new_search_btn.clicked.connect(self._on_new_ingredient_search)
-        new_blank_btn = QPushButton('New From Blank')
+        new_blank_btn = QPushButton('+ New (Blank)')
         new_blank_btn.clicked.connect(self._on_new_ingredient_blank)
         tab = IngredientsTab(
             source_model=self.ingredients_model,
@@ -211,27 +181,13 @@ class MainWindow(QMainWindow):
         tab.rowActivated.connect(self._on_ingredient_edit)
         return tab
 
-    def _recipes_tab(self):
-        new_recipe_btn = QPushButton('New Recipe')
-        new_recipe_btn.clicked.connect(self._on_new_recipe)
-        pane = _BrowsePane(
-            placeholder='\U0001F50D  Filter recipes…',
-            source_model=self.recipes_model,
-            action_buttons=[new_recipe_btn],
-            context_actions=[
-                ('Edit…', self._on_recipe_edit),
-                ('Delete', self._on_recipe_delete),
-            ],
-        )
-        pane.rowActivated.connect(self._on_recipe_edit)
-        return pane
-
-    def _analytics_tab(self):
+    def _compare_place(self):
         tab = AnalyticsTab(self.recipes_model)
-        # Double-clicking a recipe row jumps into its edit dialog so the
-        # spreadsheet is a launching pad, not a dead end.
         tab.recipeActivated.connect(self._on_recipe_edit_by_id)
         return tab
+
+    def _suppliers_place(self):
+        return SuppliersTab()
 
     def _build_menus(self):
         bar = self.menuBar()
@@ -249,8 +205,10 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction('E&xit', self.close)
 
+        # Suppliers has moved to the place rail (⌘4). Keep the two
+        # tag-management entries under Manage until they get their own
+        # place or get folded into a Settings dialog.
         manage_menu = bar.addMenu('&Manage')
-        manage_menu.addAction('&Suppliers', self._on_suppliers)
         manage_menu.addAction('Ingredient &Tags', self._on_ingredient_tags)
         manage_menu.addAction('Recipe Tem&plates', self._on_recipe_templates)
 
@@ -277,17 +235,21 @@ class MainWindow(QMainWindow):
     # --- refresh ---
 
     def refresh(self):
+        '''Reset both source models — model-reset signals propagate to
+        each place, the custom status bar, and Library Health. No
+        explicit "Refreshed" toast; the status bar's live counts are
+        feedback enough.'''
         self.ingredients_model.refresh()
         self.recipes_model.refresh()
-        self.statusBar().showMessage('Refreshed', 2000)
 
     # --- ingredient / recipe handlers ---
 
     def _flash_status(self, msg):
-        '''Show a toast in the status bar for ~3s. Centralized so handlers
-        all use the same dwell time.'''
-        if msg:
-            self.statusBar().showMessage(msg, 3000)
+        '''No-op. Previously showed a transient Qt-statusBar toast, but
+        the custom status bar doesn't carry transient messages; a
+        future "status toast" slot can replace this. Kept as a no-op
+        so handler code reads unchanged.'''
+        pass
 
     def _on_ingredient_edit(self, src_row):
         ing_id = self.ingredients_model.id_at_row(src_row)
@@ -459,13 +421,6 @@ class MainWindow(QMainWindow):
 
     def _on_bulk_assign_images(self):
         BulkImageAssignDialog(parent=self).exec()
-        self.refresh()
-
-    def _on_suppliers(self):
-        SuppliersManagerDialog(parent=self).exec()
-        # Suppliers don't affect the ingredient/recipe browse lists directly,
-        # but a refresh is cheap and keeps the model consistent if anything
-        # downstream (like price-history dialogs) re-reads.
         self.refresh()
 
     def _on_ingredient_tags(self):

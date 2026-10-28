@@ -214,6 +214,68 @@ def get_recipe_category_details():
     return query_from_file('sql\\get_recipe_category_details.sql')['data']
 
 
+def library_health_report(stale_days=90):
+    '''Collect the data-quality signals Library Health surfaces.
+
+    Each check returns a (count, sample_names) pair — the sample is at
+    most 5 names for the UI to show inline, the full count drives the
+    badge. Checks are intentionally conservative:
+
+      - missing_nutrition: Calories IS NULL or 0. Fat/protein etc. are
+        allowed to be zero (water has them), but a calorie-less row is
+        almost always a stub the user forgot to fill in.
+      - stale_prices: ingredients whose latest ingredient_prices row is
+        older than `stale_days`, plus ingredients with no prices at all.
+      - unused_ingredients: not referenced by any Connections row.
+      - duplicate_names: ingredient names colliding case-insensitively.
+
+    All read-only; this is a glance report, not an auto-fixer.'''
+    def _rows_with_sample(sql, params=(), limit=5):
+        rows = query(sql, params)['data']
+        names = [r['Name'] for r in rows[:limit]]
+        return len(rows), names
+
+    missing_nutrition = _rows_with_sample(
+        'SELECT Name FROM Ingredients'
+        ' WHERE (Calories IS NULL OR Calories = 0)'
+        ' ORDER BY Name COLLATE NOCASE'
+    )
+
+    stale_prices = _rows_with_sample(
+        'SELECT i.Name FROM Ingredients i'
+        ' WHERE NOT EXISTS ('
+        '   SELECT 1 FROM ingredient_prices p'
+        '   WHERE p.ingredient_id = i.Id'
+        f'     AND p.effective_date >= date(\'now\', \'-{int(stale_days)} day\')'
+        ' )'
+        ' ORDER BY i.Name COLLATE NOCASE'
+    )
+
+    unused_ingredients = _rows_with_sample(
+        'SELECT i.Name FROM Ingredients i'
+        ' WHERE NOT EXISTS ('
+        '   SELECT 1 FROM Connections c WHERE c.ChildIngredient = i.Id'
+        ' )'
+        ' ORDER BY i.Name COLLATE NOCASE'
+    )
+
+    # Duplicate names: group rows that share a case-insensitive name;
+    # the "sample" lists each name once.
+    dup_rows = query(
+        'SELECT lower(Name) AS k, COUNT(*) AS n, MIN(Name) AS Name'
+        ' FROM Ingredients GROUP BY lower(Name) HAVING n > 1'
+        ' ORDER BY k'
+    )['data']
+    duplicate_names = (len(dup_rows), [r['Name'] for r in dup_rows[:5]])
+
+    return {
+        'missing_nutrition': missing_nutrition,
+        'stale_prices': stale_prices,
+        'unused_ingredients': unused_ingredients,
+        'duplicate_names': duplicate_names,
+    }
+
+
 def get_recently_edited(limit=6):
     '''Return the most-recently-touched ingredients and recipes, mixed
     together and sorted by updated_at DESC. Each row is a dict with

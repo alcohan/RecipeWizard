@@ -1,20 +1,24 @@
+'''Suppliers place — the suppliers manager, promoted from a modal
+dialog into one of the main window's five places.
+
+Keeps the same table-based UX for now (filter + sortable table +
+"New Supplier" button + double-click to edit). The design envisions
+a richer price-history timeline per vendor in a later phase; this
+file is the on-ramp.
+'''
 from PySide6.QtWidgets import (
-    QAbstractItemView, QDialog, QHBoxLayout, QLineEdit, QPushButton,
-    QTableView, QVBoxLayout,
+    QAbstractItemView, QHBoxLayout, QLineEdit, QPushButton,
+    QTableView, QVBoxLayout, QWidget,
 )
 
-import config
 from gui.dialogs.supplier_edit import SupplierEditDialog
 from gui.models.filter_proxy import MultiColumnFilterProxy
 from gui.models.suppliers_model import SuppliersModel
 
 
-class SuppliersManagerDialog(QDialog):
+class SuppliersTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f'{config.APPNAME} | Suppliers')
-        self.resize(720, 480)
-
         self.model = SuppliersModel(self)
         self.proxy = MultiColumnFilterProxy(self)
         self.proxy.setSourceModel(self.model)
@@ -34,18 +38,16 @@ class SuppliersManagerDialog(QDialog):
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.activated.connect(self._on_activated)
+        self.table.doubleClicked.connect(self._on_activated)
         self.model.modelReset.connect(self.table.resizeColumnsToContents)
         self.table.resizeColumnsToContents()
 
-        new_btn = QPushButton('New Supplier')
+        new_btn = QPushButton('+ New Supplier')
         new_btn.clicked.connect(self._on_new)
-        close_btn = QPushButton('Close')
-        close_btn.clicked.connect(self.reject)
 
         btn_row = QHBoxLayout()
         btn_row.addWidget(new_btn)
         btn_row.addStretch()
-        btn_row.addWidget(close_btn)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.filter_edit)
@@ -67,3 +69,7 @@ class SuppliersManagerDialog(QDialog):
         dlg.exec()
         if dlg.modified:
             self.model.refresh()
+
+    def focus_filter(self):
+        self.filter_edit.setFocus()
+        self.filter_edit.selectAll()
