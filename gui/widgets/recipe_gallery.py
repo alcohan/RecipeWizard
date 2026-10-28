@@ -15,14 +15,32 @@ from PySide6.QtWidgets import (
 from gui.widgets.wedge_view import WedgeView
 
 
+def _prices_drifted(cost_raw, cost_snapshot, min_delta=0.01):
+    '''True when the current cost differs from the snapshot by at
+    least min_delta. Both NULL (never snapshotted) counts as "no
+    drift" — no sense in flagging recipes the user has never opened.'''
+    try:
+        a = float(cost_raw) if cost_raw is not None else None
+        b = float(cost_snapshot) if cost_snapshot is not None else None
+    except (TypeError, ValueError):
+        return False
+    if a is None or b is None:
+        return False
+    return abs(a - b) >= min_delta
+
+
 class RecipeCard(QFrame):
     '''Wedge preview + recipe name. Whole frame is clickable; children
     are transparent to mouse events so the frame's mousePressEvent
-    always fires regardless of where on the card the user clicks.'''
+    always fires regardless of where on the card the user clicks.
+
+    When cost_raw drifts from cost_snapshot by ≥ $0.01, a "Prices
+    changed" chip overlays the top-right corner so operators see
+    affected recipes at a glance in the gallery.'''
 
     clicked = Signal(int)
 
-    def __init__(self, recipe_id, name, parent=None):
+    def __init__(self, recipe_id, name, cost_raw=None, cost_snapshot=None, parent=None):
         super().__init__(parent)
         self.recipe_id = recipe_id
         self.name = name or ''
@@ -59,6 +77,21 @@ class RecipeCard(QFrame):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.addWidget(self.wedge, alignment=Qt.AlignCenter)
         layout.addWidget(name_label)
+
+        if _prices_drifted(cost_raw, cost_snapshot):
+            # Child of self (not inside the vbox) so it floats over the
+            # wedge rather than reflowing the layout.
+            chip = QLabel('Prices changed', self)
+            chip.setAttribute(Qt.WA_TransparentForMouseEvents)
+            chip.setStyleSheet(
+                'background: #FBEADB; color: #8A3F0C; font-size: 10px;'
+                ' font-weight: 600; padding: 2px 6px; border-radius: 4px;'
+            )
+            chip.setToolTip('Live cost has drifted from the cost you last saw.')
+            # Position near the top-right. adjustSize() so the pill
+            # sizes to its text before we place it.
+            chip.adjustSize()
+            chip.move(220 - chip.width() - 10, 10)
 
     def start_render(self, pool):
         self.wedge.render_async(pool)
@@ -180,7 +213,11 @@ class RecipeGallery(QWidget):
         pool = QThreadPool.globalInstance()
         for i in range(self._model.rowCount()):
             row = self._model.row_dict(i)
-            card = RecipeCard(row['Id'], row['Name'])
+            card = RecipeCard(
+                row['Id'], row['Name'],
+                cost_raw=row.get('CostRaw'),
+                cost_snapshot=row.get('CostSnapshot'),
+            )
             card.clicked.connect(self.recipeClicked.emit)
             self._cards.append(card)
 
