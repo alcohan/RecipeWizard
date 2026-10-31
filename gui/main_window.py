@@ -30,6 +30,7 @@ from gui.tabs.ingredients_tab import IngredientsTab
 from gui.tabs.library_health_tab import LibraryHealthTab
 from gui.tabs.recipes_tab import RecipesTab
 from gui.tabs.suppliers_tab import SuppliersTab
+from gui.services.compare_tray import CompareTray
 from gui.widgets.app_header import AppHeader
 from gui.widgets.status_bar import RecipeWizardStatusBar
 
@@ -89,6 +90,11 @@ class MainWindow(QMainWindow):
         self.ingredients_model = IngredientsModel(self)
         self.recipes_model = RecipesModel(self)
 
+        # Session-only staging set for side-by-side comparison. Lives
+        # here so every place (Recipes cards, Compare spreadsheet, the
+        # status-bar link) shares one source of truth.
+        self.compare_tray = CompareTray(self)
+
         self.app_header = AppHeader(self)
         self.stack = QStackedWidget()
         # Workspace backdrop is the Evergreens `bg` token so places
@@ -122,6 +128,10 @@ class MainWindow(QMainWindow):
         self.status_bar = RecipeWizardStatusBar()
         self.status_bar.compareTrayClicked.connect(
             lambda: self.app_header.set_current(self._PLACES.index('compare'))
+        )
+        # Status bar's "Compare tray · N →" link is driven by the tray.
+        self.compare_tray.changed.connect(
+            lambda: self.status_bar.set_compare_tray_count(self.compare_tray.count())
         )
 
         central = QWidget()
@@ -170,11 +180,17 @@ class MainWindow(QMainWindow):
             context_actions=[
                 ('Edit…', self._on_recipe_edit),
                 ('Delete', self._on_recipe_delete),
+                ('Add to Compare (Space)', self._on_toggle_tray_for_row),
             ],
             action_buttons=[new_recipe_btn, new_ing_btn],
+            compare_tray=self.compare_tray,
         )
         tab.rowActivated.connect(self._on_recipe_edit)
         return tab
+
+    def _on_toggle_tray_for_row(self, src_row):
+        rid = self.recipes_model.id_at_row(src_row)
+        self.compare_tray.toggle(rid)
 
     def _ingredients_place(self):
         new_search_btn = QPushButton('+ New (USDA Search)')
@@ -193,7 +209,7 @@ class MainWindow(QMainWindow):
         return tab
 
     def _compare_place(self):
-        tab = AnalyticsTab(self.recipes_model)
+        tab = AnalyticsTab(self.recipes_model, compare_tray=self.compare_tray)
         tab.recipeActivated.connect(self._on_recipe_edit_by_id)
         return tab
 

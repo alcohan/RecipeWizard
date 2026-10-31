@@ -43,9 +43,10 @@ class AnalyticsTab(QWidget):
 
     recipeActivated = Signal(int)  # recipe_id, emitted on double-click
 
-    def __init__(self, recipes_model, parent=None):
+    def __init__(self, recipes_model, compare_tray=None, parent=None):
         super().__init__(parent)
         self._recipes_model = recipes_model
+        self._compare_tray = compare_tray
 
         # Cached data. _all_rows is the raw per-(recipe, ingredient) result
         # from the SQL query; pivots are computed on demand from this so
@@ -89,6 +90,12 @@ class AnalyticsTab(QWidget):
         layout.addWidget(self.table, stretch=1)
 
         recipes_model.modelReset.connect(self._on_model_reset)
+
+        # When the compare tray changes membership, re-render so the
+        # spreadsheet scopes/unscopes to the tray contents. We don't
+        # re-fetch the raw rows — just repivot.
+        if self._compare_tray is not None:
+            self._compare_tray.changed.connect(self._rebuild_table)
 
     # --- lifecycle / lazy build ---
 
@@ -145,10 +152,24 @@ class AnalyticsTab(QWidget):
         fmt = next((f for k, _, f in _METRICS if k == metric_key), str)
 
         needle = self.filter_edit.text().strip().lower()
-        visible_recipes = [
-            (rid, name, unit) for rid, name, unit in self._recipe_order
-            if not needle or needle in (name or '').lower()
-        ]
+        # If the compare tray is non-empty, scope the spreadsheet to
+        # exactly those recipes (in tray order) so the user can compare
+        # the hand-picked set side by side. Empty tray falls through
+        # to the full library.
+        tray_ids = self._compare_tray.ids() if self._compare_tray is not None else []
+        if tray_ids:
+            by_id = {rid: (rid, name, unit) for rid, name, unit in self._recipe_order}
+            visible_recipes = [by_id[rid] for rid in tray_ids if rid in by_id]
+            if needle:
+                visible_recipes = [
+                    (rid, name, unit) for rid, name, unit in visible_recipes
+                    if needle in (name or '').lower()
+                ]
+        else:
+            visible_recipes = [
+                (rid, name, unit) for rid, name, unit in self._recipe_order
+                if not needle or needle in (name or '').lower()
+            ]
 
         # Pivot for current metric: pivot[recipe_id][category] = {'total', 'items'}.
         # Items are kept per-ingredient so we can render the tooltip.
