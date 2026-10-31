@@ -9,7 +9,7 @@ into the final art.
 '''
 from PySide6.QtCore import Qt, QThreadPool, Signal
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QLabel, QScrollArea, QVBoxLayout, QWidget,
+    QCheckBox, QFrame, QGridLayout, QLabel, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from gui.widgets.wedge_view import WedgeView
@@ -40,10 +40,12 @@ class RecipeCard(QFrame):
 
     clicked = Signal(int)
 
-    def __init__(self, recipe_id, name, cost_raw=None, cost_snapshot=None, parent=None):
+    def __init__(self, recipe_id, name, cost_raw=None, cost_snapshot=None,
+                 compare_tray=None, parent=None):
         super().__init__(parent)
         self.recipe_id = recipe_id
         self.name = name or ''
+        self._compare_tray = compare_tray
         # Hidden until the wedge actually renders, so cold-load shows a
         # quiet progressive populate instead of N placeholder→wedge swaps.
         self._wedge_ready = False
@@ -77,6 +79,22 @@ class RecipeCard(QFrame):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.addWidget(self.wedge, alignment=Qt.AlignCenter)
         layout.addWidget(name_label)
+
+        # Compare-tray checkbox at top-left (matches the design's
+        # Library mockup). Positioned as a child of self so it floats
+        # above the layout rather than taking a row of its own.
+        if self._compare_tray is not None:
+            self.tray_check = QCheckBox(self)
+            self.tray_check.setToolTip('Add to compare tray')
+            self.tray_check.setCursor(Qt.PointingHandCursor)
+            self.tray_check.setStyleSheet(
+                'QCheckBox { background: white; border-radius: 3px; }'
+                ' QCheckBox::indicator { width: 16px; height: 16px; }'
+            )
+            self.tray_check.move(10, 10)
+            self.tray_check.setChecked(self._compare_tray.contains(recipe_id))
+            self.tray_check.toggled.connect(self._on_tray_toggled)
+            self._compare_tray.changed.connect(self._sync_tray_check)
 
         if _prices_drifted(cost_raw, cost_snapshot):
             # Child of self (not inside the vbox) so it floats over the
@@ -112,6 +130,26 @@ class RecipeCard(QFrame):
             self.clicked.emit(self.recipe_id)
         super().mousePressEvent(event)
 
+    def _on_tray_toggled(self, checked):
+        if self._compare_tray is None:
+            return
+        if checked:
+            self._compare_tray.add(self.recipe_id)
+        else:
+            self._compare_tray.remove(self.recipe_id)
+
+    def _sync_tray_check(self):
+        '''Keep the checkbox in sync when another view mutates the
+        tray (table-view Space, Compare's "x", etc.). Blocking signals
+        so the toggle below doesn't bounce back into the tray.'''
+        if self._compare_tray is None:
+            return
+        should_be = self._compare_tray.contains(self.recipe_id)
+        if self.tray_check.isChecked() != should_be:
+            self.tray_check.blockSignals(True)
+            self.tray_check.setChecked(should_be)
+            self.tray_check.blockSignals(False)
+
 
 class RecipeGallery(QWidget):
     '''Scrollable, responsive grid of RecipeCard widgets. Column count
@@ -126,9 +164,10 @@ class RecipeGallery(QWidget):
 
     recipeClicked = Signal(int)
 
-    def __init__(self, recipes_model, parent=None):
+    def __init__(self, recipes_model, compare_tray=None, parent=None):
         super().__init__(parent)
         self._model = recipes_model
+        self._compare_tray = compare_tray
         self._cards = []
         # Reasonable starting guess: the viewport has no width yet on
         # construction, so this avoids a visible 1-column flash that
@@ -217,6 +256,7 @@ class RecipeGallery(QWidget):
                 row['Id'], row['Name'],
                 cost_raw=row.get('CostRaw'),
                 cost_snapshot=row.get('CostSnapshot'),
+                compare_tray=self._compare_tray,
             )
             card.clicked.connect(self.recipeClicked.emit)
             self._cards.append(card)

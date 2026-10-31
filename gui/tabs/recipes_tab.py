@@ -47,7 +47,7 @@ class RecipesTab(QWidget):
         )
         self.toggle.viewChanged.connect(self._on_view_changed)
 
-        self.gallery = RecipeGallery(source_model)
+        self.gallery = RecipeGallery(source_model, compare_tray=compare_tray)
         # RecipeGallery emits recipeClicked(recipe_id); translate to row
         # for parity with IngredientsTab, and keep the id-based signal
         # for callers who prefer it.
