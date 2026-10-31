@@ -305,10 +305,10 @@ def _tint(hex_color):
     c = QColor(hex_color)
     if not c.isValid():
         c = QColor('#E8E6DF')
-    # Blend toward paper white (#F3F2EE in the design) at ~85% — subtle
+    # Blend toward paper white (#fffaf2 in the design) at ~85% — subtle
     # enough that body text passes contrast, saturated enough to read as
     # a band.
-    bg = QColor('#F3F2EE')
+    bg = QColor('#fffaf2')
     r = int(c.red() * 0.18 + bg.red() * 0.82)
     g = int(c.green() * 0.18 + bg.green() * 0.82)
     b = int(c.blue() * 0.18 + bg.blue() * 0.82)

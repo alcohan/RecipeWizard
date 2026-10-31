@@ -88,7 +88,7 @@ class LibraryHealthTab(QWidget):
                 w.deleteLater()
 
         heading = QLabel('Library Health')
-        heading.setStyleSheet('font-size: 22px; font-weight: 700; color: #1E2320;'
+        heading.setStyleSheet('font-size: 22px; font-weight: 700; color: #082c00;'
                               ' letter-spacing: -0.01em;')
         subhead = QLabel("Data-quality signals, worst first. Address each when you have a moment.")
         subhead.setStyleSheet('color: #5B625C; padding-bottom: 4px;')
@@ -127,10 +127,10 @@ class _HealthCard(QFrame):
         super().__init__(parent)
         all_clear = count == 0
         self.setObjectName('HealthCard')
-        bg, border, title_fg = ('#FFFFFF', '#E2E0D9', '#1E2320')
+        bg, border, title_fg = ('#FFFFFF', '#ebe1cd', '#082c00')
         if all_clear:
             # Muted green for cleared checks — reads as "already fine".
-            bg, border, title_fg = ('#F3F6F0', '#CFDBC8', '#3F4641')
+            bg, border, title_fg = ('#e9f1d9', '#cfe0b1', '#55624c')
         self.setStyleSheet(f'''
             QFrame#HealthCard {{
                 background: {bg};
@@ -145,7 +145,7 @@ class _HealthCard(QFrame):
 
         if all_clear:
             badge = QLabel('✓')
-            badge.setStyleSheet('background: #CFDBC8; color: #24502A; font-weight: 700;'
+            badge.setStyleSheet('background: #cfe0b1; color: #24502A; font-weight: 700;'
                                 ' padding: 2px 10px; border-radius: 10px;')
         else:
             badge = QLabel(str(count))
@@ -164,7 +164,7 @@ class _HealthCard(QFrame):
 
         if all_clear:
             body = QLabel(idle_label)
-            body.setStyleSheet('color: #3F4641;')
+            body.setStyleSheet('color: #55624c;')
         else:
             if sample_names:
                 shown = ', '.join(sample_names)
@@ -173,7 +173,7 @@ class _HealthCard(QFrame):
                 body = QLabel(shown)
             else:
                 body = QLabel(description)
-            body.setStyleSheet('color: #1E2320;')
+            body.setStyleSheet('color: #082c00;')
             body.setWordWrap(True)
 
         desc = QLabel(description) if not all_clear else None
@@ -200,19 +200,19 @@ class _BackupsCard(QFrame):
         self.setStyleSheet('''
             QFrame#HealthCard {
                 background: #FFFFFF;
-                border: 1px solid #E2E0D9;
+                border: 1px solid #ebe1cd;
                 border-radius: 12px;
             }
             QFrame#HealthCard QLabel { background: transparent; border: 0; }
         ''')
 
         title = QLabel('Backups')
-        title.setStyleSheet('font-weight: 600; font-size: 15px; color: #1E2320;')
+        title.setStyleSheet('font-weight: 600; font-size: 15px; color: #082c00;')
 
         files = _list_backups()
         count_label = QLabel(str(len(files)) if files else '0')
         count_label.setStyleSheet(
-            'background: #ECEAE4; color: #3F4641;'
+            'background: #fff1da; color: #55624c;'
             ' font-weight: 700; padding: 2px 10px; border-radius: 10px;'
         )
         header_row = QHBoxLayout()
@@ -222,9 +222,9 @@ class _BackupsCard(QFrame):
         open_btn = QPushButton('Open folder')
         open_btn.setCursor(Qt.PointingHandCursor)
         open_btn.setStyleSheet(
-            'QPushButton { background: #FFFFFF; border: 1px solid #D9D6CD;'
+            'QPushButton { background: #FFFFFF; border: 1px solid #ebe1cd;'
             ' border-radius: 6px; padding: 4px 10px; } '
-            'QPushButton:hover { background: #F5FFF5; border-color: #2a7; }'
+            'QPushButton:hover { background: #e9f1d9; border-color: #347200; }'
         )
         open_btn.clicked.connect(lambda: QDesktopServices.openUrl(
             QUrl.fromLocalFile(config.user_data_dir())))

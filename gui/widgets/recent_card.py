@@ -65,8 +65,8 @@ class RecentItemCard(QFrame):
                 border-radius: 8px;
             }
             QFrame#RecentItemCard:hover {
-                border-color: #2a7;
-                background-color: #f5fff5;
+                border-color: #347200;
+                background-color: #e9f1d9;
             }
             QFrame#RecentItemCard QLabel { border: 0; background: transparent; }
         ''')

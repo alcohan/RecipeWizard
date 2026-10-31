@@ -210,14 +210,16 @@ def migrateDB():
     cursor.execute("UPDATE tags SET color = ? WHERE color IS NULL OR color = ''", ('#64748b',))
 
     # Palette alignment: bring canonical ingredient-category colors into
-    # the new design values. We only migrate when the user's current
-    # color still matches the OLD auto-seeded value (case-insensitive) —
-    # if someone changed it in Tags Manager, their choice stands.
-    for name, old_hex, new_hex in _PALETTE_MIGRATIONS:
+    # the current design values. We migrate only when the user's current
+    # color still matches one of the known auto-seeded values (case-
+    # insensitive) — anything else is a user customization and stays.
+    for name, old_hexes, new_hex in _PALETTE_MIGRATIONS:
+        placeholders = ','.join('?' for _ in old_hexes)
         cursor.execute(
-            "UPDATE tags SET color = ?"
-            " WHERE kind = 'ingredient' AND name = ? AND lower(color) = lower(?)",
-            (new_hex, name, old_hex),
+            f"UPDATE tags SET color = ?"
+            f" WHERE kind = 'ingredient' AND name = ?"
+            f"   AND lower(color) IN ({placeholders})",
+            [new_hex, name] + [h.lower() for h in old_hexes],
         )
 
     # updated_at on Ingredients and Recipes powers the home tab's
@@ -336,40 +338,45 @@ _CANONICAL_RECIPE_SHAPES = {
 # Note: legacy tags (Base, Veggies) are NOT auto-removed for users upgrading.
 # Migration is additive — old tags stay around with whatever mappings the user
 # had, and they can be manually deleted in the Tags Manager when ready.
-# Ingredient category hexes come from the design system (see the design
-# canvas's color grid). Recipe-tag colors are kept at their old values —
-# the design doesn't specify them, and they only appear as small accents.
+# Ingredient category hexes come from the design system (Evergreens
+# Internal Tools, Oct 2026). Recipe-tag colors are kept at their old
+# values — the design doesn't specify them, and they only appear as
+# small accents. Seven of nine category hues come from the brand
+# palette directly; the design calls them out by name in its color grid.
 _DEFAULT_TAGS = (
     ('Salad', 'recipe', '#16a34a', 'ring'),
     ('Wrap', 'recipe', '#b45309', 'wrap'),
     ('Bowl', 'recipe', '#ea580c', 'bowl'),
     ('Catering', 'recipe', '#7c3aed', 'tray'),
-    ('Greens', 'ingredient', '#3E7D3A', 'none'),
-    ('Grains', 'ingredient', '#D4A657', 'none'),
-    ('Toppings', 'ingredient', '#D8794A', 'none'),
-    ('Cheese', 'ingredient', '#F0CF5B', 'none'),
-    ('Crunchies', 'ingredient', '#8A5A3B', 'none'),
-    ('Premiums', 'ingredient', '#7A4E92', 'none'),
-    ('Protein', 'ingredient', '#B4492F', 'none'),
-    ('Dressing', 'ingredient', '#3D8C86', 'none'),
+    ('Greens', 'ingredient', '#347200', 'none'),      # romaine
+    ('Grains', 'ingredient', '#d9b26a', 'none'),      # derived
+    ('Toppings', 'ingredient', '#ff8c00', 'none'),    # sweet potato
+    ('Cheese', 'ingredient', '#ffd700', 'none'),      # egg yolk
+    ('Crunchies', 'ingredient', '#8a5a2b', 'none'),   # derived
+    ('Premiums', 'ingredient', '#bbca00', 'none'),    # avocado
+    ('Protein', 'ingredient', '#c9007a', 'none'),     # pickled onion
+    ('Dressing', 'ingredient', '#ffa98b', 'none'),    # red wine vini
     ('Finish', 'ingredient', '#db2777', 'none'),
-    ('Packaging', 'ingredient', '#A3A396', 'none'),
+    ('Packaging', 'ingredient', '#a7ad9c', 'none'),   # chart-other
 )
 
 # Design-palette migration map: for a canonical ingredient-category tag,
-# update color ONLY where the user's current color still matches the old
-# auto-seeded value. Customized colors (anything else) are preserved.
+# update color ONLY where the user's current color still matches a
+# known auto-seeded value. Customized colors (anything not in the list)
+# are preserved. We check BOTH the original seed and the Phase-A seed
+# so a user who upgraded through either path lands on the current hex.
 _PALETTE_MIGRATIONS = (
-    # (name, old_hex, new_hex)
-    ('Greens',    '#15803d', '#3E7D3A'),
-    ('Grains',    '#92400e', '#D4A657'),
-    ('Toppings',  '#dc2626', '#D8794A'),
-    ('Cheese',    '#eab308', '#F0CF5B'),
-    ('Crunchies', '#a16207', '#8A5A3B'),
-    ('Premiums',  '#9333ea', '#7A4E92'),
-    ('Protein',   '#be185d', '#B4492F'),
-    ('Dressing',  '#0891b2', '#3D8C86'),
-    ('Packaging', '#475569', '#A3A396'),
+    # (name, old_hexes, new_hex) — old_hexes is a list; comparison is
+    # case-insensitive and only applies when color is in old_hexes.
+    ('Greens',    ['#15803d', '#3E7D3A'], '#347200'),
+    ('Grains',    ['#92400e', '#D4A657'], '#d9b26a'),
+    ('Toppings',  ['#dc2626', '#D8794A'], '#ff8c00'),
+    ('Cheese',    ['#eab308', '#F0CF5B'], '#ffd700'),
+    ('Crunchies', ['#a16207', '#8A5A3B'], '#8a5a2b'),
+    ('Premiums',  ['#9333ea', '#7A4E92'], '#bbca00'),
+    ('Protein',   ['#be185d', '#B4492F'], '#c9007a'),
+    ('Dressing',  ['#0891b2', '#3D8C86'], '#ffa98b'),
+    ('Packaging', ['#475569', '#A3A396'], '#a7ad9c'),
 )
 
 if __name__=="__main__":

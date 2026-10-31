@@ -28,18 +28,18 @@ class RecipeWizardStatusBar(QFrame):
         self.setObjectName('RecipeWizardStatusBar')
         self.setStyleSheet('''
             QFrame#RecipeWizardStatusBar {
-                background: #ECEAE4;
-                border-top: 1px solid #DDDAD2;
+                background: #fffaf2;
+                border-top: 1px solid #ebe1cd;
             }
             QFrame#RecipeWizardStatusBar QLabel {
-                color: #2E3430;
+                color: #55624c;
                 font-size: 12px;
             }
             QFrame#RecipeWizardStatusBar QLabel[role="link"] {
-                color: #FFFFFF;
-                background: #2E5BA8;
+                color: #ffffff;
+                background: #347200;
                 padding: 2px 10px;
-                border-radius: 6px;
+                border-radius: 4px;
                 font-weight: 600;
             }
         ''')

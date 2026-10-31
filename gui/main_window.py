@@ -30,7 +30,7 @@ from gui.tabs.ingredients_tab import IngredientsTab
 from gui.tabs.library_health_tab import LibraryHealthTab
 from gui.tabs.recipes_tab import RecipesTab
 from gui.tabs.suppliers_tab import SuppliersTab
-from gui.widgets.place_rail import PlaceRail
+from gui.widgets.app_header import AppHeader
 from gui.widgets.status_bar import RecipeWizardStatusBar
 
 
@@ -72,14 +72,14 @@ class MainWindow(QMainWindow):
         except (TypeError, ValueError):
             idx = 0
         if 0 <= idx < self.stack.count():
-            self.rail.set_current(idx)
+            self.app_header.set_current(idx)
             self.stack.setCurrentIndex(idx)
 
     def closeEvent(self, event):
         settings = QSettings()
         settings.setValue('mainWindow/geometry', self.saveGeometry())
         settings.setValue('mainWindow/state', self.saveState())
-        settings.setValue('mainWindow/currentPlace', self.rail.current())
+        settings.setValue('mainWindow/currentPlace', self.app_header.current())
         super().closeEvent(event)
 
     def _build_places(self):
@@ -89,55 +89,58 @@ class MainWindow(QMainWindow):
         self.ingredients_model = IngredientsModel(self)
         self.recipes_model = RecipesModel(self)
 
-        self.rail = PlaceRail(self)
+        self.app_header = AppHeader(self)
         self.stack = QStackedWidget()
-        self.rail.placeChanged.connect(self.stack.setCurrentIndex)
+        # Workspace backdrop is the Evergreens `bg` token so places
+        # inherit a consistent warm off-white, not Qt's OS default.
+        self.stack.setAutoFillBackground(True)
+        self.stack.setStyleSheet('QStackedWidget { background: #fffaf2; }')
+        self.app_header.placeChanged.connect(self.stack.setCurrentIndex)
 
         # Recipes = landing place. Promoted from the old Home tab.
-        self.rail.add_place('Recipes', 'recipes')
+        self.app_header.add_place('Recipes')
         self.stack.addWidget(self._recipes_place())
         # Ingredients.
-        self.rail.add_place('Ingredients', 'ingredients')
+        self.app_header.add_place('Ingredients')
         self.stack.addWidget(self._ingredients_place())
-        # Compare (the old Analytics tab — same spreadsheet view, same
-        # category breakdowns; the "tray" scoping comes later).
-        self.rail.add_place('Compare', 'compare')
+        # Compare (the old Analytics tab — same spreadsheet view; the
+        # tray-scoping is Phase C).
+        self.app_header.add_place('Compare')
         self.stack.addWidget(self._compare_place())
         # Suppliers (promoted from a modal to a place).
-        self.rail.add_place('Suppliers', 'suppliers')
+        self.app_header.add_place('Suppliers')
         self.stack.addWidget(self._suppliers_place())
-        # Library Health pinned to the bottom of the rail.
-        self.rail.add_spacer()
-        self.rail.add_place('Health', 'health')
+        # Health is just the fifth tab in the horizontal bar now (the
+        # old left rail pinned it to the bottom; the top bar has no
+        # equivalent position).
+        self.app_header.add_place('Health')
         self.library_health_tab = LibraryHealthTab()
         self.stack.addWidget(self.library_health_tab)
 
-        self.rail.install_shortcuts(self)
+        self.app_header.install_shortcuts(self)
 
         self.status_bar = RecipeWizardStatusBar()
         self.status_bar.compareTrayClicked.connect(
-            lambda: self.rail.set_current(self._PLACES.index('compare'))
+            lambda: self.app_header.set_current(self._PLACES.index('compare'))
         )
 
         central = QWidget()
-        inner = QHBoxLayout()
-        inner.setContentsMargins(0, 0, 0, 0)
-        inner.setSpacing(0)
-        inner.addWidget(self.rail)
-        inner.addWidget(self.stack, stretch=1)
-
         outer = QVBoxLayout(central)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-        outer.addLayout(inner, stretch=1)
+        outer.addWidget(self.app_header)
+        outer.addWidget(self.stack, stretch=1)
         outer.addWidget(self.status_bar)
         self.setCentralWidget(central)
 
-        # Keep the status bar + Library Health in sync with the models.
+        # Keep the status bar + Library Health + header freshness in
+        # sync with the models.
         for m in (self.ingredients_model, self.recipes_model):
             m.modelReset.connect(self.status_bar.refresh)
             m.modelReset.connect(self.library_health_tab.mark_stale)
+            m.modelReset.connect(self._refresh_header_freshness)
         self.status_bar.refresh()
+        self._refresh_header_freshness()
 
         # Ctrl+F focuses whichever place's filter is active.
         find_shortcut = QShortcut(QKeySequence.Find, self)
@@ -148,6 +151,14 @@ class MainWindow(QMainWindow):
         focus = getattr(place, 'focus_filter', None)
         if callable(focus):
             focus()
+
+    def _refresh_header_freshness(self):
+        '''Push the latest supplier-price date to the app bar's right
+        side. Pulled from the same helper the status bar uses so the
+        two never disagree.'''
+        from gui.widgets.status_bar import _latest_price_date
+        d = _latest_price_date()
+        self.app_header.set_freshness(f'Prices as of {d}' if d else '')
 
     def _recipes_place(self):
         new_recipe_btn = QPushButton('+ New Recipe')
