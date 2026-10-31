@@ -15,13 +15,13 @@ _QSS = '''
         font-size: 10pt;
     }
     QPushButton:checked {
-        background: #2a7;
+        background: #347200;
         color: white;
-        border-color: #2a7;
+        border-color: #347200;
     }
     QPushButton:hover:!checked {
-        background: #f5fff5;
-        border-color: #2a7;
+        background: #e9f1d9;
+        border-color: #347200;
     }
 '''
 
