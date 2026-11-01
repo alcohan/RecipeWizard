@@ -107,6 +107,33 @@ def _hex_to_rgba(hex_str, alpha):
 
 _KNOWN_SHAPES = {'ring', 'bowl', 'wrap', 'tray', 'jar', 'box', 'cone', 'plate'}
 
+
+# (center_x, center_y, radius) in canvas-fraction units, per shape.
+# Mirrors the Wedge.dc.html inner-div positions in the design canvas so
+# the wedge sits inside each silhouette the way the design shows it:
+# bowl's belly, wrap's left-of-fold, tray's center, salad's ring center.
+# `None` shape (no silhouette) gets the almost-full-canvas default.
+_WEDGE_RECTS = {
+    'ring':  (0.50, 0.50, 0.37),   # centered in the salad ring
+    'bowl':  (0.50, 0.51, 0.33),   # a touch lower, inside the bowl belly
+    'wrap':  (0.34, 0.50, 0.24),   # LEFT-shifted so the fold is clear
+    'tray':  (0.50, 0.50, 0.31),   # centered inside the tray
+    'jar':   (0.50, 0.50, 0.27),
+    'box':   (0.50, 0.50, 0.36),
+    'cone':  (0.50, 0.42, 0.30),
+    'plate': (0.50, 0.52, 0.34),
+}
+
+
+def _wedge_rect_for_shape(shape, has_silhouette):
+    '''Return (center_x_pct, center_y_pct, radius_pct). When no
+    silhouette is active, the wedge takes almost the full canvas.'''
+    if has_silhouette and shape in _WEDGE_RECTS:
+        return _WEDGE_RECTS[shape]
+    # No silhouette: center + near-full radius, matching the previous
+    # "fill the circle" baseline.
+    return (0.50, 0.50, 0.48)
+
 # Brand inks for silhouettes — per the design, silhouettes are always
 # painted in brand colors regardless of the recipe's tag color:
 # Parmesan fill, Kale stroke. Category color lives in the slices, not
@@ -289,11 +316,15 @@ def _render_uncached(components, size, shape, shape_color):
 
     draw = ImageDraw.Draw(canvas)
 
-    cx, cy = render_size / 2, render_size / 2
-    if has_silhouette:
-        radius = render_size * 0.42  # shrunk so silhouette is visible
-    else:
-        radius = render_size / 2 - 6 * SUPERSAMPLE
+    # Per-shape wedge geometry — the design positions the wedge
+    # DIFFERENTLY for each silhouette (bowl's belly, wrap's left-of-fold,
+    # tray's center, salad's center-ring). A uniform radius makes the
+    # wedge spill out of the bowl and sit oddly inside wrap/tray.
+    # Values are (center_x_pct, center_y_pct, radius_pct) matching the
+    # Wedge.dc.html inner-div positions in the design canvas.
+    cx_pct, cy_pct, radius_pct = _wedge_rect_for_shape(shape, has_silhouette)
+    cx, cy = render_size * cx_pct, render_size * cy_pct
+    radius = render_size * radius_pct
     bbox = (cx - radius, cy - radius, cx + radius, cy + radius)
     diameter = int(bbox[2] - bbox[0])
 

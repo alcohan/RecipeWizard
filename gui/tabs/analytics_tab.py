@@ -15,8 +15,8 @@ from collections import defaultdict
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QAbstractItemView, QComboBox, QFrame, QHBoxLayout, QHeaderView, QLabel,
+    QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 import db
@@ -85,8 +85,16 @@ class AnalyticsTab(QWidget):
         top_row.addSpacing(20)
         top_row.addWidget(self.filter_edit, stretch=1)
 
+        # Tray-scope banner: visible only while the compare tray has
+        # entries. Tells the user why the spreadsheet is narrowed and
+        # gives one click out to the full library.
+        self.tray_banner = _TrayScopeBanner()
+        self.tray_banner.clearClicked.connect(self._on_clear_tray)
+        self.tray_banner.hide()
+
         layout = QVBoxLayout(self)
         layout.addLayout(top_row)
+        layout.addWidget(self.tray_banner)
         layout.addWidget(self.table, stretch=1)
 
         recipes_model.modelReset.connect(self._on_model_reset)
@@ -96,6 +104,22 @@ class AnalyticsTab(QWidget):
         # re-fetch the raw rows — just repivot.
         if self._compare_tray is not None:
             self._compare_tray.changed.connect(self._rebuild_table)
+            self._compare_tray.changed.connect(self._refresh_tray_banner)
+
+    def _refresh_tray_banner(self):
+        if self._compare_tray is None:
+            self.tray_banner.hide()
+            return
+        n = self._compare_tray.count()
+        if n <= 0:
+            self.tray_banner.hide()
+        else:
+            self.tray_banner.set_count(n)
+            self.tray_banner.show()
+
+    def _on_clear_tray(self):
+        if self._compare_tray is not None:
+            self._compare_tray.clear()
 
     # --- lifecycle / lazy build ---
 
@@ -104,6 +128,11 @@ class AnalyticsTab(QWidget):
         if self._stale:
             self.refresh()
             self._stale = False
+        # The tray may have been populated while this place was hidden
+        # (user added recipes from Recipes then switched here); the
+        # banner's visibility didn't update because the setup didn't
+        # know to show it. Reconcile now.
+        self._refresh_tray_banner()
 
     def _on_model_reset(self):
         self._stale = True
@@ -273,3 +302,49 @@ def _is_dark(qcolor):
     against the tag's background.'''
     r, g, b = qcolor.red(), qcolor.green(), qcolor.blue()
     return (0.299 * r + 0.587 * g + 0.114 * b) < 140
+
+
+class _TrayScopeBanner(QFrame):
+    '''Thin band above the spreadsheet that reads "Comparing N selected
+    · Clear scope" when the compare tray is non-empty. Carries one
+    clear button; everything else about tray management lives
+    elsewhere.'''
+
+    clearClicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName('TrayScopeBanner')
+        self.setStyleSheet('''
+            QFrame#TrayScopeBanner {
+                background: #fff1da;
+                border: 1px solid #ebe1cd;
+                border-radius: 8px;
+            }
+            QFrame#TrayScopeBanner QLabel { background: transparent; }
+        ''')
+        self._label = QLabel('')
+        self._label.setStyleSheet('color: #082c00; font-weight: 600;')
+        clear_btn = QPushButton('Clear scope')
+        clear_btn.setCursor(Qt.PointingHandCursor)
+        clear_btn.setStyleSheet('''
+            QPushButton {
+                background: transparent;
+                color: #347200;
+                border: 0;
+                font-weight: 600;
+                padding: 4px 0;
+            }
+            QPushButton:hover { color: #285900; }
+        ''')
+        clear_btn.clicked.connect(self.clearClicked.emit)
+
+        row = QHBoxLayout(self)
+        row.setContentsMargins(14, 8, 14, 8)
+        row.addWidget(self._label)
+        row.addStretch()
+        row.addWidget(clear_btn)
+
+    def set_count(self, n):
+        word = 'recipe' if n == 1 else 'recipes'
+        self._label.setText(f'Comparing {n} selected {word} · showing only the tray')

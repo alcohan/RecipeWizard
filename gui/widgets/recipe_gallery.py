@@ -7,7 +7,7 @@ via QThreadPool so cold-open stays responsive; cards reveal only when
 their wedge finishes to avoid a sea of placeholders flicker-swapping
 into the final art.
 '''
-from PySide6.QtCore import Qt, QThreadPool, Signal
+from PySide6.QtCore import Qt, QThreadPool, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QFrame, QGridLayout, QLabel, QScrollArea, QVBoxLayout, QWidget,
 )
@@ -81,16 +81,33 @@ class RecipeCard(QFrame):
         layout.addWidget(name_label)
 
         # Compare-tray checkbox at top-left (matches the design's
-        # Library mockup). Positioned as a child of self so it floats
-        # above the layout rather than taking a row of its own.
+        # Library mockup). Floats over the wedge rather than taking a
+        # layout row. Transparent background with a small drop shadow
+        # so the native indicator reads cleanly on both pale and
+        # colorful wedge backgrounds — a boxed white container reads
+        # as a dropped placeholder instead of a toggle.
         if self._compare_tray is not None:
             self.tray_check = QCheckBox(self)
-            self.tray_check.setToolTip('Add to compare tray')
+            self.tray_check.setToolTip('Add to compare')
             self.tray_check.setCursor(Qt.PointingHandCursor)
-            self.tray_check.setStyleSheet(
-                'QCheckBox { background: white; border-radius: 3px; }'
-                ' QCheckBox::indicator { width: 16px; height: 16px; }'
-            )
+            self.tray_check.setStyleSheet('''
+                QCheckBox { background: transparent; padding: 0; }
+                QCheckBox::indicator {
+                    width: 16px; height: 16px;
+                    border: 1.5px solid #082c00;
+                    border-radius: 3px;
+                    background: #ffffff;
+                }
+                QCheckBox::indicator:hover {
+                    border-color: #347200;
+                }
+                QCheckBox::indicator:checked {
+                    background: #347200;
+                    border-color: #347200;
+                    image: none;
+                }
+            ''')
+            self.tray_check.setFixedSize(20, 20)
             self.tray_check.move(10, 10)
             self.tray_check.setChecked(self._compare_tray.contains(recipe_id))
             self.tray_check.toggled.connect(self._on_tray_toggled)
@@ -198,6 +215,20 @@ class RecipeGallery(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._sync_columns()
+
+    def showEvent(self, event):
+        '''Recompute columns on every show. Deferred to the next event-
+        loop tick because showEvent fires BEFORE the scroll viewport
+        has settled to its final width for a widget deep in a
+        QStackedWidget — a synchronous _sync_columns here reads a
+        stale width and locks in a too-low column count, which is what
+        made the gallery initially open with 2 columns until the first
+        manual resize.'''
+        super().showEvent(event)
+        QTimer.singleShot(0, self._sync_columns)
+
+    def _sync_columns(self):
         new_cols = self._columns_for_width(self.scroll.viewport().width())
         if new_cols != self._current_columns:
             self._current_columns = new_cols

@@ -6,7 +6,7 @@ wedge-rendering threadpool), and context menu actions matching the
 table view so right-click "Edit / Delete" works the same way regardless
 of which view the user has chosen.
 '''
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QMenu, QScrollArea, QVBoxLayout, QWidget,
 )
@@ -74,7 +74,10 @@ class IngredientGallery(QWidget):
         if self._stale:
             self.refresh()
             self._stale = False
-        self._sync_columns()
+        # Defer so layout settles before we measure the viewport —
+        # otherwise a widget deep in a QStackedWidget reads a stale
+        # width on first show and locks in a too-low column count.
+        QTimer.singleShot(0, self._sync_columns)
 
     def _on_model_reset(self):
         '''Mark stale, but only do the expensive rebuild if we're
