@@ -31,6 +31,7 @@ from gui.tabs.recipes_tab import RecipesTab
 from gui.tabs.suppliers_tab import SuppliersTab
 from gui.services.compare_tray import CompareTray
 from gui.widgets.app_header import AppHeader
+from gui.widgets.command_palette import CommandPalette
 from gui.widgets.status_bar import RecipeWizardStatusBar
 
 
@@ -158,12 +159,70 @@ class MainWindow(QMainWindow):
         # Ctrl+F focuses whichever place's filter is active.
         find_shortcut = QShortcut(QKeySequence.Find, self)
         find_shortcut.activated.connect(self._focus_active_filter)
+        # ⌘K opens the "go to anything" command palette.
+        palette_shortcut = QShortcut(QKeySequence('Ctrl+K'), self)
+        palette_shortcut.activated.connect(self._on_command_palette)
 
     def _focus_active_filter(self):
         place = self.stack.currentWidget()
         focus = getattr(place, 'focus_filter', None)
         if callable(focus):
             focus()
+
+    def _on_command_palette(self):
+        '''⌘K entry point. Builds a fresh index each time — recipe /
+        ingredient lists change often enough that caching would need
+        invalidation anyway.'''
+        recipes = [(r['Id'], r['Name']) for r in db.recipe_info()]
+        ingredients = [(i['Id'], i['Name']) for i in db.get_ingredients()]
+        commands = [
+            ('new-recipe', 'New Recipe'),
+            ('new-ingredient-usda', 'New Ingredient (USDA Search)'),
+            ('new-ingredient-blank', 'New Ingredient (Blank)'),
+            ('preferences', 'Open Preferences…'),
+            ('backup', 'Backup Database…'),
+            ('restore', 'Restore Database…'),
+            ('open-data-folder', 'Open Data Folder'),
+            ('reset-sample', 'Reset With Sample Data…'),
+            ('place-recipes', 'Go to Recipes'),
+            ('place-ingredients', 'Go to Ingredients'),
+            ('place-compare', 'Go to Compare'),
+            ('place-suppliers', 'Go to Suppliers'),
+            ('place-health', 'Go to Health'),
+            ('about', 'About RecipeWizard'),
+        ]
+        self._command_handlers = {
+            'new-recipe': self._on_new_recipe,
+            'new-ingredient-usda': self._on_new_ingredient_search,
+            'new-ingredient-blank': self._on_new_ingredient_blank,
+            'preferences': self._on_preferences,
+            'backup': self._on_backup_database,
+            'restore': self._on_restore_database,
+            'open-data-folder': self._on_open_data_folder,
+            'reset-sample': self._on_reset_sample,
+            'place-recipes': lambda: self.app_header.set_current(self._PLACES.index('recipes')),
+            'place-ingredients': lambda: self.app_header.set_current(self._PLACES.index('ingredients')),
+            'place-compare': lambda: self.app_header.set_current(self._PLACES.index('compare')),
+            'place-suppliers': lambda: self.app_header.set_current(self._PLACES.index('suppliers')),
+            'place-health': lambda: self.app_header.set_current(self._PLACES.index('health')),
+            'about': self._on_about,
+        }
+        palette = CommandPalette(recipes, ingredients, commands, parent=self)
+        palette.recipeChosen.connect(self._on_recipe_edit_by_id)
+        palette.ingredientChosen.connect(self._on_ingredient_edit_by_id)
+        palette.commandChosen.connect(self._on_command_chosen)
+        palette.exec()
+
+    def _on_command_chosen(self, key):
+        handler = self._command_handlers.get(key)
+        if handler:
+            handler()
+
+    def _on_ingredient_edit_by_id(self, ing_id):
+        dlg = IngredientEditDialog(ing_id, parent=self)
+        dlg.exec()
+        if dlg.modified:
+            self.refresh()
 
     def _refresh_header_freshness(self):
         '''Push the latest supplier-price date to the app bar's right
