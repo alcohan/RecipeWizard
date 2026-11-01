@@ -108,156 +108,66 @@ def _hex_to_rgba(hex_str, alpha):
 _KNOWN_SHAPES = {'ring', 'bowl', 'wrap', 'tray', 'jar', 'box', 'cone', 'plate'}
 
 
-# (center_x, center_y, radius) in canvas-fraction units, per shape.
-# Mirrors the Wedge.dc.html inner-div positions in the design canvas so
-# the wedge sits inside each silhouette the way the design shows it:
-# bowl's belly, wrap's left-of-fold, tray's center, salad's ring center.
-# `None` shape (no silhouette) gets the almost-full-canvas default.
-_WEDGE_RECTS = {
-    'ring':  (0.50, 0.50, 0.37),   # centered in the salad ring
-    'bowl':  (0.50, 0.51, 0.33),   # a touch lower, inside the bowl belly
-    'wrap':  (0.34, 0.50, 0.24),   # LEFT-shifted so the fold is clear
-    'tray':  (0.50, 0.50, 0.31),   # centered inside the tray
-    'jar':   (0.50, 0.50, 0.27),
-    'box':   (0.50, 0.50, 0.36),
-    'cone':  (0.50, 0.42, 0.30),
-    'plate': (0.50, 0.52, 0.34),
-}
-
-
-def _wedge_rect_for_shape(shape, has_silhouette):
-    '''Return (center_x_pct, center_y_pct, radius_pct). When no
-    silhouette is active, the wedge takes almost the full canvas.'''
-    if has_silhouette and shape in _WEDGE_RECTS:
-        return _WEDGE_RECTS[shape]
-    # No silhouette: center + near-full radius, matching the previous
-    # "fill the circle" baseline.
-    return (0.50, 0.50, 0.48)
-
-# Brand inks for silhouettes — per the design, silhouettes are always
-# painted in brand colors regardless of the recipe's tag color:
-# Parmesan fill, Kale stroke. Category color lives in the slices, not
-# the format cue, so the format reads as "the shape" rather than
-# "the shape in some color".
-_SILHOUETTE_FILL = (255, 241, 218, 255)   # #fff1da parmesan
-_SILHOUETTE_STROKE = (8, 44, 0, 255)      # #082c00 kale
-
-
-def _paint_silhouette(canvas, shape, _color_hex_ignored, render_size):
+def _paint_silhouette(canvas, shape, color_hex, render_size):
     '''Draw the format silhouette into `canvas` before the wedge is rendered
     on top. Unknown shapes are a no-op so user-added recipe tags with
     shape='none' (or anything unrecognized) render the bare wedge.
 
-    `color_hex` is accepted for backward compatibility with earlier
-    callers but ignored — silhouettes are always brand-painted now.'''
+    Painted as a half-transparent fill of the recipe's tag color — the
+    silhouette reads as "the shape, in the format's color", with the
+    wedge sitting on top. Simpler than a stroked line-art treatment
+    and the direction the design is being updated toward.'''
     if shape not in _KNOWN_SHAPES:
         return
     draw = ImageDraw.Draw(canvas)
-    fill = _SILHOUETTE_FILL
-    stroke = _SILHOUETTE_STROKE
-    stroke_w = max(2, render_size // 60)   # ~1.4 at 100-unit viewBox
+    fill = _hex_to_rgba(color_hex, alpha=140)
     sz = render_size
 
     if shape == 'ring':
-        # Thin outer ring stroked in Kale — the design's Salad silhouette.
+        # Pastel ring just outside the wedge — uses the wedge bbox extended
+        # outward; the wedge will paint on top of the inside, leaving a
+        # thin colored frame visible.
         margin = sz * 0.01
-        draw.ellipse(
-            (margin, margin, sz - margin, sz - margin),
-            fill=fill, outline=stroke, width=stroke_w,
-        )
-        # Inner ring hint, half-weight stroke.
-        inset = sz * 0.09
-        draw.ellipse(
-            (inset, inset, sz - inset, sz - inset),
-            outline=stroke, width=max(1, stroke_w // 2),
-        )
+        draw.ellipse((margin, margin, sz - margin, sz - margin), fill=fill)
     elif shape == 'bowl':
-        # Full bowl: a wide "D" with a tiny foot. The upper rim is a
-        # straight line, the lower bowl is a semicircle. Painted with
-        # fill + kale stroke to match the design.
-        rim_y = sz * 0.44
-        foot_y = sz * 0.91
-        foot_half_w = sz * 0.11
-        foot_h = sz * 0.06
-        bowl_bbox = (sz * 0.03, rim_y - sz * 0.01, sz * 0.97, foot_y)
-        draw.pieslice(bowl_bbox, start=0, end=180, fill=fill, outline=stroke,
-                      width=stroke_w)
-        # The pieslice draws a chord — add the straight rim line explicitly
-        # over any gap and the little base.
-        draw.line((sz * 0.03, rim_y, sz * 0.97, rim_y), fill=stroke,
-                  width=stroke_w)
-        # Little trapezoid base below.
-        draw.polygon(
-            [(sz / 2 - foot_half_w, foot_y),
-             (sz / 2 + foot_half_w, foot_y),
-             (sz / 2 + foot_half_w * 0.6, foot_y + foot_h),
-             (sz / 2 - foot_half_w * 0.6, foot_y + foot_h)],
-            fill=fill, outline=stroke,
-        )
+        # Bottom half of a true circle — bowl seen from the front. The
+        # circle is wider than the wedge so the rim curves visibly out to
+        # the sides and below.
+        diameter = sz * 1.20
+        cx = sz / 2
+        cy = sz * 0.55
+        bbox = (cx - diameter / 2, cy - diameter / 2,
+                cx + diameter / 2, cy + diameter / 2)
+        draw.pieslice(bbox, start=0, end=180, fill=fill)
     elif shape == 'wrap':
-        # New Wrap silhouette (design-updated): a horizontal rounded
-        # rectangle in a lighter cream, with a vertical fold curve on
-        # the right and a small center highlight circle. Reads clearly
-        # as a wrapped tortilla without needing rotation.
-        rect_w = sz * 0.96
-        rect_h = sz * 0.56
-        corner_r = rect_h * 0.25
-        x0 = (sz - rect_w) / 2
-        y0 = (sz - rect_h) / 2
-        wrap_fill = (251, 230, 196, 255)   # #fbe6c4 — one step warmer than parmesan
-        draw.rounded_rectangle(
+        # Rounded rectangle tilted at an angle — reads as a wrap held
+        # diagonally. Drawn on an oversized transparent layer so the
+        # rotation doesn't crop the corners; the layer is cropped back to
+        # the canvas size before compositing.
+        rect_w = sz * 1.15
+        rect_h = sz * 0.48
+        corner_r = rect_h * 0.22
+        angle_deg = 22
+        pad = int(sz * 0.30)
+        big = sz + 2 * pad
+        layer = Image.new('RGBA', (big, big), (0, 0, 0, 0))
+        layer_draw = ImageDraw.Draw(layer)
+        x0 = (big - rect_w) / 2
+        y0 = (big - rect_h) / 2
+        layer_draw.rounded_rectangle(
             (x0, y0, x0 + rect_w, y0 + rect_h),
-            radius=corner_r, fill=wrap_fill, outline=stroke, width=stroke_w,
+            radius=corner_r, fill=fill,
         )
-        # Fold curve on the right third — gently bowed vertical line.
-        # Approximate the SVG quadratic Q with a few interpolated points.
-        import math
-        fold_x_start = x0 + rect_w * 0.83
-        fold_x_mid = x0 + rect_w * 0.73
-        fold_x_end = x0 + rect_w * 0.83
-        pts = []
-        for t_pct in range(0, 101, 5):
-            t = t_pct / 100
-            # Quadratic Bezier between (fold_x_start, y_top), control
-            # (fold_x_mid, y_mid), end (fold_x_end, y_bot).
-            x = (1 - t) ** 2 * fold_x_start + 2 * (1 - t) * t * fold_x_mid + t ** 2 * fold_x_end
-            y = (1 - t) ** 2 * y0 + 2 * (1 - t) * t * (y0 + rect_h / 2) + t ** 2 * (y0 + rect_h)
-            pts.append((x, y))
-        for a, b in zip(pts, pts[1:]):
-            draw.line([a, b], fill=stroke, width=max(1, stroke_w - 1))
-        # Center circle — the design shows a small circle at the fold
-        # midpoint for visual rhythm.
-        cx = x0 + rect_w * 0.71
-        cy = y0 + rect_h / 2
-        r = rect_h * 0.10
-        draw.ellipse((cx - r, cy - r, cx + r, cy + r),
-                     fill=fill, outline=stroke, width=stroke_w)
+        layer = layer.rotate(angle_deg, resample=Image.BICUBIC)
+        layer = layer.crop((pad, pad, pad + sz, pad + sz))
+        canvas.alpha_composite(layer)
     elif shape == 'tray':
-        # Rounded-square tray with little side-handle nubs sticking out
-        # on the left and right, matching the design's Catering shape.
-        margin = sz * 0.05
+        # Rounded-square tray — square corners stick out behind the wedge's
+        # circular outline.
+        margin = sz * 0.015
         draw.rounded_rectangle(
-            (margin, sz * 0.10, sz - margin, sz * 0.90),
-            radius=sz * 0.07, fill=fill, outline=stroke, width=stroke_w,
-        )
-        # Inner rectangle hint — thinner stroke.
-        inset = sz * 0.10
-        draw.rounded_rectangle(
-            (inset, sz * 0.15, sz - inset, sz * 0.85),
-            radius=sz * 0.04, outline=stroke, width=max(1, stroke_w // 2),
-        )
-        # Side handles.
-        handle_h = sz * 0.20
-        handle_w = sz * 0.035
-        handle_y0 = sz * 0.40
-        handle_y1 = handle_y0 + handle_h
-        draw.rectangle(
-            (margin - handle_w - 2, handle_y0, margin, handle_y1),
-            fill=fill, outline=stroke, width=max(1, stroke_w - 1),
-        )
-        draw.rectangle(
-            (sz - margin, handle_y0, sz - margin + handle_w + 2, handle_y1),
-            fill=fill, outline=stroke, width=max(1, stroke_w - 1),
+            (margin, margin, sz - margin, sz - margin),
+            radius=sz * 0.07, fill=fill,
         )
     elif shape == 'jar':
         # Tall narrow rounded rectangle — reads as a catering jar / mason
@@ -316,15 +226,11 @@ def _render_uncached(components, size, shape, shape_color):
 
     draw = ImageDraw.Draw(canvas)
 
-    # Per-shape wedge geometry — the design positions the wedge
-    # DIFFERENTLY for each silhouette (bowl's belly, wrap's left-of-fold,
-    # tray's center, salad's center-ring). A uniform radius makes the
-    # wedge spill out of the bowl and sit oddly inside wrap/tray.
-    # Values are (center_x_pct, center_y_pct, radius_pct) matching the
-    # Wedge.dc.html inner-div positions in the design canvas.
-    cx_pct, cy_pct, radius_pct = _wedge_rect_for_shape(shape, has_silhouette)
-    cx, cy = render_size * cx_pct, render_size * cy_pct
-    radius = render_size * radius_pct
+    cx, cy = render_size / 2, render_size / 2
+    if has_silhouette:
+        radius = render_size * 0.42  # shrunk so silhouette is visible
+    else:
+        radius = render_size / 2 - 6 * SUPERSAMPLE
     bbox = (cx - radius, cy - radius, cx + radius, cy + radius)
     diameter = int(bbox[2] - bbox[0])
 
