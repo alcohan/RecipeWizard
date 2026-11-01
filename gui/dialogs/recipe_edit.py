@@ -86,6 +86,12 @@ class RecipeEditWidget(QWidget):
 
         self.undo_stack = QUndoStack(self)
         self.undo_stack.indexChanged.connect(self._refresh)
+        # Dirty-flag tracking lives on the undo stack rather than inside
+        # _refresh — _refresh also runs on construction, when the widget
+        # isn't modified yet. cleanChanged(False) fires on the first
+        # push; cleanChanged(True) fires again if an undo returns to
+        # the saved baseline.
+        self.undo_stack.cleanChanged.connect(self._on_clean_changed)
 
         # Bring the recipe in line with its current format's template
         # before reading anything else — fixes sample-seeded recipes
@@ -161,16 +167,32 @@ class RecipeEditWidget(QWidget):
         edit, stamps the cost snapshot, saves the splitter state.
         Returns True to allow the close; there's no "unsaved prompt"
         today because every edit auto-commits.'''
+        if self._being_deleted:
+            # Row's gone — skip _maybe_commit_info (it would push a
+            # bogus UpdateRecipeInfoCommand against the vanished id)
+            # and skip the snapshot stamp.
+            QSettings().setValue('recipeEditor/splitter', self.splitter.saveState())
+            return True
         self._maybe_commit_info()
-        if not self._being_deleted:
-            try:
-                db.update_recipe_cost_snapshot(self.recipe_id)
-            except Exception:
-                # A failure here is a UX nicety, not correctness —
-                # swallow so a flaky DB doesn't block closing.
-                pass
+        try:
+            db.update_recipe_cost_snapshot(self.recipe_id)
+        except Exception:
+            # A failure here is a UX nicety, not correctness —
+            # swallow so a flaky DB doesn't block closing.
+            pass
         QSettings().setValue('recipeEditor/splitter', self.splitter.saveState())
         return True
+
+    def mark_deleted(self):
+        '''Called by the container when the recipe was deleted from
+        outside this widget (e.g. the library's row context menu).
+        Suppresses further DB reads from _refresh and the stale-id
+        UPDATE paths in close_requested, so the container can safely
+        tear the tab down.'''
+        self._being_deleted = True
+        # Any undo-stack entries now point at a gone row; drop them so
+        # a stray Ctrl+Z before deleteLater() doesn't UPDATE nothing.
+        self.undo_stack.clear()
 
     # --- layout builders -----------------------------------------------
 
@@ -322,11 +344,13 @@ class RecipeEditWidget(QWidget):
 
     def _refresh(self):
         '''Re-read recipe state from DB and update every dependent view.
-        Fires on every QUndoStack.indexChanged plus on widget construction.'''
-        was_modified = self.modified
-        self.modified = True
-        if not was_modified:
-            self.modifiedChanged.emit(True)
+        Fires on every QUndoStack.indexChanged plus on widget construction.
+        Dirty-flag tracking is NOT done here (see _on_clean_changed);
+        construction fires _refresh too, and the widget isn't modified then.'''
+        if self._being_deleted:
+            # The recipe row is gone; don't re-read it. Any undo-stack
+            # tick that lands here after mark_deleted() is a no-op.
+            return
         recipe = db.recipe_info(self.recipe_id)
         self._recipe_snapshot = self._snapshot(recipe)
 
@@ -397,6 +421,16 @@ class RecipeEditWidget(QWidget):
             self.titleChanged.emit(self._title)
 
     # --- handlers ------------------------------------------------------
+
+    def _on_clean_changed(self, is_clean):
+        '''undo_stack.cleanChanged — flips when the stack is either
+        pushed-off or undone-back-to the clean baseline. Mirror to
+        self.modified so the container can wire a dirty-dot off this
+        signal without seeing a false positive on construction.'''
+        was_modified = self.modified
+        self.modified = not is_clean
+        if self.modified != was_modified:
+            self.modifiedChanged.emit(self.modified)
 
     def _maybe_commit_info(self):
         '''Auto-save the recipe demographic fields. Wired to each input's
