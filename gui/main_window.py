@@ -20,7 +20,6 @@ from gui.dialogs.ingredient_create_from_usda import IngredientCreateFromUsdaDial
 from gui.dialogs.ingredient_edit import IngredientEditDialog
 from gui.dialogs.preferences import PreferencesDialog
 from gui.dialogs.recipe_create import RecipeCreateDialog
-from gui.dialogs.recipe_edit import RecipeEditDialog
 from gui.dialogs.tags_manager import IngredientTagsDialog
 from gui.dialogs.template_editor import TemplatesManagerDialog
 from gui.models.ingredients_model import IngredientsModel
@@ -81,6 +80,10 @@ class MainWindow(QMainWindow):
         settings.setValue('mainWindow/geometry', self.saveGeometry())
         settings.setValue('mainWindow/state', self.saveState())
         settings.setValue('mainWindow/currentPlace', self.app_header.current())
+        # Flush open editor tabs so each one stamps its cost snapshot
+        # and saves splitter state before the app goes away.
+        if hasattr(self, 'recipes_tab'):
+            self.recipes_tab.close_all_tabs()
         super().closeEvent(event)
 
     def _build_places(self):
@@ -185,7 +188,11 @@ class MainWindow(QMainWindow):
             action_buttons=[new_recipe_btn, new_ing_btn],
             compare_tray=self.compare_tray,
         )
-        tab.rowActivated.connect(self._on_recipe_edit)
+        # RecipesTab now opens activated rows in its own editor tabs;
+        # we don't need to spawn a modal dialog in response. We DO
+        # want to refresh models when a recipe is deleted from a tab.
+        tab.recipeDeletedFromTabs.connect(lambda _rid: self.refresh())
+        self.recipes_tab = tab
         return tab
 
     def _on_toggle_tray_for_row(self, src_row):
@@ -324,14 +331,12 @@ class MainWindow(QMainWindow):
         self._on_recipe_edit_by_id(self.recipes_model.id_at_row(src_row))
 
     def _on_recipe_edit_by_id(self, recipe_id):
-        '''Open the recipe edit dialog by recipe id (not row). Lets the home
-        tab gallery dispatch directly without round-tripping through a model
-        row index.'''
-        dlg = RecipeEditDialog(recipe_id, parent=self)
-        dlg.exec()
-        if dlg.modified:
-            self.refresh()
-        self._flash_status(dlg.status_message)
+        '''Open a recipe for editing. Switches to the Recipes place and
+        opens the recipe in a new (or existing) editor tab. Non-modal:
+        the user can switch places, open other recipes, etc. while
+        this one stays open.'''
+        self.app_header.set_current(self._PLACES.index('recipes'))
+        self.recipes_tab.open_in_editor(recipe_id)
 
     def _on_recipe_delete(self, src_row):
         row = self.recipes_model.row_dict(src_row)
@@ -352,10 +357,10 @@ class MainWindow(QMainWindow):
         create_dlg = RecipeCreateDialog(parent=self)
         if create_dlg.exec() != QDialog.Accepted or not create_dlg.new_id:
             return
-        edit_dlg = RecipeEditDialog(create_dlg.new_id, parent=self)
-        edit_dlg.exec()
+        # Pick up the new row in the recipes model, then open it in a
+        # new editor tab (non-modal — user can keep working elsewhere).
         self.refresh()
-        self._flash_status(edit_dlg.status_message or create_dlg.status_message)
+        self._on_recipe_edit_by_id(create_dlg.new_id)
 
     # --- functional handlers wired to existing business layer ---
 
