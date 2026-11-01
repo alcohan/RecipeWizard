@@ -1,26 +1,31 @@
-'''Recipe edit dialog with QUndoStack-backed editing.
+'''Recipe editor — widget + thin modal-dialog wrapper.
 
-All mutations (rename, yield change, add/remove/change-qty of components,
-tag toggles) are pushed through the dialog's QUndoStack so they can be
-reversed with Ctrl+Z. QUndoStack.indexChanged drives the refresh that
-re-reads RecipesWithNutrition, redraws the wedge, and re-syncs the
-editable demographic fields.
+RecipeEditWidget is an embeddable QWidget with the full editor UX
+(QUndoStack-backed demographic + component edits, format tag selector,
+wedge preview, nutrition rollup, allergens). It's hosted inline inside
+the Recipes workspace as a document tab in the normal flow.
+
+RecipeEditDialog is a thin QDialog that wraps the widget for callers
+that still want modal behavior (currently the Ingredient editor's
+"Used in recipes" link, which opens a recipe from inside its own
+modal context — tabs wouldn't help).
+
+All mutations push through self.undo_stack so Ctrl+Z reverses them.
+QUndoStack.indexChanged drives the refresh that re-reads
+RecipesWithNutrition, redraws the wedge, and re-syncs the editable
+demographic fields.
 
 UX notes:
-- Name / Yield Unit / Recipe Yield auto-save on focus-out or Enter; there
-  is no explicit "Update" button. Each commit is its own undo step.
-- Component quantities are edited inline in the table (double-click or
-  right-click → Edit). No more component-edit popup.
-- Right-click on a component also exposes Remove, which confirms then
-  pushes RemoveComponentCommand.
-
-Layout: two columns separated by a QSplitter.
-  Left:    demographic, tag grid, components table, action row
-  Right:   wedge preview, then read-only info / nutrition / contains'''
-from PySide6.QtCore import Qt, QSettings
+- Name / Yield Unit / Recipe Yield / Menu Price auto-save on
+  focus-out or Enter; there is no explicit "Update" button.
+- Component quantities are edited inline (double-click, or right-click
+  Edit).
+- Right-click a component also exposes Remove.
+'''
+from PySide6.QtCore import Qt, QSettings, Signal
 from PySide6.QtGui import QDoubleValidator, QKeySequence, QUndoStack
 from PySide6.QtWidgets import (
-    QAbstractItemView, QDialog, QDialogButtonBox, QFormLayout, QGroupBox,
+    QAbstractItemView, QDialog, QFormLayout, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton,
     QSplitter, QStyledItemDelegate, QTableView, QVBoxLayout, QWidget,
 )
@@ -61,26 +66,37 @@ class _QuantityDelegate(QStyledItemDelegate):
         return editor
 
 
-class RecipeEditDialog(QDialog):
+class RecipeEditWidget(QWidget):
+    '''Embeddable recipe editor. The container (EditorTabs or
+    RecipeEditDialog) owns window chrome and the close flow; this
+    widget emits signals for the title / modified state / delete and
+    exposes close_requested() so the container can flush pending edits
+    and stamp the cost snapshot before tearing down.'''
+
+    titleChanged = Signal(str)       # recipe's current name — tab/window title
+    recipeDeleted = Signal(int)      # recipe_id, fired after confirm + DB delete
+    modifiedChanged = Signal(bool)   # true once any undo-stack push has fired
+
     def __init__(self, recipe_id, parent=None):
         super().__init__(parent)
         self.recipe_id = recipe_id
         self.modified = False
         self.status_message = ''
+        self._being_deleted = False
 
         self.undo_stack = QUndoStack(self)
         self.undo_stack.indexChanged.connect(self._refresh)
 
         # Bring the recipe in line with its current format's template
-        # before reading anything else — fixes sample-seeded recipes that
-        # were tagged but missed some template items, and recipes whose
-        # template was edited after they were tagged. Silent / not on the
-        # undo stack: this reconciles latent data drift, not a user action.
+        # before reading anything else — fixes sample-seeded recipes
+        # that were tagged but missed some template items, and recipes
+        # whose template was edited after they were tagged. Silent /
+        # not on the undo stack: this reconciles latent data drift,
+        # not a user action.
         db.reconcile_recipe_template(recipe_id)
 
         recipe = db.recipe_info(recipe_id)
-        self.setWindowTitle(f"{config.APPNAME} | {recipe['Name']}")
-        self.resize(1200, 760)
+        self._title = recipe['Name']
 
         self._recipe_snapshot = self._snapshot(recipe)
         self.components_model = RecipeComponentsModel(recipe_id)
@@ -91,22 +107,30 @@ class RecipeEditDialog(QDialog):
         right_col = self._build_summary(recipe)
 
         # Undo/Redo actions — keyboard shortcuts only, no toolbar buttons.
+        # Scoped to the widget so a container with multiple tabs still
+        # only sees the active tab's undo stack.
         undo_action = self.undo_stack.createUndoAction(self, 'Undo')
         undo_action.setShortcut(QKeySequence.Undo)
+        undo_action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
         redo_action = self.undo_stack.createRedoAction(self, 'Redo')
         redo_action.setShortcut(QKeySequence.Redo)
+        redo_action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
         self.addAction(undo_action)
         self.addAction(redo_action)
 
-        button_box = QDialogButtonBox()
-        delete_btn = button_box.addButton('Delete Recipe', QDialogButtonBox.DestructiveRole)
-        delete_btn.setStyleSheet('background-color: #c0392b; color: white; padding: 4px 10px;')
-        close_btn = button_box.addButton('Close', QDialogButtonBox.RejectRole)
+        delete_btn = QPushButton('Delete Recipe')
+        delete_btn.setStyleSheet(
+            'QPushButton { background-color: #b80700; color: white;'
+            ' border: 0; border-radius: 6px; padding: 6px 12px;'
+            ' font-weight: 600; }'
+            ' QPushButton:hover { background-color: #a00600; }'
+        )
+        delete_btn.setAutoDefault(False)
+        delete_btn.setDefault(False)
         delete_btn.clicked.connect(self._on_delete)
-        close_btn.clicked.connect(self.reject)
-        for btn in button_box.buttons():
-            btn.setAutoDefault(False)
-            btn.setDefault(False)
+        action_row = QHBoxLayout()
+        action_row.addStretch()
+        action_row.addWidget(delete_btn)
 
         self.splitter = QSplitter(Qt.Horizontal)
         self.splitter.addWidget(left_col)
@@ -116,36 +140,39 @@ class RecipeEditDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.splitter, stretch=1)
-        layout.addWidget(button_box)
+        layout.addLayout(action_row)
 
-        # Restore splitter ratios from the previous session if we have them.
-        settings = QSettings()
-        state = settings.value('recipeEditDialog/splitter')
+        # Restore splitter ratios from the previous session if we have
+        # them. Written back from close_requested() below.
+        state = QSettings().value('recipeEditor/splitter')
         if state is not None:
             self.splitter.restoreState(state)
 
         self._refresh()
 
-    def done(self, result):
-        # Flush any pending demographic edit before the dialog closes
-        # (editingFinished doesn't fire on the focused widget when the
-        # dialog goes away via the Close button).
+    # --- container-facing API ------------------------------------------
+
+    def title(self):
+        return self._title
+
+    def close_requested(self):
+        '''Called by the container (tab bar or modal wrapper) when this
+        widget is about to go away. Flushes any pending demographic
+        edit, stamps the cost snapshot, saves the splitter state.
+        Returns True to allow the close; there's no "unsaved prompt"
+        today because every edit auto-commits.'''
         self._maybe_commit_info()
-        # Stamp the "last cost you saw" snapshot so the Prices-changed
-        # badge disappears for this recipe until supplier prices move.
-        # Skipped on destructive-close (reject-from-delete) since the
-        # recipe may no longer exist.
-        if not getattr(self, '_being_deleted', False):
+        if not self._being_deleted:
             try:
                 db.update_recipe_cost_snapshot(self.recipe_id)
             except Exception:
                 # A failure here is a UX nicety, not correctness —
-                # swallow so a flaky DB doesn't block closing the dialog.
+                # swallow so a flaky DB doesn't block closing.
                 pass
-        QSettings().setValue('recipeEditDialog/splitter', self.splitter.saveState())
-        super().done(result)
+        QSettings().setValue('recipeEditor/splitter', self.splitter.saveState())
+        return True
 
-    # --- layout builders ---
+    # --- layout builders -----------------------------------------------
 
     def _build_left(self, recipe):
         # Demographic — fields auto-save on focus-out / Enter, no Update button.
@@ -285,7 +312,7 @@ class RecipeEditDialog(QDialog):
         layout.addStretch()
         return wrap
 
-    # --- helpers ---
+    # --- helpers -------------------------------------------------------
 
     def _snapshot(self, recipe):
         return (
@@ -295,8 +322,11 @@ class RecipeEditDialog(QDialog):
 
     def _refresh(self):
         '''Re-read recipe state from DB and update every dependent view.
-        Fires on every QUndoStack.indexChanged plus on dialog construction.'''
+        Fires on every QUndoStack.indexChanged plus on widget construction.'''
+        was_modified = self.modified
         self.modified = True
+        if not was_modified:
+            self.modifiedChanged.emit(True)
         recipe = db.recipe_info(self.recipe_id)
         self._recipe_snapshot = self._snapshot(recipe)
 
@@ -317,9 +347,7 @@ class RecipeEditDialog(QDialog):
             insert_at = 2 if len(strip_parts) >= 2 else len(strip_parts)
             strip_parts.insert(insert_at, food_cost_html)
         # "Prices changed" chip: live cost drifted away from the snapshot
-        # the user last confirmed by closing the dialog. Appears to the
-        # right of Food cost so a glance shows "costs me this much / X of
-        # Y / up Z since I last looked".
+        # the user last confirmed by closing the editor.
         prices_changed_html = _prices_changed_html(
             recipe.get('CostRaw'), recipe.get('CostSnapshot'),
         )
@@ -364,14 +392,16 @@ class RecipeEditDialog(QDialog):
         # Template items panel reflects the now-current format.
         self.template_panel.refresh()
 
-        self.setWindowTitle(f"{config.APPNAME} | {recipe['Name']}")
+        if recipe['Name'] != self._title:
+            self._title = recipe['Name']
+            self.titleChanged.emit(self._title)
 
-    # --- handlers ---
+    # --- handlers ------------------------------------------------------
 
     def _maybe_commit_info(self):
         '''Auto-save the recipe demographic fields. Wired to each input's
-        editingFinished signal and called explicitly from done() so a Close
-        click doesn't lose an in-flight edit.'''
+        editingFinished signal and called explicitly from close_requested()
+        so a close doesn't lose an in-flight edit.'''
         name = self.name_edit.text().strip()
         if not name:
             # Refuse the empty-name commit; restore the previous value.
@@ -509,10 +539,58 @@ class RecipeEditDialog(QDialog):
             return
         self.modified = True
         self.status_message = f"Deleted '{name}'"
-        # Flag so done() skips the cost-snapshot stamp (the recipe row
-        # is already gone from the DB).
+        # Flag so close_requested() skips the cost-snapshot stamp
+        # (the recipe row is already gone from the DB).
         self._being_deleted = True
-        self.accept()
+        self.recipeDeleted.emit(self.recipe_id)
+
+
+class RecipeEditDialog(QDialog):
+    '''Thin modal wrapper around RecipeEditWidget. Kept for callers
+    already in a modal context (the Ingredient editor's "Used in
+    recipes" link opens a recipe from inside its own dialog, where a
+    tabbed editor on the Recipes place can't be reached without
+    closing the ingredient dialog first).'''
+
+    def __init__(self, recipe_id, parent=None):
+        super().__init__(parent)
+        self.widget = RecipeEditWidget(recipe_id, parent=self)
+        self.setWindowTitle(f"{config.APPNAME} | {self.widget.title()}")
+        self.resize(1200, 760)
+        self.widget.titleChanged.connect(
+            lambda name: self.setWindowTitle(f"{config.APPNAME} | {name}")
+        )
+        self.widget.recipeDeleted.connect(lambda _id: self.accept())
+
+        close_btn = QPushButton('Close')
+        close_btn.setAutoDefault(False)
+        close_btn.setDefault(False)
+        close_btn.clicked.connect(self.reject)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(close_btn)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.widget, stretch=1)
+        layout.addLayout(btn_row)
+
+    # Property passthroughs for callers (main_window) that read these
+    # after exec() to decide whether to refresh or flash a status toast.
+    @property
+    def recipe_id(self):
+        return self.widget.recipe_id
+
+    @property
+    def modified(self):
+        return self.widget.modified
+
+    @property
+    def status_message(self):
+        return self.widget.status_message
+
+    def done(self, result):
+        self.widget.close_requested()
+        super().done(result)
 
 
 def _parse_menu_price(text):
