@@ -179,29 +179,28 @@ class RecipeEditDialog(QDialog):
         self.components_table.setEditTriggers(
             QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed
         )
-        # Drag-reorder is disabled while category grouping is active —
-        # crossing a group header would need to re-tag an ingredient,
-        # which should be a deliberate action in the ingredient editor,
-        # not a side effect of a drag.
-        self.components_table.setDragEnabled(False)
-        self.components_table.setAcceptDrops(False)
-        self.components_table.setDragDropMode(QAbstractItemView.NoDragDrop)
+        # Drag-reorder rows. The model returns False from dropMimeData
+        # for no-op moves and the actual SortOrder update goes through
+        # the undo stack (see _on_components_reordered).
+        self.components_table.setDragEnabled(True)
+        self.components_table.setAcceptDrops(True)
+        self.components_table.setDropIndicatorShown(True)
+        self.components_table.setDragDropMode(QAbstractItemView.InternalMove)
+        self.components_table.setDefaultDropAction(Qt.MoveAction)
         self.components_table.verticalHeader().setVisible(False)
         self.components_table.horizontalHeader().setStretchLastSection(True)
         qty_col = self.components_model.COLUMNS.index('Quantity')
         self.components_table.setItemDelegateForColumn(qty_col, _QuantityDelegate(self.components_table))
-        # The Type column now paints the colored category badge for
-        # ingredients (and falls back to the generic 'recipe' label for
-        # sub-recipes) using the data the model exposes on UserRole/UserRole+1.
+        # Type column paints the colored category badge for ingredients
+        # (and falls back to the generic 'recipe' label for sub-recipes)
+        # — this is the primary place the category reads in the editor.
         type_col = self.components_model.COLUMNS.index('Type')
         self.components_table.setItemDelegateForColumn(type_col, TagBadgeCellDelegate(self.components_table))
         self.components_table.activated.connect(self._on_component_activated)
         self.components_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.components_table.customContextMenuRequested.connect(self._show_components_context_menu)
-        self.components_model.modelReset.connect(self._apply_component_spans)
         self.components_model.modelReset.connect(self.components_table.resizeColumnsToContents)
         self.components_table.resizeColumnsToContents()
-        self._apply_component_spans()
         comp_layout = QVBoxLayout(comp_box)
         comp_layout.addWidget(self.components_table)
 
@@ -416,24 +415,9 @@ class RecipeEditDialog(QDialog):
         child_id, mode, name, _unit, *_ = dlg.selected
         self.undo_stack.push(AddComponentCommand(self.recipe_id, mode, child_id, dlg.qty, name))
 
-    def _apply_component_spans(self):
-        '''Span each category header row across the first N-1 columns so
-        the group name reads full-width while the final Cost column
-        keeps the subtotal cell free. Called after every model reset
-        because setSpan is cleared on reset.'''
-        model = self.components_model
-        cost_col = model.COLUMNS.index('Cost')
-        self.components_table.clearSpans()
-        for row in range(model.rowCount()):
-            if model.is_header_row(row):
-                self.components_table.setSpan(row, 0, 1, cost_col)
-
     def _on_component_activated(self, view_index):
-        '''Double-click or Enter on a row — open the inline Quantity editor.
-        Category group-header rows are inert, so bail out early.'''
+        '''Double-click or Enter on a row — open the inline Quantity editor.'''
         if not view_index.isValid():
-            return
-        if self.components_model.is_header_row(view_index.row()):
             return
         qty_col = self.components_model.COLUMNS.index('Quantity')
         qty_index = self.components_model.index(view_index.row(), qty_col)
@@ -459,8 +443,6 @@ class RecipeEditDialog(QDialog):
     def _show_components_context_menu(self, point):
         index = self.components_table.indexAt(point)
         if not index.isValid():
-            return
-        if self.components_model.is_header_row(index.row()):
             return
         row_dict = self.components_model.row_dict(index.row())
         is_template = row_dict.get('FromTemplateTagId') is not None
