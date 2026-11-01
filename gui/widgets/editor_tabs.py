@@ -118,6 +118,21 @@ class EditorTabs(QTabWidget):
         if self.count() == 0:
             self.allClosed.emit()
 
+    def handle_external_delete(self, recipe_id):
+        '''Called when a recipe is deleted from outside the editor
+        (library row context menu, bulk delete, etc.). Finds any
+        matching open tab, flags its widget as deleted so tear-down
+        skips the gone-row UPDATE paths, and removes the tab.'''
+        idx = self._index_of_recipe(recipe_id)
+        if idx < 0:
+            return
+        widget = self.widget(idx)
+        widget.mark_deleted()
+        self.removeTab(idx)
+        widget.deleteLater()
+        if self.count() == 0:
+            self.allClosed.emit()
+
     # --- state helpers -------------------------------------------------
 
     def open_recipe_ids(self):

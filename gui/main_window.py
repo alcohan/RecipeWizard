@@ -409,6 +409,10 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, 'Recipe In Use', str(exc))
             return
+        # Tear down any editor tab bound to the now-gone id before
+        # refreshing — otherwise its close_requested would UPDATE
+        # against a missing row and Ctrl+Z could push a bogus command.
+        self.recipes_tab.handle_recipe_deleted(row['Id'])
         self.refresh()
         self._flash_status(f"Deleted '{row['Name']}'")
 

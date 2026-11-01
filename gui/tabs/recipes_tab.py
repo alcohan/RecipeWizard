@@ -192,6 +192,13 @@ class RecipesTab(QWidget):
         before the app goes away.'''
         self.editor_tabs.close_all()
 
+    def handle_recipe_deleted(self, recipe_id):
+        '''MainWindow calls this after deleting a recipe from the
+        library view, so any editor tab bound to that id is torn
+        down cleanly instead of running UPDATE paths against the
+        gone row.'''
+        self.editor_tabs.handle_external_delete(recipe_id)
+
     def _on_back_to_library(self):
         '''Breadcrumb click — switch to library mode WITHOUT closing
         open tabs. They're still there when the user comes back.'''
