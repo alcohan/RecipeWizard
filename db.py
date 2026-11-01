@@ -851,6 +851,24 @@ def get_recipe_allergens(recipe_id):
     rows = query('SELECT DISTINCT name FROM RecipeAllergens WHERE recipe_id=? ORDER BY name;', (recipe_id,))['data']
     return [row['name'] for row in rows]
 
+
+def get_all_allergens():
+    '''All allergen names in canonical display order (allergens.sortOrder,
+    id). Used by the facet pane to render Free-From chips.'''
+    rows = query('SELECT name FROM allergens ORDER BY sortOrder, id;')['data']
+    return [row['name'] for row in rows]
+
+
+def get_all_recipe_allergens():
+    '''{recipe_id: [allergen_names]} for every recipe that has any
+    allergen in its tree. Recipes with no allergens are missing from
+    the result. One query, O(allergens-across-recipes) rows.'''
+    rows = query('SELECT recipe_id, name FROM RecipeAllergens ORDER BY recipe_id, name;')['data']
+    out = {}
+    for r in rows:
+        out.setdefault(r['recipe_id'], []).append(r['name'])
+    return out
+
 def update_tag(tag_id, name=None, color=None, shape=None):
     '''Patch a tag's name, color, and/or shape (any combination). Kind is
     intentionally NOT editable — moving a tag between kinds would orphan

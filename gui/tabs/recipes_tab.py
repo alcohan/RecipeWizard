@@ -15,9 +15,10 @@ from PySide6.QtWidgets import (
     QPushButton, QStackedWidget, QTableView, QVBoxLayout, QWidget,
 )
 
-from gui.models.filter_proxy import MultiColumnFilterProxy
+from gui.models.recipes_facet_proxy import RecipesFacetProxy
 from gui.widgets.editor_tabs import EditorTabs
 from gui.widgets.recipe_gallery import RecipeGallery
+from gui.widgets.recipes_facet_pane import RecipesFacetPane
 from gui.widgets.view_toggle import ViewToggle
 
 
@@ -104,15 +105,28 @@ class RecipesTab(QWidget):
             button_row.addWidget(btn)
         button_row.addStretch()
 
+        # Facet pane on the left, workspace content on the right.
+        self.facet_pane = RecipesFacetPane()
+        self.facet_pane.formatsChanged.connect(self.proxy.setFormats)
+        self.facet_pane.freeFromChanged.connect(self.proxy.setFreeFrom)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.addLayout(header_row)
+        content_layout.addWidget(self.stack, stretch=1)
+        content_layout.addLayout(button_row)
+
         wrap = QWidget()
-        wrap_layout = QVBoxLayout(wrap)
-        wrap_layout.addLayout(header_row)
-        wrap_layout.addWidget(self.stack, stretch=1)
-        wrap_layout.addLayout(button_row)
+        wrap_layout = QHBoxLayout(wrap)
+        wrap_layout.setContentsMargins(0, 0, 0, 0)
+        wrap_layout.setSpacing(0)
+        wrap_layout.addWidget(self.facet_pane)
+        wrap_layout.addWidget(content, stretch=1)
         return wrap
 
     def _build_table(self, source_model):
-        self.proxy = MultiColumnFilterProxy(self)
+        self.proxy = RecipesFacetProxy(self)
         self.proxy.setSourceModel(source_model)
 
         table = QTableView()
