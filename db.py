@@ -200,6 +200,82 @@ def delete_recipe(id):
         raise Exception(f'Unable to delete. Recipe used in {number_of_references} other recipe(s). {readable}')
 
 
+def get_recipe_category_details():
+    '''Flat per-(recipe, ingredient) rows for the analytics spreadsheet.
+
+    One row per ingredient appearance inside a recipe, with the
+    ingredient's category and per-serving cost + nutrition values
+    already scaled by quantity and recipe yield. Sub-recipes flatten
+    to their leaf ingredients via recipe_ingredients_expanded.
+
+    Caller pivots this in Python: group by (recipe_id, category) for
+    the spreadsheet cells, and keep the per-ingredient rows around for
+    tooltip detail.'''
+    return query_from_file('sql\\get_recipe_category_details.sql')['data']
+
+
+def library_health_report(stale_days=90):
+    '''Collect the data-quality signals Library Health surfaces.
+
+    Each check returns a (count, sample_names) pair — the sample is at
+    most 5 names for the UI to show inline, the full count drives the
+    badge. Checks are intentionally conservative:
+
+      - missing_nutrition: Calories IS NULL or 0. Fat/protein etc. are
+        allowed to be zero (water has them), but a calorie-less row is
+        almost always a stub the user forgot to fill in.
+      - stale_prices: ingredients whose latest ingredient_prices row is
+        older than `stale_days`, plus ingredients with no prices at all.
+      - unused_ingredients: not referenced by any Connections row.
+      - duplicate_names: ingredient names colliding case-insensitively.
+
+    All read-only; this is a glance report, not an auto-fixer.'''
+    def _rows_with_sample(sql, params=(), limit=5):
+        rows = query(sql, params)['data']
+        names = [r['Name'] for r in rows[:limit]]
+        return len(rows), names
+
+    missing_nutrition = _rows_with_sample(
+        'SELECT Name FROM Ingredients'
+        ' WHERE (Calories IS NULL OR Calories = 0)'
+        ' ORDER BY Name COLLATE NOCASE'
+    )
+
+    stale_prices = _rows_with_sample(
+        'SELECT i.Name FROM Ingredients i'
+        ' WHERE NOT EXISTS ('
+        '   SELECT 1 FROM ingredient_prices p'
+        '   WHERE p.ingredient_id = i.Id'
+        f'     AND p.effective_date >= date(\'now\', \'-{int(stale_days)} day\')'
+        ' )'
+        ' ORDER BY i.Name COLLATE NOCASE'
+    )
+
+    unused_ingredients = _rows_with_sample(
+        'SELECT i.Name FROM Ingredients i'
+        ' WHERE NOT EXISTS ('
+        '   SELECT 1 FROM Connections c WHERE c.ChildIngredient = i.Id'
+        ' )'
+        ' ORDER BY i.Name COLLATE NOCASE'
+    )
+
+    # Duplicate names: group rows that share a case-insensitive name;
+    # the "sample" lists each name once.
+    dup_rows = query(
+        'SELECT lower(Name) AS k, COUNT(*) AS n, MIN(Name) AS Name'
+        ' FROM Ingredients GROUP BY lower(Name) HAVING n > 1'
+        ' ORDER BY k'
+    )['data']
+    duplicate_names = (len(dup_rows), [r['Name'] for r in dup_rows[:5]])
+
+    return {
+        'missing_nutrition': missing_nutrition,
+        'stale_prices': stale_prices,
+        'unused_ingredients': unused_ingredients,
+        'duplicate_names': duplicate_names,
+    }
+
+
 def get_recently_edited(limit=6):
     '''Return the most-recently-touched ingredients and recipes, mixed
     together and sorted by updated_at DESC. Each row is a dict with
@@ -247,12 +323,34 @@ def recipe_components(id: int):
         row['QuantityRaw'] = row['Quantity']
         # Strip trailing zeroes from quantity
         row['Quantity'] = "{:.2f}".format(row['Quantity']).rstrip('0').rstrip('.')
-        # Format cost as "$ 0.00"
+        # Preserve raw cost before formatting so category-group subtotals
+        # don't have to parse a formatted string back into a float.
+        row['CostRaw'] = row['Cost'] or 0.0
         row['Cost'] = "$ {:.2f}".format(row['Cost'])
     return(result)
 
-def update_recipe_info(id: int, name: str, unit: str, outputqty: float):
-    return query_from_file('sql\\update_recipe_info.sql', (name, unit, outputqty, id))
+def update_recipe_info(id: int, name: str, unit: str, outputqty: float, menu_price=None):
+    '''menu_price is None when the recipe isn't on the menu / price unknown;
+    stored as NULL so food-cost % logic skips cleanly.'''
+    return query_from_file(
+        'sql\\update_recipe_info.sql', (name, unit, outputqty, menu_price, id),
+    )
+
+
+def update_recipe_cost_snapshot(recipe_id):
+    '''Stamp the "last cost the user saw" onto the recipe. Reads the
+    recipe's current live cost from RecipeTotalValues (which already
+    aggregates through sub-recipes) and stores it along with a now
+    timestamp. The editor calls this when the user closes the dialog,
+    so the "prices changed since you last looked" badge disappears
+    only when the user has actually seen the new numbers.'''
+    return query(
+        'UPDATE Recipes SET'
+        '  cost_snapshot = (SELECT Cost FROM RecipeTotalValues WHERE Id = ?),'
+        '  cost_snapshot_at = datetime(\'now\')'
+        ' WHERE Id = ?',
+        (recipe_id, recipe_id),
+    )
 
 def create_recipe(name: str, unit: str, outputqty: float):
     result = query_from_file('sql\\create_recipe.sql', (name, unit, outputqty))
@@ -752,6 +850,24 @@ def get_recipe_allergens(recipe_id):
     '''
     rows = query('SELECT DISTINCT name FROM RecipeAllergens WHERE recipe_id=? ORDER BY name;', (recipe_id,))['data']
     return [row['name'] for row in rows]
+
+
+def get_all_allergens():
+    '''All allergen names in canonical display order (allergens.sortOrder,
+    id). Used by the facet pane to render Free-From chips.'''
+    rows = query('SELECT name FROM allergens ORDER BY sortOrder, id;')['data']
+    return [row['name'] for row in rows]
+
+
+def get_all_recipe_allergens():
+    '''{recipe_id: [allergen_names]} for every recipe that has any
+    allergen in its tree. Recipes with no allergens are missing from
+    the result. One query, O(allergens-across-recipes) rows.'''
+    rows = query('SELECT recipe_id, name FROM RecipeAllergens ORDER BY recipe_id, name;')['data']
+    out = {}
+    for r in rows:
+        out.setdefault(r['recipe_id'], []).append(r['name'])
+    return out
 
 def update_tag(tag_id, name=None, color=None, shape=None):
     '''Patch a tag's name, color, and/or shape (any combination). Kind is

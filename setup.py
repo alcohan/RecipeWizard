@@ -209,6 +209,19 @@ def migrateDB():
     # Backfill missing colors so badges always have a color to paint with.
     cursor.execute("UPDATE tags SET color = ? WHERE color IS NULL OR color = ''", ('#64748b',))
 
+    # Palette alignment: bring canonical ingredient-category colors into
+    # the current design values. We migrate only when the user's current
+    # color still matches one of the known auto-seeded values (case-
+    # insensitive) — anything else is a user customization and stays.
+    for name, old_hexes, new_hex in _PALETTE_MIGRATIONS:
+        placeholders = ','.join('?' for _ in old_hexes)
+        cursor.execute(
+            f"UPDATE tags SET color = ?"
+            f" WHERE kind = 'ingredient' AND name = ?"
+            f"   AND lower(color) IN ({placeholders})",
+            [new_hex, name] + [h.lower() for h in old_hexes],
+        )
+
     # updated_at on Ingredients and Recipes powers the home tab's
     # "recently edited" strip. SQLite's ALTER TABLE ADD COLUMN forbids
     # a non-constant default expression, so the migrated column is
@@ -224,6 +237,22 @@ def migrateDB():
         cursor.execute('ALTER TABLE Recipes ADD COLUMN updated_at TEXT')
         cursor.execute("UPDATE Recipes SET updated_at = datetime('now') WHERE updated_at IS NULL")
 
+    # menu_price powers food-cost %. Nullable: a recipe without a menu
+    # price just skips the food-cost display and the "on the menu" chip.
+    if not column_exists('Recipes', 'menu_price'):
+        print('Migrating: adding Recipes.menu_price')
+        cursor.execute('ALTER TABLE Recipes ADD COLUMN menu_price NUMERIC')
+
+    # cost_snapshot powers the "prices changed since you last looked"
+    # badge: the editor stamps a snapshot on close, and anywhere a
+    # recipe is listed we compare its live cost to that snapshot. Both
+    # columns are nullable — recipes you've never opened in the new
+    # editor just don't show the badge.
+    if not column_exists('Recipes', 'cost_snapshot'):
+        print('Migrating: adding Recipes.cost_snapshot + cost_snapshot_at')
+        cursor.execute('ALTER TABLE Recipes ADD COLUMN cost_snapshot NUMERIC')
+        cursor.execute('ALTER TABLE Recipes ADD COLUMN cost_snapshot_at TEXT')
+
     # Trigger set is rebuilt on every migration so changes to the bump
     # logic propagate without bespoke migration steps. The WHEN guard on
     # the row-self-update triggers prevents infinite recursion.
@@ -235,9 +264,15 @@ def migrateDB():
           UPDATE Ingredients SET updated_at = datetime('now') WHERE Id = NEW.Id;
         END;
 
+        -- Snapshot-only writes (updating cost_snapshot / cost_snapshot_at
+        -- after an editor close) shouldn't count as "the user edited this
+        -- recipe", so we skip the bump when the only columns that moved
+        -- are the snapshot ones.
         DROP TRIGGER IF EXISTS recipes_bump_updated_at;
         CREATE TRIGGER recipes_bump_updated_at AFTER UPDATE ON Recipes
         WHEN NEW.updated_at = OLD.updated_at
+          AND NOT (NEW.cost_snapshot IS NOT OLD.cost_snapshot
+                   OR NEW.cost_snapshot_at IS NOT OLD.cost_snapshot_at)
         BEGIN
           UPDATE Recipes SET updated_at = datetime('now') WHERE Id = NEW.Id;
         END;
@@ -303,21 +338,45 @@ _CANONICAL_RECIPE_SHAPES = {
 # Note: legacy tags (Base, Veggies) are NOT auto-removed for users upgrading.
 # Migration is additive — old tags stay around with whatever mappings the user
 # had, and they can be manually deleted in the Tags Manager when ready.
+# Ingredient category hexes come from the design system (Evergreens
+# Internal Tools, Oct 2026). Recipe-tag colors are kept at their old
+# values — the design doesn't specify them, and they only appear as
+# small accents. Seven of nine category hues come from the brand
+# palette directly; the design calls them out by name in its color grid.
 _DEFAULT_TAGS = (
     ('Salad', 'recipe', '#16a34a', 'ring'),
     ('Wrap', 'recipe', '#b45309', 'wrap'),
     ('Bowl', 'recipe', '#ea580c', 'bowl'),
     ('Catering', 'recipe', '#7c3aed', 'tray'),
-    ('Greens', 'ingredient', '#15803d', 'none'),
-    ('Grains', 'ingredient', '#92400e', 'none'),
-    ('Toppings', 'ingredient', '#dc2626', 'none'),
-    ('Cheese', 'ingredient', '#eab308', 'none'),
-    ('Crunchies', 'ingredient', '#a16207', 'none'),
-    ('Premiums', 'ingredient', '#9333ea', 'none'),
-    ('Protein', 'ingredient', '#be185d', 'none'),
-    ('Dressing', 'ingredient', '#0891b2', 'none'),
+    ('Greens', 'ingredient', '#347200', 'none'),      # romaine
+    ('Grains', 'ingredient', '#d9b26a', 'none'),      # derived
+    ('Toppings', 'ingredient', '#ff8c00', 'none'),    # sweet potato
+    ('Cheese', 'ingredient', '#ffd700', 'none'),      # egg yolk
+    ('Crunchies', 'ingredient', '#8a5a2b', 'none'),   # derived
+    ('Premiums', 'ingredient', '#bbca00', 'none'),    # avocado
+    ('Protein', 'ingredient', '#c9007a', 'none'),     # pickled onion
+    ('Dressing', 'ingredient', '#ffa98b', 'none'),    # red wine vini
     ('Finish', 'ingredient', '#db2777', 'none'),
-    ('Packaging', 'ingredient', '#475569', 'none'),
+    ('Packaging', 'ingredient', '#a7ad9c', 'none'),   # chart-other
+)
+
+# Design-palette migration map: for a canonical ingredient-category tag,
+# update color ONLY where the user's current color still matches a
+# known auto-seeded value. Customized colors (anything not in the list)
+# are preserved. We check BOTH the original seed and the Phase-A seed
+# so a user who upgraded through either path lands on the current hex.
+_PALETTE_MIGRATIONS = (
+    # (name, old_hexes, new_hex) — old_hexes is a list; comparison is
+    # case-insensitive and only applies when color is in old_hexes.
+    ('Greens',    ['#15803d', '#3E7D3A'], '#347200'),
+    ('Grains',    ['#92400e', '#D4A657'], '#d9b26a'),
+    ('Toppings',  ['#dc2626', '#D8794A'], '#ff8c00'),
+    ('Cheese',    ['#eab308', '#F0CF5B'], '#ffd700'),
+    ('Crunchies', ['#a16207', '#8A5A3B'], '#8a5a2b'),
+    ('Premiums',  ['#9333ea', '#7A4E92'], '#bbca00'),
+    ('Protein',   ['#be185d', '#B4492F'], '#c9007a'),
+    ('Dressing',  ['#0891b2', '#3D8C86'], '#ffa98b'),
+    ('Packaging', ['#475569', '#A3A396'], '#a7ad9c'),
 )
 
 if __name__=="__main__":
