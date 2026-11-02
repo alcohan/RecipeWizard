@@ -1,0 +1,297 @@
+'''Responsive wedge-card gallery for recipes.
+
+Used by both the (now-defunct) HomeTab and the Recipes place. Each
+card shows the recipe's wedge preview plus its name; clicking emits
+`recipeClicked(int)` with the recipe id. Wedges render asynchronously
+via QThreadPool so cold-open stays responsive; cards reveal only when
+their wedge finishes to avoid a sea of placeholders flicker-swapping
+into the final art.
+'''
+from PySide6.QtCore import Qt, QThreadPool, QTimer, Signal
+from PySide6.QtWidgets import (
+    QCheckBox, QFrame, QGridLayout, QLabel, QScrollArea, QVBoxLayout, QWidget,
+)
+
+from gui.widgets.wedge_view import WedgeView
+
+
+def _prices_drifted(cost_raw, cost_snapshot, min_delta=0.01):
+    '''True when the current cost differs from the snapshot by at
+    least min_delta. Both NULL (never snapshotted) counts as "no
+    drift" — no sense in flagging recipes the user has never opened.'''
+    try:
+        a = float(cost_raw) if cost_raw is not None else None
+        b = float(cost_snapshot) if cost_snapshot is not None else None
+    except (TypeError, ValueError):
+        return False
+    if a is None or b is None:
+        return False
+    return abs(a - b) >= min_delta
+
+
+class RecipeCard(QFrame):
+    '''Wedge preview + recipe name. Whole frame is clickable; children
+    are transparent to mouse events so the frame's mousePressEvent
+    always fires regardless of where on the card the user clicks.
+
+    When cost_raw drifts from cost_snapshot by ≥ $0.01, a "Prices
+    changed" chip overlays the top-right corner so operators see
+    affected recipes at a glance in the gallery.'''
+
+    clicked = Signal(int)
+
+    def __init__(self, recipe_id, name, cost_raw=None, cost_snapshot=None,
+                 compare_tray=None, parent=None):
+        super().__init__(parent)
+        self.recipe_id = recipe_id
+        self.name = name or ''
+        self._compare_tray = compare_tray
+        # Hidden until the wedge actually renders, so cold-load shows a
+        # quiet progressive populate instead of N placeholder→wedge swaps.
+        self._wedge_ready = False
+        self.setObjectName('RecipeCard')
+        self.setStyleSheet('''
+            QFrame#RecipeCard {
+                background-color: white;
+                border: 1px solid #ddd;
+                border-radius: 8px;
+            }
+            QFrame#RecipeCard:hover {
+                border-color: #347200;
+                background-color: #e9f1d9;
+            }
+            QFrame#RecipeCard QLabel { border: 0; }
+        ''')
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedSize(220, 220)
+
+        self.wedge = WedgeView(recipe_id, size=140, defer=True)
+        self.wedge.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.wedge.renderComplete.connect(self._on_wedge_ready)
+
+        name_label = QLabel(name)
+        name_label.setAlignment(Qt.AlignCenter)
+        name_label.setWordWrap(True)
+        name_label.setStyleSheet('padding: 4px; font-weight: bold;')
+        name_label.setAttribute(Qt.WA_TransparentForMouseEvents)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.addWidget(self.wedge, alignment=Qt.AlignCenter)
+        layout.addWidget(name_label)
+
+        # Compare-tray checkbox at top-left (matches the design's
+        # Library mockup). Floats over the wedge rather than taking a
+        # layout row. Transparent background with a small drop shadow
+        # so the native indicator reads cleanly on both pale and
+        # colorful wedge backgrounds — a boxed white container reads
+        # as a dropped placeholder instead of a toggle.
+        if self._compare_tray is not None:
+            self.tray_check = QCheckBox(self)
+            self.tray_check.setToolTip('Add to compare')
+            self.tray_check.setCursor(Qt.PointingHandCursor)
+            self.tray_check.setStyleSheet('''
+                QCheckBox { background: transparent; padding: 0; }
+                QCheckBox::indicator {
+                    width: 16px; height: 16px;
+                    border: 1.5px solid #082c00;
+                    border-radius: 3px;
+                    background: #ffffff;
+                }
+                QCheckBox::indicator:hover {
+                    border-color: #347200;
+                }
+                QCheckBox::indicator:checked {
+                    background: #347200;
+                    border-color: #347200;
+                    image: none;
+                }
+            ''')
+            self.tray_check.setFixedSize(20, 20)
+            self.tray_check.move(10, 10)
+            self.tray_check.setChecked(self._compare_tray.contains(recipe_id))
+            self.tray_check.toggled.connect(self._on_tray_toggled)
+            self._compare_tray.changed.connect(self._sync_tray_check)
+
+        if _prices_drifted(cost_raw, cost_snapshot):
+            # Child of self (not inside the vbox) so it floats over the
+            # wedge rather than reflowing the layout.
+            chip = QLabel('Prices changed', self)
+            chip.setAttribute(Qt.WA_TransparentForMouseEvents)
+            chip.setStyleSheet(
+                'background: #FBEADB; color: #8A3F0C; font-size: 10px;'
+                ' font-weight: 600; padding: 2px 6px; border-radius: 4px;'
+            )
+            chip.setToolTip('Live cost has drifted from the cost you last saw.')
+            # Position near the top-right. adjustSize() so the pill
+            # sizes to its text before we place it.
+            chip.adjustSize()
+            chip.move(220 - chip.width() - 10, 10)
+
+    def start_render(self, pool):
+        self.wedge.render_async(pool)
+
+    def _on_wedge_ready(self):
+        '''Worker finished — the card can show its final, populated state.
+        RecipeGallery._relayout consults _wedge_ready to decide whether
+        to make this card visible.'''
+        self._wedge_ready = True
+        gallery = self.parent()
+        while gallery is not None and not isinstance(gallery, RecipeGallery):
+            gallery = gallery.parent()
+        if gallery is not None:
+            gallery._reveal_if_ready(self)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self.recipe_id)
+        super().mousePressEvent(event)
+
+    def _on_tray_toggled(self, checked):
+        if self._compare_tray is None:
+            return
+        if checked:
+            self._compare_tray.add(self.recipe_id)
+        else:
+            self._compare_tray.remove(self.recipe_id)
+
+    def _sync_tray_check(self):
+        '''Keep the checkbox in sync when another view mutates the
+        tray (table-view Space, Compare's "x", etc.). Blocking signals
+        so the toggle below doesn't bounce back into the tray.'''
+        if self._compare_tray is None:
+            return
+        should_be = self._compare_tray.contains(self.recipe_id)
+        if self.tray_check.isChecked() != should_be:
+            self.tray_check.blockSignals(True)
+            self.tray_check.setChecked(should_be)
+            self.tray_check.blockSignals(False)
+
+
+class RecipeGallery(QWidget):
+    '''Scrollable, responsive grid of RecipeCard widgets. Column count
+    is derived from the current viewport width — resizing the window
+    reflows the cards into more or fewer columns without rebuilding
+    any widgets. Filtered-out cards are removed from the grid (not
+    just hidden) so the remaining ones pack tight.'''
+
+    CARD_WIDTH = 220
+    CARD_SPACING = 12
+    SCROLLBAR_RESERVE = 24  # avoid column-count oscillation at the threshold
+
+    recipeClicked = Signal(int)
+
+    def __init__(self, recipes_model, compare_tray=None, parent=None):
+        super().__init__(parent)
+        self._model = recipes_model
+        self._compare_tray = compare_tray
+        self._cards = []
+        # Reasonable starting guess: the viewport has no width yet on
+        # construction, so this avoids a visible 1-column flash that
+        # snaps to N columns once the first resizeEvent fires.
+        self._current_columns = 4
+        self._filter = ''
+
+        self.grid_container = QWidget()
+        self.grid = QGridLayout(self.grid_container)
+        self.grid.setSpacing(self.CARD_SPACING)
+        self.grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+
+        self.scroll = QScrollArea()
+        self.scroll.setWidget(self.grid_container)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.scroll)
+
+        self._model.modelReset.connect(self.refresh)
+        self.refresh()
+
+    def setFilterText(self, text):
+        self._filter = (text or '').strip().lower()
+        self._relayout()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._sync_columns()
+
+    def showEvent(self, event):
+        '''Recompute columns on every show. Deferred to the next event-
+        loop tick because showEvent fires BEFORE the scroll viewport
+        has settled to its final width for a widget deep in a
+        QStackedWidget — a synchronous _sync_columns here reads a
+        stale width and locks in a too-low column count, which is what
+        made the gallery initially open with 2 columns until the first
+        manual resize.'''
+        super().showEvent(event)
+        QTimer.singleShot(0, self._sync_columns)
+
+    def _sync_columns(self):
+        new_cols = self._columns_for_width(self.scroll.viewport().width())
+        if new_cols != self._current_columns:
+            self._current_columns = new_cols
+            self._relayout()
+
+    def _columns_for_width(self, width):
+        usable = max(self.CARD_WIDTH, width - self.SCROLLBAR_RESERVE)
+        return max(1, (usable + self.CARD_SPACING) // (self.CARD_WIDTH + self.CARD_SPACING))
+
+    def _relayout(self):
+        '''Re-place existing RecipeCard widgets in the grid for the
+        current column count and active filter. No widgets are
+        destroyed. Cards stay hidden until their wedge has rendered
+        (see _wedge_ready) so cold load doesn't show a sea of
+        placeholders churning into wedges; instead, cards pop in
+        fully-formed. Updates are suppressed during the rearrangement
+        so the brief "everything removed" intermediate state never
+        reaches the screen.'''
+        self.grid_container.setUpdatesEnabled(False)
+        try:
+            for card in self._cards:
+                self.grid.removeWidget(card)
+            visible_index = 0
+            for card in self._cards:
+                matches_filter = not self._filter or self._filter in card.name.lower()
+                card.setVisible(matches_filter and card._wedge_ready)
+                if matches_filter:
+                    self.grid.addWidget(
+                        card,
+                        visible_index // self._current_columns,
+                        visible_index % self._current_columns,
+                    )
+                    visible_index += 1
+        finally:
+            self.grid_container.setUpdatesEnabled(True)
+
+    def _reveal_if_ready(self, card):
+        '''Called by a card when its wedge has finished rendering.
+        Shows the card now (if filter allows) without touching anyone
+        else's position — its grid cell was already reserved in _relayout.'''
+        if not self._filter or self._filter in card.name.lower():
+            card.setVisible(True)
+
+    def refresh(self):
+        '''Tear down + rebuild from the current model. Called on
+        __init__ and whenever the model resets.'''
+        for card in self._cards:
+            self.grid.removeWidget(card)
+            card.deleteLater()
+        self._cards = []
+
+        pool = QThreadPool.globalInstance()
+        for i in range(self._model.rowCount()):
+            row = self._model.row_dict(i)
+            card = RecipeCard(
+                row['Id'], row['Name'],
+                cost_raw=row.get('CostRaw'),
+                cost_snapshot=row.get('CostSnapshot'),
+                compare_tray=self._compare_tray,
+            )
+            card.clicked.connect(self.recipeClicked.emit)
+            self._cards.append(card)
+
+        self._relayout()
+        for card in self._cards:
+            card.start_render(pool)

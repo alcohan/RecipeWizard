@@ -111,7 +111,12 @@ _KNOWN_SHAPES = {'ring', 'bowl', 'wrap', 'tray', 'jar', 'box', 'cone', 'plate'}
 def _paint_silhouette(canvas, shape, color_hex, render_size):
     '''Draw the format silhouette into `canvas` before the wedge is rendered
     on top. Unknown shapes are a no-op so user-added recipe tags with
-    shape='none' (or anything unrecognized) render the bare wedge.'''
+    shape='none' (or anything unrecognized) render the bare wedge.
+
+    Painted as a half-transparent fill of the recipe's tag color — the
+    silhouette reads as "the shape, in the format's color", with the
+    wedge sitting on top. Simpler than a stroked line-art treatment
+    and the direction the design is being updated toward.'''
     if shape not in _KNOWN_SHAPES:
         return
     draw = ImageDraw.Draw(canvas)
@@ -141,7 +146,7 @@ def _paint_silhouette(canvas, shape, color_hex, render_size):
         # the canvas size before compositing.
         rect_w = sz * 1.15
         rect_h = sz * 0.48
-        corner_r = rect_h * 0.22  # gentle rounding, still reads as rectangular
+        corner_r = rect_h * 0.22
         angle_deg = 22
         pad = int(sz * 0.30)
         big = sz + 2 * pad
