@@ -15,9 +15,9 @@ import db
 import setup
 from gui.dialogs.about import AboutDialog
 from gui.dialogs.bulk_image_assign import BulkImageAssignDialog
-from gui.dialogs.ingredient_create import IngredientCreateDialog
-from gui.dialogs.ingredient_create_from_usda import IngredientCreateFromUsdaDialog
 from gui.dialogs.ingredient_edit import IngredientEditDialog
+from gui.dialogs.ingredient_new import IngredientNewDialog
+from gui.dialogs.ingredient_price_edit import IngredientPriceEditDialog
 from gui.dialogs.preferences import PreferencesDialog
 from gui.dialogs.recipe_create import RecipeCreateDialog
 from gui.dialogs.tags_manager import IngredientTagsDialog
@@ -222,20 +222,25 @@ class MainWindow(QMainWindow):
         self.compare_tray.toggle(rid)
 
     def _ingredients_place(self):
-        new_search_btn = QPushButton('+ New (USDA Search)')
-        new_search_btn.clicked.connect(self._on_new_ingredient_search)
-        new_blank_btn = QPushButton('+ New (Blank)')
-        new_blank_btn.clicked.connect(self._on_new_ingredient_blank)
         tab = IngredientsTab(
             source_model=self.ingredients_model,
             context_actions=[
                 ('Edit…', self._on_ingredient_edit),
+                ('New price…', lambda r: self._on_ingredient_new_price(
+                    self.ingredients_model.id_at_row(r))),
                 ('Delete', self._on_ingredient_delete),
             ],
-            action_buttons=[new_search_btn, new_blank_btn],
         )
         tab.rowActivated.connect(self._on_ingredient_edit)
+        tab.newIngredientRequested.connect(self._on_new_ingredient_search)
+        tab.newPriceRequested.connect(self._on_ingredient_new_price)
+        tab.recipeRequested.connect(self._on_recipe_edit_by_id)
+        self.ingredients_tab = tab
         return tab
+
+    def _on_ingredient_new_price(self, ingredient_id):
+        if IngredientPriceEditDialog(ingredient_id, parent=self).exec() == QDialog.Accepted:
+            self.refresh()
 
     def _analytics_place(self):
         tab = AnalyticsTab(self.recipes_model, compare_tray=self.compare_tray)
@@ -427,10 +432,16 @@ class MainWindow(QMainWindow):
             handler()
 
     def _on_ingredient_edit_by_id(self, ing_id):
+        '''Open the Edit ingredient dialog. Afterwards refresh if it
+        changed anything, and open the recipe the user picked under
+        "Used in", if they did.'''
         dlg = IngredientEditDialog(ing_id, parent=self)
         dlg.exec()
         if dlg.modified:
             self.refresh()
+        if dlg.open_recipe_id is not None:
+            self._on_recipe_edit_by_id(dlg.open_recipe_id)
+        return dlg
 
     def _refresh_header_freshness(self):
         '''Push the latest supplier-price date to the app bar's right
@@ -554,11 +565,7 @@ class MainWindow(QMainWindow):
         pass
 
     def _on_ingredient_edit(self, src_row):
-        ing_id = self.ingredients_model.id_at_row(src_row)
-        dlg = IngredientEditDialog(ing_id, parent=self)
-        dlg.exec()
-        if dlg.modified:
-            self.refresh()
+        dlg = self._on_ingredient_edit_by_id(self.ingredients_model.id_at_row(src_row))
         self._flash_status(dlg.status_message)
 
     def _on_ingredient_delete(self, src_row):
@@ -577,23 +584,19 @@ class MainWindow(QMainWindow):
         self._flash_status(f"Deleted '{row['Name']}'")
 
     def _on_new_ingredient_search(self):
-        dlg = IngredientCreateFromUsdaDialog(parent=self)
-        if dlg.exec() != QDialog.Accepted or not dlg.new_id:
-            return
-        edit_dlg = IngredientEditDialog(dlg.new_id, parent=self)
-        edit_dlg.exec()
-        self.refresh()
-        # Edit-stage message wins (most recent action), else fall back to "Created"
-        self._flash_status(edit_dlg.status_message or dlg.status_message)
+        self._new_ingredient(show_usda=True)
 
     def _on_new_ingredient_blank(self):
-        create_dlg = IngredientCreateDialog(parent=self)
-        if create_dlg.exec() != QDialog.Accepted or not create_dlg.new_id:
-            return
-        edit_dlg = IngredientEditDialog(create_dlg.new_id, parent=self)
-        edit_dlg.exec()
-        self.refresh()
-        self._flash_status(edit_dlg.status_message or create_dlg.status_message)
+        self._new_ingredient(show_usda=False)
+
+    def _new_ingredient(self, show_usda):
+        '''The New ingredient dialog saves everything itself (category,
+        allergens, first price), so there's no follow-up edit step.'''
+        dlg = IngredientNewDialog(parent=self, show_usda=show_usda)
+        dlg.exec()
+        if dlg.created_ids:
+            self.refresh()
+            self._flash_status(dlg.status_message)
 
     def _on_recipe_edit(self, src_row):
         self._on_recipe_edit_by_id(self.recipes_model.id_at_row(src_row))

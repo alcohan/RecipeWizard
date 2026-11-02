@@ -521,13 +521,11 @@ class RecipeComponentAddDialog(QDialog):
         self.filter_edit.setFocus()
 
     def _create_ingredient(self):
-        '''"Create '<text>' as a new ingredient": the USDA-search create
-        flow, pre-filled; the new ingredient comes back selected.'''
-        from gui.dialogs.ingredient_create_from_usda import IngredientCreateFromUsdaDialog
-        text = self.filter_edit.text().strip()
-        dlg = IngredientCreateFromUsdaDialog(parent=self)
-        if hasattr(dlg, 'query_edit'):
-            dlg.query_edit.setText(text)
+        '''"Create '<text>' as a new ingredient": the New ingredient
+        dialog with the name filled in (and the USDA lookup already
+        searching it); the new ingredient comes back selected.'''
+        from gui.dialogs.ingredient_new import IngredientNewDialog
+        dlg = IngredientNewDialog(parent=self, name=self.filter_edit.text().strip())
         if dlg.exec() != QDialog.Accepted or not dlg.new_id:
             return
         self._allergen_maps = db.get_component_allergen_maps()
