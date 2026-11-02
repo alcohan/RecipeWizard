@@ -1,160 +1,110 @@
-'''Compact two-row summary of the recipe's current template, with a
-click-to-expand flyout for the full item list and any portion overrides.
+'''One-line summary of a recipe's format template, with a Details
+flyout listing the template's auto-add items and portion overrides.
 
-Row 1: colored swatch + template name + Details button.
-Row 2: "N items · $X.XX · M overrides" stats.
+Sits under the recipe editor's components grid:
 
-Updated by the recipe edit dialog's _refresh() — whenever the recipe's
+    Bowl template · 3 items · $0.34 · 2 overrides · Details
+
+Template items include packaging, which the grid and wedge don't list,
+so this line is also where those items are named. With no format the
+line falls back to the cost of any unlisted packaging, or hides.
+
+Updated by the recipe editor's _refresh() — whenever the recipe's
 format changes (via the selector or via undo/redo), refresh() re-reads
-the current template, recomputes the stats, and closes any open flyout
-so its content can't drift behind the displayed summary.'''
+the template, recomputes the stats, and closes any open flyout so its
+content can't drift behind the line.'''
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (
-    QAbstractItemView, QFrame, QGroupBox, QHBoxLayout, QLabel,
-    QListWidget, QListWidgetItem, QPushButton, QSizePolicy, QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QFrame, QGridLayout, QLabel, QVBoxLayout, QWidget
 
 import db
 
 
-class TemplateSummaryWidget(QGroupBox):
-    '''Group box containing:
-      - a colored swatch + template name
-      - "N items · $X.XX" stats
-      - a "Details" button that opens a flyout popup with the full list
+_KALE = '#082c00'
+_ROMAINE = '#347200'
+_MUTED = '#55624c'
+_BORDER = '#ebe1cd'
+_RULE = '#f3ece0'
 
-    refresh() is called by the recipe edit dialog whenever the format
-    changes (selection or undo/redo). The summary stats update; the
-    popup, if open, is closed first so it can't go stale.'''
 
+class TemplateSummaryLine(QLabel):
     def __init__(self, recipe_id, parent=None):
-        super().__init__('Template', parent)
+        super().__init__(parent)
         self.recipe_id = recipe_id
         self._popup = None
         # Cache the items/multipliers from the last refresh so opening the
-        # popup doesn't have to round-trip to the DB.
-        self._cached_tag = None
-        self._cached_items = []
-        self._cached_mults = []
+        # flyout doesn't have to round-trip to the DB.
+        self._tag = None
+        self._items = []
+        self._mults = []
+        self.setTextFormat(Qt.RichText)
+        self.setWordWrap(True)
+        self.setStyleSheet(f'color: {_MUTED}; font-size: 12px; padding: 6px 16px;')
+        self.linkActivated.connect(lambda _h: self._toggle_popup())
 
-        # Two rows so the stats (item count + cost) never get clipped by
-        # the Details button competing for horizontal space — which used
-        # to happen when the panel was narrow. The name row carries just
-        # the swatch + template name + button; the stats row gets the
-        # full width below.
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(8, 14, 8, 8)
-        outer.setSpacing(4)
-
-        self._swatch = QLabel()
-        self._swatch.setFixedSize(12, 12)
-        self._name_label = QLabel('')
-        self._name_label.setTextFormat(Qt.RichText)
-        # Name is short ("Salad" / "Wrap" / etc.) — letting it grow normally
-        # is fine. The horizontal layout has the button on the right with
-        # no stretch, so width is dominated by the (stable) button width.
-        self._name_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        self._details_btn = QPushButton('Details ▾')
-        self._details_btn.setFlat(False)
-        self._details_btn.clicked.connect(self._on_details)
-
-        name_row = QHBoxLayout()
-        name_row.setSpacing(6)
-        name_row.addWidget(self._swatch, alignment=Qt.AlignVCenter)
-        name_row.addWidget(self._name_label, stretch=1)
-        name_row.addWidget(self._details_btn)
-
-        self._stats_label = QLabel('')
-        # Indent to roughly line up under the name (past the swatch).
-        self._stats_label.setStyleSheet('color: #475569; padding-left: 18px;')
-        self._stats_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-
-        outer.addLayout(name_row)
-        outer.addWidget(self._stats_label)
-        outer.addStretch()
-
-        self.refresh()
-
-    def refresh(self):
-        '''Re-read the current format + its items. Close any open popup
-        first so its data can't drift behind the displayed summary.'''
+    def refresh(self, unlisted_cost=0.0):
+        '''Re-read the current format + its items. `unlisted_cost` is
+        the recipe cost the grid doesn't show (packaging), used when
+        there's no format to explain it.'''
         self._close_popup()
-
         tag = db.get_recipe_tag(self.recipe_id)
-        self._cached_tag = tag
+        self._tag = tag
         if not tag:
-            self._cached_items = []
-            self._cached_mults = []
-            self._swatch.setStyleSheet('background: transparent;')
-            self._name_label.setText(
-                '<i style="color:#64748b;">No format applied</i>'
-            )
-            self._stats_label.setText('')
-            self._details_btn.setEnabled(False)
+            self._items, self._mults = [], []
+            if unlisted_cost >= 0.005:
+                self.setText(f'Also in cost, not listed: packaging · ${unlisted_cost:.2f}')
+                self.show()
+            else:
+                self.hide()
             return
 
-        items = db.get_tag_components(tag['id'])
-        mults = [
-            m for m in db.get_tag_category_multipliers(tag['id'])
-            if abs(m['multiplier'] - 1.0) > 1e-9
-        ]
-        self._cached_items = items
-        self._cached_mults = mults
+        self._items = db.get_tag_components(tag['id'])
+        self._mults = [m for m in db.get_tag_category_multipliers(tag['id'])
+                       if abs(m['multiplier'] - 1.0) > 1e-9]
+        total = sum(float(it.get('UnitCost') or 0) * float(it.get('quantity') or 0)
+                    for it in self._items)
+        color = _color(tag)
+        parts = [f'<span style="color: {color}">■</span> <b style="color: {_KALE}">'
+                 f'{_esc(tag["name"])}</b> template']
+        n = len(self._items)
+        parts.append(f"{n} item{'' if n == 1 else 's'}")
+        if self._items:
+            parts.append(f'${total:.2f}')
+        if self._mults:
+            m = len(self._mults)
+            parts.append(f"{m} portion override{'' if m == 1 else 's'}")
+        text = ' · '.join(parts)
+        if self._items or self._mults:
+            text += f' · <a href="details" style="color: {_ROMAINE}">Details</a>'
+        self.setText(text)
+        self.setToolTip('Items this format adds to every recipe, and how it scales'
+                        ' portions. Edit in Configure › Formats & templates.')
+        self.show()
 
-        color = QColor(tag.get('color') or '#64748b')
-        if not color.isValid():
-            color = QColor('#64748b')
-        self._swatch.setStyleSheet(
-            f'background: {color.name()}; border-radius: 3px;'
-        )
+    # --- flyout --------------------------------------------------------
 
-        total_cost = sum(
-            float(it.get('UnitCost') or 0) * float(it.get('quantity') or 0)
-            for it in items
-        )
-        self._name_label.setText(f"<b>{tag['name']}</b>")
-        # Stats live on their own row so they're always fully visible,
-        # regardless of how cramped the Details button makes row 1.
-        mult_suffix = (
-            f'  ·  {len(mults)} override{"" if len(mults)==1 else "s"}'
-            if mults else ''
-        )
-        self._stats_label.setText(
-            f"{len(items)} item{'' if len(items)==1 else 's'}"
-            f"  ·  ${total_cost:.2f}{mult_suffix}"
-        )
-        self._details_btn.setEnabled(bool(items or mults))
-
-    def _on_details(self):
-        # Toggle: if a popup is already showing, close it. _close_popup
-        # tolerates a stale C++ object from WA_DeleteOnClose so a second
-        # button click after a click-outside doesn't blow up.
+    def _toggle_popup(self):
         if self._popup_is_visible():
             self._close_popup()
             return
         # Stale ref (popup was deleted by Qt.Popup auto-close earlier) —
         # drop it before creating a fresh popup.
-        self._popup = None
-
-        popup = _TemplateDetailsPopup(
-            self._cached_tag, self._cached_items, self._cached_mults, self,
-        )
-        # Clear our reference once the C++ object goes away so the next
-        # click sees `self._popup is None` and creates a fresh popup.
-        popup.destroyed.connect(self._on_popup_destroyed)
-        self._popup = popup
-        # Position just under the Details button. Qt.Popup auto-dismisses
-        # on click-outside.
-        anchor = self._details_btn.mapToGlobal(QPoint(0, self._details_btn.height() + 2))
-        popup.move(anchor)
-        popup.show()
+        self._popup = _TemplateDetailsPopup(self._tag, self._items, self._mults, self)
+        self._popup.destroyed.connect(self._on_popup_destroyed)
+        # Open upward if there's no room below (the line sits at the
+        # bottom of the components card).
+        self._popup.adjustSize()
+        below = self.mapToGlobal(QPoint(16, self.height()))
+        screen = self.screen().availableGeometry() if self.screen() else None
+        if screen is not None and below.y() + self._popup.height() > screen.bottom():
+            below = self.mapToGlobal(QPoint(16, -self._popup.height()))
+        self._popup.move(below)
+        self._popup.show()
 
     def _popup_is_visible(self):
-        '''True iff self._popup is alive and currently shown. Catches the
-        RuntimeError raised when the C++ object behind the Python ref has
-        already been deleted (e.g. by Qt.Popup + WA_DeleteOnClose).'''
+        '''True iff self._popup is alive and shown. Catches the
+        RuntimeError raised when Qt.Popup + WA_DeleteOnClose has already
+        deleted the C++ object behind the Python ref.'''
         if self._popup is None:
             return False
         try:
@@ -177,79 +127,80 @@ class TemplateSummaryWidget(QGroupBox):
 
 
 class _TemplateDetailsPopup(QWidget):
-    '''Flyout shown when the user clicks Details on the summary. Qt.Popup
-    window flag makes it dismiss on click-outside, Escape, or focus loss;
-    WA_DeleteOnClose drops the C++ object on dismiss so the parent's
-    `self._popup` ref goes stale and gets cleared via the destroyed
-    signal (see TemplateSummaryWidget._on_popup_destroyed).
+    '''Flyout for the Details link. Qt.Popup dismisses it on
+    click-outside, Escape, or focus loss; WA_DeleteOnClose drops the
+    C++ object so the line's ref goes stale and is cleared via the
+    destroyed signal.
 
-    Content: header (swatch + template name) → bulleted item list with
-    quantities → optional "── Portion overrides ──" section with any
-    non-1.0 category multipliers.'''
+    Content: "<format> adds" → a table of items (name, qty × unit,
+    cost) → "Portion overrides" with any non-×1 category multipliers.'''
 
-    POPUP_WIDTH = 320
+    POPUP_WIDTH = 360
 
     def __init__(self, tag, items, multipliers, parent=None):
         super().__init__(parent)
-        # Qt.Popup is the magic flag — without it the widget acts like a
-        # normal floating window and doesn't auto-close.
         self.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_DeleteOnClose)
 
         frame = QFrame(self)
-        frame.setObjectName('PopupFrame')
-        frame.setStyleSheet(
-            '#PopupFrame { background: white; border: 1px solid #cbd5e1;'
-            ' border-radius: 4px; }'
-        )
-
+        frame.setObjectName('TemplatePopup')
+        frame.setStyleSheet(f'QFrame#TemplatePopup {{ background: #ffffff;'
+                            f' border: 1px solid {_BORDER}; border-radius: 8px; }}'
+                            f' QLabel {{ color: {_KALE}; }}')
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(frame)
 
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(6)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
+        layout.addWidget(QLabel(
+            f'<span style="color: {_color(tag)}">■</span> <b>{_esc(tag["name"])}</b> adds'))
 
-        color = QColor(tag.get('color') or '#64748b')
-        if not color.isValid():
-            color = QColor('#64748b')
-        header = QLabel(
-            f'<span style="color:{color.name()};">■</span>  '
-            f"<b>{tag['name']}</b> adds:"
-        )
-        header.setTextFormat(Qt.RichText)
-        layout.addWidget(header)
-
-        items_list = QListWidget()
-        items_list.setSelectionMode(QAbstractItemView.NoSelection)
-        items_list.setFocusPolicy(Qt.NoFocus)
-        items_list.setFrameShape(QFrame.NoFrame)
-        items_list.setUniformItemSizes(True)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(4)
         if not items:
-            empty = QListWidgetItem('  (no items)')
-            empty.setFlags(empty.flags() & ~Qt.ItemIsSelectable)
-            items_list.addItem(empty)
-        else:
-            for it in items:
-                qty = _fmt_qty(it['quantity'])
-                items_list.addItem(f"• {it['Name']} × {qty}")
-        layout.addWidget(items_list)
+            grid.addWidget(_muted('No items'), 0, 0)
+        for r, it in enumerate(items):
+            qty = _fmt_qty(it['quantity'])
+            cost = float(it.get('UnitCost') or 0) * float(it.get('quantity') or 0)
+            grid.addWidget(QLabel(_esc(it['Name'])), r, 0)
+            grid.addWidget(_muted(f"× {qty} {_esc(it.get('Unit') or '')}".rstrip()), r, 1)
+            price = QLabel(f'${cost:.2f}')
+            price.setAlignment(Qt.AlignRight)
+            grid.addWidget(price, r, 2)
+        grid.setColumnStretch(0, 1)
+        layout.addLayout(grid)
 
         if multipliers:
-            divider = QLabel('── Portion overrides ──')
-            divider.setStyleSheet('color:#64748b; font-style: italic;')
-            layout.addWidget(divider)
+            rule = QFrame()
+            rule.setFixedHeight(1)
+            rule.setStyleSheet(f'background: {_RULE};')
+            layout.addWidget(rule)
+            layout.addWidget(QLabel('<b>Portion overrides</b>'))
             for m in multipliers:
-                layout.addWidget(
-                    QLabel(f"  {m['category_name']} × {_fmt_qty(m['multiplier'])}"),
-                )
+                layout.addWidget(QLabel(
+                    f'<span style="color: {m.get("category_color") or _MUTED}">●</span> '
+                    f'{_esc(m["category_name"])} × {_fmt_qty(m["multiplier"])}'))
 
-        # Size the flyout enough to comfortably show ~6 list rows plus the
-        # header (and any multipliers). Width is a fixed compact value.
-        items_list.setMinimumHeight(min(len(items) * 22 + 8, 160))
+        layout.addWidget(_muted('Edit in Configure › Formats & templates.'))
         self.setFixedWidth(self.POPUP_WIDTH)
-        self.adjustSize()
+
+
+def _muted(text):
+    lbl = QLabel(text)
+    lbl.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
+    return lbl
+
+
+def _color(tag):
+    color = QColor((tag or {}).get('color') or '#94a3b8')
+    return color.name() if color.isValid() else '#94a3b8'
+
+
+def _esc(text):
+    return str(text).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
 
 def _fmt_qty(value):

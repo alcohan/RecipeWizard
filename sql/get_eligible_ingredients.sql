@@ -2,6 +2,8 @@
 -- carries the component's tag name + color for the badge painted by the
 -- picker delegate — recipes show their format tag, ingredients their
 -- category tag. NULLs are fine; the delegate renders a generic fallback.
+-- Cost and Calories are per unit (for a sub-recipe, per unit of its
+-- yield) so the picker can preview what a quantity adds.
 WITH tree AS (
     SELECT ? AS ParentRecipe
 
@@ -15,8 +17,10 @@ SELECT r.Id, 'recipe' AS Type, r.Name, r.Unit,
     (SELECT t.name FROM tags t JOIN recipe_tags_mapping rtm ON rtm.tag_id=t.id
      WHERE rtm.recipe_id=r.Id AND t.kind='recipe' LIMIT 1) AS TagName,
     (SELECT t.color FROM tags t JOIN recipe_tags_mapping rtm ON rtm.tag_id=t.id
-     WHERE rtm.recipe_id=r.Id AND t.kind='recipe' LIMIT 1) AS TagColor
+     WHERE rtm.recipe_id=r.Id AND t.kind='recipe' LIMIT 1) AS TagColor,
+    rtv.Cost, rtv.Calories
 FROM Recipes r
+LEFT JOIN RecipeTotalValues rtv ON rtv.Id = r.Id
 WHERE r.Id NOT IN (SELECT ParentRecipe FROM tree)
 
 UNION
@@ -24,6 +28,7 @@ SELECT i.Id, 'ingredient' AS Type, i.Name, i.Unit,
     (SELECT t.name FROM tags t JOIN ingredient_tags_mapping itm ON itm.tag_id=t.id
      WHERE itm.ingredient_id=i.Id AND t.kind='ingredient' LIMIT 1) AS TagName,
     (SELECT t.color FROM tags t JOIN ingredient_tags_mapping itm ON itm.tag_id=t.id
-     WHERE itm.ingredient_id=i.Id AND t.kind='ingredient' LIMIT 1) AS TagColor
+     WHERE itm.ingredient_id=i.Id AND t.kind='ingredient' LIMIT 1) AS TagColor,
+    i.Cost, i.Calories
 FROM Ingredients i
 ORDER BY Name;

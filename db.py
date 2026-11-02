@@ -852,6 +852,57 @@ def get_recipe_allergens(recipe_id):
     return [row['name'] for row in rows]
 
 
+def get_recipe_allergen_sources(recipe_id):
+    '''[(allergen, [component names])] for the editor's rolled-up
+    allergen list: each allergen in the recipe's tree and the direct
+    components that bring it in (an ingredient, or a sub-recipe whose
+    tree contains it). Canonical allergen order.'''
+    sql = '''
+        SELECT a.name AS allergen, COALESCE(r.Name, i.Name) AS source
+        FROM Connections c
+        LEFT JOIN Ingredients i ON i.Id = c.ChildIngredient
+        LEFT JOIN Recipes r ON r.Id = c.ChildRecipe
+        JOIN allergens a ON a.id IN (
+            SELECT allergen_id FROM ingredient_allergens WHERE ingredient_id = c.ChildIngredient
+            UNION
+            SELECT allergen_id FROM RecipeAllergens WHERE recipe_id = c.ChildRecipe
+        )
+        WHERE c.ParentRecipe = ?
+        ORDER BY a.sortOrder, a.id, c.SortOrder;
+    '''
+    out = {}
+    for row in query(sql, (recipe_id,))['data']:
+        out.setdefault(row['allergen'], [])
+        if row['source'] not in out[row['allergen']]:
+            out[row['allergen']].append(row['source'])
+    return list(out.items())
+
+
+def get_parent_recipes(recipe_id):
+    '''Recipes that use this one directly as a sub-recipe.'''
+    sql = '''
+        SELECT DISTINCT r.Id, r.Name
+        FROM Connections c
+        JOIN Recipes r ON r.Id = c.ParentRecipe
+        WHERE c.ChildRecipe = ?
+        ORDER BY r.Name COLLATE NOCASE ASC;
+    '''
+    return query(sql, (recipe_id,))['data']
+
+
+def get_component_allergen_maps():
+    '''({ingredient_id: {names}}, {recipe_id: {names}}) — what each
+    possible component would bring in. Two queries, used by the
+    add-component picker to say which allergens an addition is new.'''
+    ingredients, recipes = {}, {}
+    for r in query('SELECT ia.ingredient_id AS id, a.name FROM ingredient_allergens ia'
+                   ' JOIN allergens a ON a.id = ia.allergen_id;')['data']:
+        ingredients.setdefault(r['id'], set()).add(r['name'])
+    for r in query('SELECT recipe_id AS id, name FROM RecipeAllergens;')['data']:
+        recipes.setdefault(r['id'], set()).add(r['name'])
+    return ingredients, recipes
+
+
 def get_all_allergens():
     '''All allergen names in canonical display order (allergens.sortOrder,
     id). Used by the facet pane to render Free-From chips.'''
