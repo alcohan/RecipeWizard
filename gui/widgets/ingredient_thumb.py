@@ -1,20 +1,19 @@
 '''Square thumbnail widget for an ingredient.
 
-Prefers the ingredient's ImageFilename when present; falls back to a
-tag-colored tile carrying the ingredient's first initial so image-less
-ingredients still convey their category at a glance.
+Shows a tag-colored tile with the ingredient's initial straight away,
+then swaps in the photo when the background loader (gui.thumbs) has it
+— from the thumbnail cache, so after the first time it's near-instant.
+Building a gallery of these never decodes a photo on the UI thread.
 
-Used by both the home tab's "Recently edited" strip and the ingredients
-gallery card, so the visual treatment stays consistent.
+Used by the ingredients gallery cards, the Ingredients inspector and
+the Edit ingredient dialog, so the visual treatment stays consistent.
 '''
-import os
-
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import QLabel
 
-import config
 import db
+from gui.thumbs import load_thumbnail
 
 
 class IngredientThumb(QLabel):
@@ -25,11 +24,17 @@ class IngredientThumb(QLabel):
     hundreds of these at once and a per-thumb db.get_ingredients() call
     is what was making cold-open take seconds. When any of those args
     is None, the thumb falls back to a single DB lookup, which still
-    works for one-off callers but should be avoided in tight loops.'''
+    works for one-off callers but should be avoided in tight loops.
+
+    `tint=True` draws the fallback tile as a pale wash of the category
+    color with a kale initial (the Framework canvas's avatar style)
+    instead of a solid color with a white initial.'''
 
     def __init__(self, ingredient_id, size, *, name=None, image_filename=None,
-                 tag_color=None, parent=None):
+                 tag_color=None, radius=4, tint=False, parent=None):
         super().__init__(parent)
+        self._size = size
+        self._radius = radius
         self.setFixedSize(size, size)
         self.setAlignment(Qt.AlignCenter)
 
@@ -45,33 +50,28 @@ class IngredientThumb(QLabel):
             if tag_color is None:
                 tag_color = ing.get('TagColor')
 
-        pixmap = _load_ingredient_pixmap(image_filename, size)
-        if pixmap is not None:
-            self.setStyleSheet('background: transparent; border-radius: 4px;')
-            self.setPixmap(pixmap)
-            return
+        self._show_initial(name, tag_color, tint)
+        load_thumbnail(image_filename, size, self._apply_image)
 
-        # Letter-on-tag-color fallback. Font size scales with the tile so
-        # the same widget reads well at the 56px recents thumb and the
-        # bigger gallery-card sizes.
-        color = tag_color or '#bbb'
+    def _show_initial(self, name, tag_color, tint):
+        # Font size scales with the tile so the same widget reads well at
+        # the 32px table avatar and the bigger gallery-card sizes.
         nm = (name or '').strip()
         initial = nm[0].upper() if nm else '?'
-        font_pt = max(10, int(size * 0.36))
-        self.setStyleSheet(
-            f'background-color: {color}; border-radius: 4px;'
-            f' color: white; font-weight: bold; font-size: {font_pt}pt;'
-        )
+        font_px = max(11, int(self._size * 0.42))
+        color = QColor(tag_color or '#bbbbbb')
+        if tint:
+            wash = QColor(255 - int((255 - color.red()) * 0.22),
+                          255 - int((255 - color.green()) * 0.22),
+                          255 - int((255 - color.blue()) * 0.22))
+            style = f'background-color: {wash.name()}; color: #082c00;'
+        else:
+            style = f'background-color: {color.name()}; color: white;'
+        self.setStyleSheet(f'{style} border-radius: {self._radius}px;'
+                           f' font-weight: 600; font-size: {font_px}px;')
         self.setText(initial)
 
-
-def _load_ingredient_pixmap(filename, size):
-    if not filename:
-        return None
-    path = os.path.join(config.INGREDIENTS_PATH, filename)
-    if not os.path.isfile(path):
-        return None
-    pixmap = QPixmap(path)
-    if pixmap.isNull():
-        return None
-    return pixmap.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+    def _apply_image(self, image):
+        self.setText('')
+        self.setStyleSheet(f'background: transparent; border-radius: {self._radius}px;')
+        self.setPixmap(QPixmap.fromImage(image))

@@ -48,11 +48,24 @@ class RecipeWizardStatusBar(QFrame):
         self._counts_label = QLabel('')
         self._prices_label = QLabel('')
         self._backup_label = QLabel('')
-        self._tray_label = QLabel('')
+        self._unsaved_label = QLabel('')
+        self._unsaved_label.setStyleSheet('color: #8a4a00; font-weight: 600;')
+        self._unsaved_label.hide()
+        # Tray chip: always visible so the collapsed tray has a home.
+        # Click (or Ctrl+Shift+C) flips collapsed ↔ docked.
+        self._tray_count = 0
+        self._tray_docked = False
+        self._tray_label = _TrayChip()
+        self._tray_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
         self._tray_label.setProperty('role', 'link')
         self._tray_label.setCursor(Qt.PointingHandCursor)
+        self._tray_label.setToolTip('Show / hide the compare tray (Ctrl+Shift+C)')
         self._tray_label.mousePressEvent = self._on_tray_click
-        self._tray_label.hide()  # Shown by set_compare_tray_count when there's one
+        # Fixed width (see _TrayChip), centred text: the count and the
+        # ▴/▾ change, but the chip never shifts, so collapsing is a click
+        # in the same spot that opened the tray.
+        self._tray_label.setAlignment(Qt.AlignCenter)
+        self._update_tray_chip()
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(16, 6, 16, 6)
@@ -60,6 +73,7 @@ class RecipeWizardStatusBar(QFrame):
         layout.addWidget(self._counts_label)
         layout.addWidget(self._prices_label)
         layout.addWidget(self._backup_label)
+        layout.addWidget(self._unsaved_label)
         layout.addStretch()
         layout.addWidget(self._tray_label)
 
@@ -91,16 +105,47 @@ class RecipeWizardStatusBar(QFrame):
         self._backup_label.setText(last_backup)
 
     def set_compare_tray_count(self, n):
-        '''Called by the compare-tray service when membership changes.
-        Hides the label at zero so an idle status bar is clean.'''
-        if n <= 0:
-            self._tray_label.hide()
-        else:
-            self._tray_label.setText(f'Compare tray · {n} →')
-            self._tray_label.show()
+        '''Called by the compare-tray service when membership changes.'''
+        self._tray_count = max(0, n)
+        self._update_tray_chip()
+
+    def set_compare_tray_docked(self, docked):
+        '''▾ when the docked strip is showing (click collapses it),
+        ▴ when collapsed (click docks it).'''
+        self._tray_docked = bool(docked)
+        self._update_tray_chip()
+
+    def set_unsaved_count(self, n):
+        '''Unsaved edits in the current recipe tab; zero hides it.'''
+        if n:
+            self._unsaved_label.setText(
+                f"Unsaved changes · {n} edit{'s' if n != 1 else ''}"
+            )
+        self._unsaved_label.setVisible(bool(n))
+
+    def _update_tray_chip(self):
+        arrow = '▾' if self._tray_docked else '▴'
+        self._tray_label.setText(f'Compare tray · {self._tray_count} {arrow}')
 
     def _on_tray_click(self, _event):
         self.compareTrayClicked.emit()
+
+
+class _TrayChip(QLabel):
+    '''Status-bar chip whose width is always that of its widest text,
+    measured at layout time with the font and padding it actually has
+    (measuring at construction ran before the stylesheet applied).'''
+
+    _WIDEST = 'Compare tray · 999 ▾'
+    _PADDING = 2 * 10 + 8   # stylesheet's left+right padding, plus slack
+
+    def sizeHint(self):
+        hint = super().sizeHint()
+        hint.setWidth(self.fontMetrics().horizontalAdvance(self._WIDEST) + self._PADDING)
+        return hint
+
+    def minimumSizeHint(self):
+        return self.sizeHint()
 
 
 def _latest_price_date():

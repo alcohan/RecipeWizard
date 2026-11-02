@@ -12,7 +12,9 @@ or 'none'. The Tags Manager lets the user pick a shape per recipe tag, so
 custom user tags can re-use any of the shapes.
 '''
 from functools import lru_cache
+import hashlib
 from io import BytesIO
+import threading
 from math import pi, cos, sin
 import os
 
@@ -47,14 +49,48 @@ def _palette_color(key):
     return PALETTE[hash(key) % len(PALETTE)]
 
 
+_SOURCE_MAX = 720  # wedges render at most ~220 px × SUPERSAMPLE
+
+
+def _reduced_source(path):
+    '''Path to a copy of the photo no bigger than _SOURCE_MAX on a side,
+    made once and kept under <data>/thumbs/wedge. Photos are often
+    ~1700 px PNGs; decoding those for every wedge was most of the cost
+    of rendering a gallery. Falls back to the original on any error.'''
+    try:
+        st = os.stat(path)
+        key = f'{os.path.basename(path)}|{st.st_size}|{int(st.st_mtime)}'
+        digest = hashlib.sha1(key.encode('utf-8')).hexdigest()[:16]
+        cache_dir = os.path.join(config.user_data_dir(), 'thumbs', 'wedge')
+        stem = os.path.splitext(os.path.basename(path))[0][:40]
+        cached = os.path.join(cache_dir, f'{stem}-{digest}.png')
+        if os.path.isfile(cached):
+            return cached
+        with Image.open(path) as img:
+            if max(img.size) <= _SOURCE_MAX:
+                return path
+            img = img.convert('RGBA')
+            img.thumbnail((_SOURCE_MAX, _SOURCE_MAX), Image.LANCZOS)
+            os.makedirs(cache_dir, exist_ok=True)
+            # Temp name + rename: wedges render on several threads, and a
+            # reader must never open a half-written cache file.
+            tmp = f'{cached}.{os.getpid()}.{threading.get_ident()}.tmp'
+            img.save(tmp, 'PNG')
+            os.replace(tmp, cached)
+        return cached
+    except Exception:
+        return path
+
+
 @lru_cache(maxsize=256)
 def _zoomed_square(path, size):
     '''Load image, center-square-crop, zoom in, resize to (size, size). Returns RGBA Image or None.
 
     Cached: ingredients are reused across many recipes, so the gallery's
-    cold render goes from "open+resize the same PNG 5x" to once.'''
+    cold render goes from "open+resize the same PNG 5x" to once. Large
+    photos are read from a reduced copy (see _reduced_source).'''
     try:
-        img = Image.open(path).convert('RGBA')
+        img = Image.open(_reduced_source(path)).convert('RGBA')
     except Exception as exc:
         print(f'wedge_renderer: failed to open {path}: {exc}')
         return None
