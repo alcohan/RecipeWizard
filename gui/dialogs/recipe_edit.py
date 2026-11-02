@@ -15,15 +15,22 @@ QUndoStack.indexChanged drives the refresh that re-reads
 RecipesWithNutrition, redraws the wedge, and re-syncs the editable
 demographic fields.
 
+Explicit save: each command still writes to the DB as it's pushed
+(cost, nutrition and the wedge are computed by SQL views, so live
+results need the rows in place), but the undo stack's clean index is
+the saved state. Save (Ctrl+S) marks the stack clean; closing with
+unsaved edits asks Save / Discard / Cancel, and Discard rewinds the
+stack to the clean index, undoing every command since the last save.
+
 UX notes:
-- Name / Yield Unit / Recipe Yield / Menu Price auto-save on
-  focus-out or Enter; there is no explicit "Update" button.
+- Name / Yield Unit / Recipe Yield / Menu Price apply on focus-out
+  or Enter, like every other edit, and count toward unsaved changes.
 - Component quantities are edited inline (double-click, or right-click
   Edit).
 - Right-click a component also exposes Remove.
 '''
 from PySide6.QtCore import Qt, QSettings, Signal
-from PySide6.QtGui import QDoubleValidator, QKeySequence, QUndoStack
+from PySide6.QtGui import QDoubleValidator, QKeySequence, QShortcut, QUndoStack
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QFormLayout, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton,
@@ -75,7 +82,9 @@ class RecipeEditWidget(QWidget):
 
     titleChanged = Signal(str)       # recipe's current name — tab/window title
     recipeDeleted = Signal(int)      # recipe_id, fired after confirm + DB delete
-    modifiedChanged = Signal(bool)   # true once any undo-stack push has fired
+    modifiedChanged = Signal(bool)   # true while there are unsaved edits
+    dirtyCountChanged = Signal(int)  # number of edits since the last save
+    saved = Signal(int)              # recipe_id, after Save
 
     def __init__(self, recipe_id, parent=None):
         super().__init__(parent)
@@ -92,6 +101,7 @@ class RecipeEditWidget(QWidget):
         # push; cleanChanged(True) fires again if an undo returns to
         # the saved baseline.
         self.undo_stack.cleanChanged.connect(self._on_clean_changed)
+        self.undo_stack.indexChanged.connect(self._on_index_changed)
 
         # Bring the recipe in line with its current format's template
         # before reading anything else — fixes sample-seeded recipes
@@ -134,9 +144,26 @@ class RecipeEditWidget(QWidget):
         delete_btn.setAutoDefault(False)
         delete_btn.setDefault(False)
         delete_btn.clicked.connect(self._on_delete)
+
+        self.unsaved_label = QLabel('')
+        self.unsaved_label.setStyleSheet('color: #8a4a00; font-weight: 600;')
+        self.save_btn = QPushButton('Save  Ctrl+S')
+        self.save_btn.setEnabled(False)
+        self.save_btn.setAutoDefault(False)
+        self.save_btn.setStyleSheet(
+            'QPushButton { background-color: #347200; color: white;'
+            ' border: 0; border-radius: 6px; padding: 6px 14px;'
+            ' font-weight: 600; }'
+            ' QPushButton:hover { background-color: #285900; }'
+            ' QPushButton:disabled { background-color: #c9d1bf; color: #f4f1ea; }'
+        )
+        self.save_btn.clicked.connect(self.save)
+
         action_row = QHBoxLayout()
-        action_row.addStretch()
         action_row.addWidget(delete_btn)
+        action_row.addStretch()
+        action_row.addWidget(self.unsaved_label)
+        action_row.addWidget(self.save_btn)
 
         self.splitter = QSplitter(Qt.Horizontal)
         self.splitter.addWidget(left_col)
@@ -161,12 +188,40 @@ class RecipeEditWidget(QWidget):
     def title(self):
         return self._title
 
+    def dirty_count(self):
+        '''Edits since the last save (or since opening). An undo past
+        the saved point counts too — it's still a change to save.'''
+        clean = self.undo_stack.cleanIndex()
+        index = self.undo_stack.index()
+        return index if clean < 0 else abs(index - clean)
+
+    def save(self):
+        '''Make the current state the saved state: flush any in-flight
+        field edit, stamp the cost snapshot, mark the stack clean.'''
+        if self._being_deleted:
+            return
+        self._maybe_commit_info()
+        try:
+            db.update_recipe_cost_snapshot(self.recipe_id)
+        except Exception:
+            pass
+        self.undo_stack.setClean()
+        self.status_message = f"Saved '{self._title}'"
+        self.saved.emit(self.recipe_id)
+        self._refresh()
+
+    def discard(self):
+        '''Rewind every edit since the last save.'''
+        clean = self.undo_stack.cleanIndex()
+        if clean >= 0:
+            self.undo_stack.setIndex(clean)
+
     def close_requested(self):
         '''Called by the container (tab bar or modal wrapper) when this
-        widget is about to go away. Flushes any pending demographic
-        edit, stamps the cost snapshot, saves the splitter state.
-        Returns True to allow the close; there's no "unsaved prompt"
-        today because every edit auto-commits.'''
+        widget is about to go away. Flushes any pending field edit and,
+        if there are unsaved edits, asks Save / Discard / Cancel. Then
+        stamps the cost snapshot and saves the splitter state. Returns
+        False if the user cancelled.'''
         if self._being_deleted:
             # Row's gone — skip _maybe_commit_info (it would push a
             # bogus UpdateRecipeInfoCommand against the vanished id)
@@ -174,6 +229,20 @@ class RecipeEditWidget(QWidget):
             QSettings().setValue('recipeEditor/splitter', self.splitter.saveState())
             return True
         self._maybe_commit_info()
+        if self.modified:
+            n = self.dirty_count()
+            answer = QMessageBox.question(
+                self, 'Unsaved changes',
+                f"Save {n} change{'s' if n != 1 else ''} to '{self._title}'?",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Save,
+            )
+            if answer == QMessageBox.Cancel:
+                return False
+            if answer == QMessageBox.Save:
+                self.save()
+            else:
+                self.discard()
         try:
             db.update_recipe_cost_snapshot(self.recipe_id)
         except Exception:
@@ -431,6 +500,14 @@ class RecipeEditWidget(QWidget):
         self.modified = not is_clean
         if self.modified != was_modified:
             self.modifiedChanged.emit(self.modified)
+        self.save_btn.setEnabled(self.modified)
+
+    def _on_index_changed(self, _index):
+        n = self.dirty_count()
+        self.unsaved_label.setText(
+            f"{n} unsaved change{'s' if n != 1 else ''}" if n else ''
+        )
+        self.dirtyCountChanged.emit(n)
 
     def _maybe_commit_info(self):
         '''Auto-save the recipe demographic fields. Wired to each input's
@@ -471,6 +548,19 @@ class RecipeEditWidget(QWidget):
         self.undo_stack.push(SetRecipeTagCommand(
             self.recipe_id, prev_tag_id, new_tag_id, label,
         ))
+
+    # Public entry points for the main window's Recipe menu.
+    def add_component(self):
+        self._on_add_component()
+
+    def show_nutrition_label(self):
+        self._on_nutrition_label()
+
+    def show_price_history(self):
+        self._on_price_history()
+
+    def delete_recipe(self):
+        self._on_delete()
 
     def _on_add_component(self):
         dlg = RecipeComponentAddDialog(self.recipe_id, self.name_edit.text(), parent=self)
@@ -600,6 +690,8 @@ class RecipeEditDialog(QDialog):
         close_btn.setAutoDefault(False)
         close_btn.setDefault(False)
         close_btn.clicked.connect(self.reject)
+        save_sc = QShortcut(QKeySequence.Save, self)
+        save_sc.activated.connect(self.widget.save)
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         btn_row.addWidget(close_btn)
@@ -623,7 +715,8 @@ class RecipeEditDialog(QDialog):
         return self.widget.status_message
 
     def done(self, result):
-        self.widget.close_requested()
+        if not self.widget.close_requested():
+            return
         super().done(result)
 
 
