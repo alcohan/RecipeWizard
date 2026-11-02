@@ -3,7 +3,9 @@
 Shows a thumbnail (image or tag-colored letter fallback), the
 ingredient name, and a small colored tag pill when categorized.
 Mirrors _RecipeCard's interaction model: the whole frame is clickable
-and emits `clicked(int)` with the ingredient id.
+and emits `clicked(int)` (select) and `doubleClicked(int)` (open) with
+the ingredient id. `set_selected` gives the card the canvas's selected
+look (parmesan wash, romaine border).
 '''
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
@@ -22,6 +24,7 @@ class IngredientCard(QFrame):
     of where on the card the user clicks.'''
 
     clicked = Signal(int)
+    doubleClicked = Signal(int)
 
     def __init__(self, ingredient_id, name, tag_name=None, tag_color=None,
                  image_filename=None, parent=None):
@@ -39,6 +42,10 @@ class IngredientCard(QFrame):
                 border-color: #347200;
                 background-color: #e9f1d9;
             }
+            QFrame#IngredientCard[selected="true"] {
+                border: 2px solid #347200;
+                background-color: #fff1da;
+            }
             QFrame#IngredientCard QLabel { border: 0; background: transparent; }
         ''')
         self.setCursor(Qt.PointingHandCursor)
@@ -47,9 +54,11 @@ class IngredientCard(QFrame):
         # Pass model data through to the thumb so it doesn't issue its own
         # db.get_ingredients() — building hundreds of cards at startup was
         # generating one SQL query each, which made cold-open take seconds.
+        # '' rather than None: None means "unknown, look it up", which cost
+        # one query per photo-less card on every gallery rebuild.
         thumb = IngredientThumb(
             ingredient_id, size=_THUMB_SIZE,
-            name=name, image_filename=image_filename, tag_color=tag_color,
+            name=name or '', image_filename=image_filename or '', tag_color=tag_color or '',
         )
         thumb.setAttribute(Qt.WA_TransparentForMouseEvents)
 
@@ -82,7 +91,20 @@ class IngredientCard(QFrame):
         layout.addLayout(tag_row)
         layout.addStretch()
 
+    def set_selected(self, selected):
+        if bool(self.property('selected')) == bool(selected):
+            return
+        self.setProperty('selected', bool(selected))
+        # Re-polish so the [selected] stylesheet rule applies.
+        self.style().unpolish(self)
+        self.style().polish(self)
+
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.clicked.emit(self.ingredient_id)
         super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.doubleClicked.emit(self.ingredient_id)
+        super().mouseDoubleClickEvent(event)

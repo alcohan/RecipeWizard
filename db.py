@@ -58,6 +58,100 @@ def get_ingredients(id=0):
         return query(base_sql + ' WHERE i.Id=?', (id,), one=True)
     return query(base_sql + ' ORDER BY i.Name COLLATE NOCASE ASC')['data']
 
+def get_ingredient_library(change_days=90):
+    '''Everything the Ingredients place shows, one row per ingredient,
+    in a single query (no per-row lookups):
+
+      category (TagId / TagName / TagColor / TagSort), latest price
+      (unit price, case price, units per case, supplier, date),
+      PrevPrice / PrevDate (the price before the latest one, for
+      "+8.2% since Sep 1"), BasePrice (the price in effect
+      `change_days` ago — or the oldest within the window — for the
+      table's 90-day change), UsedIn (recipes using it directly),
+      Allergens (comma-joined, canonical order) and PriceCount.
+
+    Ordered by category order, then name.'''
+    sql = f'''
+        WITH ranked AS (
+            SELECT p.*, ROW_NUMBER() OVER (
+                PARTITION BY p.ingredient_id
+                ORDER BY p.effective_date DESC, p.id DESC) AS rn
+            FROM ingredient_prices p
+            WHERE p.effective_date <= date('now')
+        ),
+        cat AS (
+            SELECT itm.ingredient_id, t.id AS tag_id, t.name, t.color,
+                   COALESCE(t.sortOrder, 999) AS sort
+            FROM ingredient_tags_mapping itm
+            JOIN tags t ON t.id = itm.tag_id AND t.kind = 'ingredient'
+        )
+        SELECT i.*
+            , c.tag_id AS TagId, c.name AS TagName, c.color AS TagColor
+            , COALESCE(c.sort, 1000) AS TagSort
+            , cur.unit_price AS PriceUnit, cur.case_price AS CasePrice
+            , cur.units_per_case AS UnitsPerCase, cur.effective_date AS PriceDate
+            , cur.supplier_id AS SupplierId, s.name AS SupplierName
+            , prev.unit_price AS PrevPrice, prev.effective_date AS PrevDate
+            , COALESCE(
+                (SELECT r.unit_price FROM ranked r WHERE r.ingredient_id = i.Id
+                   AND r.effective_date <= date('now', '-{int(change_days)} day')
+                 ORDER BY r.rn LIMIT 1),
+                (SELECT r.unit_price FROM ranked r WHERE r.ingredient_id = i.Id
+                 ORDER BY r.rn DESC LIMIT 1)) AS BasePrice
+            , (SELECT COUNT(*) FROM ingredient_prices p WHERE p.ingredient_id = i.Id) AS PriceCount
+            , (SELECT COUNT(DISTINCT cn.ParentRecipe) FROM Connections cn
+               WHERE cn.ChildIngredient = i.Id) AS UsedIn
+            , (SELECT group_concat(name, ', ') FROM (
+                 SELECT a.name FROM ingredient_allergens ia
+                 JOIN allergens a ON a.id = ia.allergen_id
+                 WHERE ia.ingredient_id = i.Id ORDER BY a.sortOrder, a.id)) AS Allergens
+        FROM Ingredients i
+        LEFT JOIN cat c ON c.ingredient_id = i.Id
+        LEFT JOIN ranked cur ON cur.ingredient_id = i.Id AND cur.rn = 1
+        LEFT JOIN ranked prev ON prev.ingredient_id = i.Id AND prev.rn = 2
+        LEFT JOIN suppliers s ON s.id = cur.supplier_id
+        GROUP BY i.Id
+        ORDER BY TagSort, i.Name COLLATE NOCASE
+    '''
+    return query(sql)['data']
+
+
+def get_ingredient_usage(ingredient_id):
+    '''Recipes using this ingredient directly, with the quantity each
+    uses and that line's current cost — for the inspector's "impact of
+    the increase" list and the edit dialog's Used in list.'''
+    sql = '''
+        SELECT r.Id, r.Name, c.Quantity, i.Unit, i.Cost * c.Quantity AS LineCost
+        FROM Connections c
+        JOIN Recipes r ON r.Id = c.ParentRecipe
+        JOIN Ingredients i ON i.Id = c.ChildIngredient
+        WHERE c.ChildIngredient = ?
+        ORDER BY r.Name COLLATE NOCASE
+    '''
+    return query(sql, (ingredient_id,))['data']
+
+
+def get_ingredient_prices(ingredient_id):
+    '''Full price history, newest first, with supplier names.'''
+    sql = '''
+        SELECT p.id, p.effective_date, p.case_price, p.units_per_case, p.unit_price,
+               p.supplier_id, s.name AS supplier, p.notes
+        FROM ingredient_prices p
+        LEFT JOIN suppliers s ON s.id = p.supplier_id
+        WHERE p.ingredient_id = ?
+        ORDER BY p.effective_date DESC, p.id DESC
+    '''
+    return query(sql, (ingredient_id,))['data']
+
+
+def set_ingredient_allergens(ingredient_id, allergen_ids):
+    '''Replace the ingredient's allergen set.'''
+    query('DELETE FROM ingredient_allergens WHERE ingredient_id=?', (ingredient_id,))
+    for aid in allergen_ids:
+        query('INSERT INTO ingredient_allergens (ingredient_id, allergen_id) VALUES (?, ?)',
+              (ingredient_id, aid))
+
+
 def update_ingredient(id, values):
     '''
     Updates ingredient Id with new values
@@ -113,10 +207,14 @@ def ingredient_price_new(id, values):
     '''
     Add a new row to the ingredient_prices table
     '''
-    print('Adding new row to price history: ', values)
-
-    print(query (f'DELETE FROM ingredient_prices WHERE ingredient_id={id} AND effective_date={values[-2]}'))
-    return query(f'INSERT INTO ingredient_prices (ingredient_id, supplier_id, case_price, units_per_case, effective_date, notes) VALUES ({id},?,?,?,?,?)', values)
+    # One price per ingredient per day: a second entry on the same date
+    # replaces the first. (The date used to be interpolated unquoted, so
+    # SQLite read 2026-10-14 as subtraction and never matched.)
+    query('DELETE FROM ingredient_prices WHERE ingredient_id=? AND effective_date=?',
+          (id, values[-2]))
+    return query('INSERT INTO ingredient_prices (ingredient_id, supplier_id, case_price,'
+                 ' units_per_case, effective_date, notes) VALUES (?,?,?,?,?,?)',
+                 (id, *values))
 
 def get_suppliers(id=0):
     '''
