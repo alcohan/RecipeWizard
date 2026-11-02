@@ -55,17 +55,16 @@ class RecipeWizardStatusBar(QFrame):
         # Click (or Ctrl+Shift+C) flips collapsed ↔ docked.
         self._tray_count = 0
         self._tray_docked = False
-        self._tray_label = QLabel('')
+        self._tray_label = _TrayChip()
+        self._tray_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
         self._tray_label.setProperty('role', 'link')
         self._tray_label.setCursor(Qt.PointingHandCursor)
         self._tray_label.setToolTip('Show / hide the compare tray (Ctrl+Shift+C)')
         self._tray_label.mousePressEvent = self._on_tray_click
-        # Fixed width, centred text: the count and the ▴/▾ change, but
-        # the chip never shifts, so collapsing is a click in the same
-        # spot that opened the tray.
+        # Fixed width (see _TrayChip), centred text: the count and the
+        # ▴/▾ change, but the chip never shifts, so collapsing is a click
+        # in the same spot that opened the tray.
         self._tray_label.setAlignment(Qt.AlignCenter)
-        self._tray_label.setText('Compare tray · 999 ▾')
-        self._tray_label.setFixedWidth(self._tray_label.sizeHint().width())
         self._update_tray_chip()
 
         layout = QHBoxLayout(self)
@@ -130,6 +129,23 @@ class RecipeWizardStatusBar(QFrame):
 
     def _on_tray_click(self, _event):
         self.compareTrayClicked.emit()
+
+
+class _TrayChip(QLabel):
+    '''Status-bar chip whose width is always that of its widest text,
+    measured at layout time with the font and padding it actually has
+    (measuring at construction ran before the stylesheet applied).'''
+
+    _WIDEST = 'Compare tray · 999 ▾'
+    _PADDING = 2 * 10 + 8   # stylesheet's left+right padding, plus slack
+
+    def sizeHint(self):
+        hint = super().sizeHint()
+        hint.setWidth(self.fontMetrics().horizontalAdvance(self._WIDEST) + self._PADDING)
+        return hint
+
+    def minimumSizeHint(self):
+        return self.sizeHint()
 
 
 def _latest_price_date():

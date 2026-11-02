@@ -1,193 +1,539 @@
 '''Pick an ingredient or sub-recipe to add as a component.
 
-Uses a filterable QListWidget rather than QCompleter so the full eligible
-set is visible up front (mirrors the old PySimpleGUI listbox UX) and so
-Enter inside the filter input can't auto-pick the first item — selection
-is always explicit.
+Laid out per the Framework canvas's Add component dialog: a search
+field with a match count, an All / Ingredients / Sub-recipes switch, a
+list where each row shows its category pill (or a Sub-recipe pill),
+its name and its per-unit cost and calories, and a footer with the
+quantity and a live preview of what the addition does to the recipe —
+cost and calories per serving, any new allergens, the new total and
+food cost.
 
-A custom delegate paints a colored pill badge next to each row:
-  - Sub-recipes always show a violet "recipe" badge.
-  - Ingredients with a category tag show that tag in its color.
-  - Untagged ingredients show no badge — the name slides to the left.
-The badge text + mode + tag are all in item.text() so the typing filter
-can narrow on any of them.'''
-from PySide6.QtCore import QRect, QSize, Qt
-from PySide6.QtGui import QDoubleValidator, QKeySequence, QPainter
+Keyboard: type to filter, ↑/↓ move through the list without leaving
+the search field, Enter adds. Components already in the recipe stay
+listed but disabled ("Already in recipe · 1.5 oz").
+
+Two modes:
+- `on_add(child_id, mode, qty, name)` given (the recipe editor): each
+  Add calls it. With "Keep open to add another" checked the dialog
+  stays up for the next pick; Done closes it.
+- No callback (the templates manager): Add accepts the dialog and the
+  caller reads `selected` and `qty`, as before.
+'''
+from PySide6.QtCore import QRectF, QSettings, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QDoubleValidator, QFont, QKeySequence, QPainter, QShortcut
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QListWidget,
-    QListWidgetItem, QMessageBox, QStyle, QStyledItemDelegate, QVBoxLayout,
+    QButtonGroup, QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QListWidget, QListWidgetItem, QMessageBox, QPushButton, QStyle,
+    QStyledItemDelegate, QVBoxLayout, QWidget,
 )
 
 import config
 import db
-from gui.widgets.tag_badge import paint_tag_badge
+from gui.widgets.wedge_view import WedgeView
 
 
-# Sub-recipes always get a violet "recipe" badge regardless of which
-# format tag they happen to have. Keeps the picker focused on the
-# ingredient/sub-recipe distinction.
-_RECIPE_BADGE_COLOR = '#7c3aed'
-# Neutral fallback if an ingredient's tag color is somehow missing.
-_DEFAULT_TAG_COLOR = '#64748b'
+_KALE = '#082c00'
+_ROMAINE = '#347200'
+_MUTED = '#55624c'
+_BORDER = '#ebe1cd'
+_FIELD_BORDER = '#7d8771'
+_SELECTED_BG = '#fff1da'
+_BG = '#fffaf2'
+_MONO = "ui-monospace, 'Cascadia Mono', Consolas, monospace"
+# Neutral fallback if an ingredient's tag color is missing.
+_DEFAULT_TAG_COLOR = '#94a3b8'
+
+_ROW_ROLE = Qt.UserRole          # (id, mode, name, unit, tag, color, cost, kcal)
+_EXISTING_ROLE = Qt.UserRole + 1  # qty already in the recipe, or None
 
 
-class _ComponentTypeBadgeDelegate(QStyledItemDelegate):
-    '''Paints each row as: [colored tag badge] name (unit). Reads the row
-    tuple (id, mode, name, unit, tag_name, tag_color) from Qt.UserRole.
-    Doesn't paint item.text() — that's the filter-search target.'''
+def _tint(hex_color, amount=0.22):
+    '''Mix a category color toward white for its pill background.'''
+    c = QColor(hex_color or _DEFAULT_TAG_COLOR)
+    r = int(255 - (255 - c.red()) * amount)
+    g = int(255 - (255 - c.green()) * amount)
+    b = int(255 - (255 - c.blue()) * amount)
+    return QColor(r, g, b)
 
-    ROW_HEIGHT = 32
-    PAD_X = 8
-    BADGE_GAP = 10
+
+def _fmt_qty(q):
+    return '{:.2f}'.format(float(q)).rstrip('0').rstrip('.')
+
+
+class _MatchDelegate(QStyledItemDelegate):
+    '''[pill] name ............ $0.04 / oz · 37 kcal'''
+
+    ROW_HEIGHT = 40
+    PAD_X = 10
 
     def paint(self, painter, option, index):
-        row_data = index.data(Qt.UserRole)
-        if not row_data:
+        row = index.data(_ROW_ROLE)
+        if not row:
             super().paint(painter, option, index)
             return
-        _id, mode, name, unit, tag_name, tag_color = row_data
+        _id, mode, name, unit, tag_name, tag_color, cost, kcal = row
+        existing = index.data(_EXISTING_ROLE)
+        rect = option.rect.adjusted(2, 2, -2, -2)
 
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing)
+        selected = bool(option.state & QStyle.State_Selected) and existing is None
+        if selected:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(_SELECTED_BG))
+            painter.drawRoundedRect(QRectF(rect), 8, 8)
+            painter.fillRect(rect.x(), rect.y() + 2, 3, rect.height() - 4, QColor(_ROMAINE))
 
-        # Standard selection background.
-        if option.state & QStyle.State_Selected:
-            painter.fillRect(option.rect, option.palette.highlight())
-            text_color = option.palette.highlightedText().color()
-        else:
-            text_color = option.palette.text().color()
+        base = QFont(option.font)
+        small = QFont(option.font)
+        small.setPointSizeF(max(7.0, option.font.pointSizeF() * 0.85))
+        x = rect.x() + self.PAD_X
+        cy = rect.center().y()
 
-        # Badge: sub-recipes always show "recipe"; ingredients show their
-        # category tag if they have one. Untagged ingredients get no badge —
-        # the name slides over and the row reads as visually quieter.
+        # Pill.
+        painter.setFont(small)
+        fm = painter.fontMetrics()
         if mode == 'recipe':
-            badge_text, badge_color = 'recipe', _RECIPE_BADGE_COLOR
-        elif tag_name:
-            badge_text, badge_color = tag_name, (tag_color or _DEFAULT_TAG_COLOR)
+            text = 'Sub-recipe'
+            w = fm.horizontalAdvance(text) + 18
+            pill = QRectF(x, cy - 10, w, 20)
+            painter.setPen(QColor(_ROMAINE))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(pill, 10, 10)
+            painter.drawText(pill, Qt.AlignCenter, text)
         else:
-            badge_text, badge_color = None, None
+            text = tag_name or 'Uncategorized'
+            w = fm.horizontalAdvance(text) + 30
+            pill = QRectF(x, cy - 10, w, 20)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(_tint(tag_color))
+            painter.drawRoundedRect(pill, 10, 10)
+            painter.setBrush(QColor(tag_color or _DEFAULT_TAG_COLOR))
+            painter.drawEllipse(QRectF(x + 8, cy - 4, 8, 8))
+            painter.setPen(QColor(_KALE))
+            painter.drawText(pill.adjusted(20, 0, 0, 0), Qt.AlignVCenter | Qt.AlignLeft, text)
+        x = int(pill.right()) + 10
 
-        if badge_text is not None:
-            badge_area = option.rect.adjusted(self.PAD_X, 0, 0, 0)
-            badge_rect = paint_tag_badge(painter, badge_area, badge_text, badge_color, option.font)
-            text_x = badge_rect.right() + self.BADGE_GAP
+        # Right-hand meta.
+        if existing is not None:
+            meta = f'Already in recipe · {_fmt_qty(existing)} {unit or ""}'.rstrip()
         else:
-            text_x = option.rect.x() + self.PAD_X
+            parts = []
+            if cost is not None:
+                parts.append(f'${float(cost):.2f} / {unit or "unit"}')
+            if kcal is not None:
+                parts.append(f'{float(kcal):,.0f} kcal')
+            meta = ' · '.join(parts)
+        painter.setFont(small)
+        meta_w = painter.fontMetrics().horizontalAdvance(meta)
+        painter.setPen(QColor(_MUTED))
+        painter.drawText(rect.right() - self.PAD_X - meta_w, rect.y(), meta_w, rect.height(),
+                         Qt.AlignVCenter | Qt.AlignRight, meta)
 
-        # Name + unit text after wherever the badge ended, elided to fit.
-        painter.setPen(text_color)
-        fm_text = painter.fontMetrics()
-        text_w = option.rect.right() - text_x - self.PAD_X
-        text_rect = QRect(text_x, option.rect.y(), text_w, option.rect.height())
-        full_text = f'{name}  ({unit})' if unit else name
-        elided = fm_text.elidedText(full_text, Qt.ElideRight, text_w)
-        painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, elided)
-
+        # Name.
+        if selected:
+            base.setWeight(QFont.DemiBold)
+        painter.setFont(base)
+        painter.setPen(QColor(_MUTED if existing is not None else _KALE))
+        name_w = rect.right() - self.PAD_X - meta_w - 12 - x
+        elided = painter.fontMetrics().elidedText(name, Qt.ElideRight, max(0, name_w))
+        painter.drawText(x, rect.y(), name_w, rect.height(), Qt.AlignVCenter | Qt.AlignLeft, elided)
         painter.restore()
 
     def sizeHint(self, option, index):
-        return QSize(option.rect.width() or 200, self.ROW_HEIGHT)
+        return QSize(option.rect.width() or 400, self.ROW_HEIGHT)
+
+
+class _SearchField(QLineEdit):
+    '''Forwards ↑/↓/PgUp/PgDn to the list so focus can stay here.'''
+
+    navigate = Signal(int)
+
+    def keyPressEvent(self, event):
+        step = {Qt.Key_Up: -1, Qt.Key_Down: 1, Qt.Key_PageUp: -8, Qt.Key_PageDown: 8}.get(event.key())
+        if step is not None:
+            self.navigate.emit(step)
+            return
+        super().keyPressEvent(event)
 
 
 class RecipeComponentAddDialog(QDialog):
-    def __init__(self, recipe_id, recipe_name, parent=None, ingredients_only=False):
+    def __init__(self, recipe_id, recipe_name, parent=None, ingredients_only=False, on_add=None):
         '''`ingredients_only=True` hides sub-recipe rows from the picker.
         Used by the templates manager — templates only hold ingredients,
         and offering recipes there can create circular references when the
         template is later applied to a recipe in the cycle.'''
         super().__init__(parent)
-        self.setWindowTitle(f'{config.APPNAME} | {recipe_name} | > NEW <')
-        self.resize(520, 520)
+        self.setWindowTitle(f'{config.APPNAME} | Add to {recipe_name}')
+        self.resize(620, 700)
 
         self.recipe_id = recipe_id
-        # `selected` and `qty` are populated on Accept.
-        self.selected = None  # tuple (id, mode, name, unit)
+        self._ingredients_only = ingredients_only
+        self._on_add = on_add
+        self._kind = 'all'
+        # `selected` and `qty` are populated on Add when there's no callback.
+        self.selected = None  # tuple (id, mode, name, unit, tag, color, cost, kcal)
         self.qty = None
+        self._allergen_maps = db.get_component_allergen_maps()
 
-        # tuples come back as (id, mode, name, unit, tag_name, tag_color)
-        self._eligible = db.get_eligible_ingredients(recipe_id)
-        if ingredients_only:
-            self._eligible = [row for row in self._eligible if row[1] != 'recipe']
+        self.setStyleSheet(f'QDialog {{ background: #ffffff; }} QLabel {{ color: {_KALE}; }}')
 
-        self.filter_edit = QLineEdit()
-        self.filter_edit.setPlaceholderText(
-            'Type to filter — name, "recipe", or a tag like "greens"…'
-        )
-        self.filter_edit.textChanged.connect(self._on_filter)
+        # --- header ---
+        title = QLabel(f'Add to {recipe_name}')
+        title.setStyleSheet(f'color: {_KALE}; font-size: 20px; font-weight: 650;')
+        header = QHBoxLayout()
+        header.setContentsMargins(20, 16, 20, 8)
+        header.setSpacing(10)
+        if recipe_id:
+            header.addWidget(WedgeView(recipe_id, size=32))
+        header.addWidget(title)
+        header.addStretch()
 
+        # --- search + kind switch ---
+        self.filter_edit = _SearchField()
+        self.filter_edit.setPlaceholderText('Find an ingredient or sub-recipe')
+        self.filter_edit.setFrame(False)
+        self.filter_edit.setStyleSheet(f'border: 0; background: transparent; color: {_KALE};'
+                                       ' font-size: 15px;')
+        self.filter_edit.textChanged.connect(self._apply_filter)
+        self.filter_edit.navigate.connect(self._move)
+        self.filter_edit.returnPressed.connect(self._on_add_clicked)
+        self.match_label = QLabel('')
+        self.match_label.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
+        search_box = QFrame()
+        search_box.setObjectName('SearchBox')
+        search_box.setStyleSheet(f'QFrame#SearchBox {{ border: 2px solid {_ROMAINE};'
+                                 ' border-radius: 4px; background: #ffffff; }')
+        sb = QHBoxLayout(search_box)
+        sb.setContentsMargins(10, 4, 10, 4)
+        glass = QLabel('⌕')
+        glass.setStyleSheet(f'color: {_MUTED}; font-size: 16px;')
+        sb.addWidget(glass)
+        sb.addWidget(self.filter_edit, stretch=1)
+        sb.addWidget(self.match_label)
+
+        kind_row = QHBoxLayout()
+        kind_row.setSpacing(8)
+        self._kind_group = QButtonGroup(self)
+        kinds = QFrame()
+        kinds.setObjectName('Kinds')
+        kinds.setStyleSheet(f'''
+            QFrame#Kinds {{ border: 1px solid {_FIELD_BORDER}; border-radius: 8px; }}
+            QFrame#Kinds QPushButton {{ border: 0; padding: 0 12px; min-height: 28px;
+                background: #ffffff; color: {_KALE}; }}
+            QFrame#Kinds QPushButton:checked {{ background: {_ROMAINE}; color: #ffffff;
+                font-weight: 600; }}
+        ''')
+        kl = QHBoxLayout(kinds)
+        kl.setContentsMargins(1, 1, 1, 1)
+        kl.setSpacing(0)
+        for key, label in (('all', 'All'), ('ingredient', 'Ingredients'), ('recipe', 'Sub-recipes')):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setChecked(key == 'all')
+            btn.setAutoDefault(False)
+            btn.setFocusPolicy(Qt.NoFocus)
+            btn.clicked.connect(lambda _c=False, k=key: self._set_kind(k))
+            self._kind_group.addButton(btn)
+            kl.addWidget(btn)
+        kinds.setVisible(not ingredients_only)
+        hint = QLabel('↑↓ to move · Enter to add')
+        hint.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
+        kind_row.addWidget(kinds)
+        kind_row.addStretch()
+        kind_row.addWidget(hint)
+
+        top = QVBoxLayout()
+        top.setContentsMargins(20, 0, 20, 12)
+        top.setSpacing(10)
+        top.addWidget(search_box)
+        top.addLayout(kind_row)
+
+        # --- list ---
         self.results = QListWidget()
-        self.results.setItemDelegate(_ComponentTypeBadgeDelegate(self.results))
-        # Item text drives the typing filter only — the delegate ignores it
-        # for display. Only include tokens that the user can actually see on
-        # the row, so typing a word never returns invisible "matches":
-        #   - sub-recipes carry "recipe" (their visible badge)
-        #   - tagged ingredients carry their tag name
-        #   - untagged ingredients carry only name + unit
-        for row in self._eligible:
-            child_id, mode, name, unit, tag_name, tag_color = row
-            tokens = [unit]
-            if mode == 'recipe':
-                tokens.append('recipe')
-            elif tag_name:
-                tokens.append(tag_name)
-            search_extras = ' '.join(filter(None, tokens))
-            item = QListWidgetItem(f'{name} ({search_extras})')
-            item.setData(Qt.UserRole, row)
-            self.results.addItem(item)
+        self.results.setItemDelegate(_MatchDelegate(self.results))
+        self.results.setFrameShape(QFrame.NoFrame)
+        self.results.setFocusPolicy(Qt.NoFocus)
+        self.results.setStyleSheet(f'QListWidget {{ background: #ffffff; border: 0;'
+                                   f' border-top: 1px solid {_BORDER}; padding: 4px 12px; }}')
         self.results.currentItemChanged.connect(self._on_selection_changed)
-        self.results.itemActivated.connect(self._on_save)  # double-click or Enter on row
+        self.results.itemDoubleClicked.connect(lambda _i: self._on_add_clicked())
 
+        self.create_link = QLabel('')
+        self.create_link.setTextFormat(Qt.RichText)
+        self.create_link.setStyleSheet(f'color: {_MUTED}; font-size: 13px; padding: 8px 22px;'
+                                       f' border-bottom: 1px solid {_BORDER};')
+        self.create_link.linkActivated.connect(lambda _h: self._create_ingredient())
+        # Creating ingredients only makes sense when adding to a recipe.
+        self._can_create = on_add is not None
+
+        # --- footer ---
         self.qty_edit = QLineEdit('1')
         self.qty_edit.setValidator(QDoubleValidator(0.0, 1_000_000.0, 4))
+        self.qty_edit.setAlignment(Qt.AlignRight)
+        self.qty_edit.setFixedWidth(72)
+        self.qty_edit.setStyleSheet(f'QLineEdit {{ height: 32px; padding: 0 8px; border: 1px solid'
+                                    f' {_FIELD_BORDER}; border-radius: 4px; background: #ffffff; }}')
+        self.qty_edit.textChanged.connect(self._update_preview)
+        self.qty_edit.returnPressed.connect(self._on_add_clicked)
         self.unit_label = QLabel('')
+        self.unit_label.setStyleSheet(f'color: {_MUTED};')
+        qty_label = QLabel('QUANTITY')
+        qty_label.setStyleSheet(f'color: {_MUTED}; font-size: 11px; font-weight: 600;'
+                                ' letter-spacing: 1px;')
+        qty_row = QHBoxLayout()
+        qty_row.setSpacing(8)
+        qty_row.addWidget(self.qty_edit)
+        qty_row.addWidget(self.unit_label)
+        qty_col = QVBoxLayout()
+        qty_col.setSpacing(4)
+        qty_col.addWidget(qty_label)
+        qty_col.addLayout(qty_row)
 
-        qty_row = QFormLayout()
-        qty_row.addRow('Qty', self.qty_edit)
-        qty_row.addRow('', self.unit_label)
+        self.preview = QLabel('')
+        self.preview.setTextFormat(Qt.RichText)
+        self.preview.setWordWrap(True)
+        self.preview.setStyleSheet(f'color: {_KALE}; font-size: 13px;')
+        preview_row = QHBoxLayout()
+        preview_row.setSpacing(16)
+        preview_row.addLayout(qty_col)
+        preview_row.addWidget(self.preview, stretch=1, alignment=Qt.AlignBottom)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-        buttons.button(QDialogButtonBox.Save).setShortcut(QKeySequence.Save)
-        buttons.accepted.connect(self._on_save)
-        buttons.rejected.connect(self.reject)
-        # Same fix as the USDA dialog: don't let Enter in the filter box
-        # silently fire the dialog's accept button.
-        for btn in buttons.buttons():
-            btn.setAutoDefault(False)
-            btn.setDefault(False)
+        self.keep_open = QCheckBox('Keep open to add another')
+        self.keep_open.setChecked(QSettings().value('addComponent/keepOpen', True, type=bool))
+        self.keep_open.toggled.connect(lambda v: QSettings().setValue('addComponent/keepOpen', v))
+        self.keep_open.setVisible(on_add is not None)
+        done_btn = QPushButton('Done' if on_add is not None else 'Cancel')
+        done_btn.setAutoDefault(False)
+        done_btn.setStyleSheet(f'QPushButton {{ height: 34px; padding: 0 14px; border: 1px solid'
+                               f' {_FIELD_BORDER}; border-radius: 8px; background: #ffffff;'
+                               f' color: {_KALE}; }}')
+        done_btn.clicked.connect(self.reject)
+        self.add_btn = QPushButton('Add   Enter')
+        self.add_btn.setAutoDefault(False)
+        self.add_btn.setStyleSheet(f'QPushButton {{ height: 34px; padding: 0 16px; border: 0;'
+                                   f' border-radius: 8px; background: {_ROMAINE}; color: #ffffff;'
+                                   ' font-weight: 600; } QPushButton:disabled { background: #c9d1bf; }')
+        self.add_btn.clicked.connect(self._on_add_clicked)
+        button_row = QHBoxLayout()
+        button_row.addWidget(self.keep_open)
+        button_row.addStretch()
+        button_row.addWidget(done_btn)
+        button_row.addWidget(self.add_btn)
+
+        footer = QWidget()
+        footer.setObjectName('AddFooter')
+        footer.setAttribute(Qt.WA_StyledBackground, True)
+        footer.setStyleSheet(f'QWidget#AddFooter {{ background: {_BG}; }}')
+        fl = QVBoxLayout(footer)
+        fl.setContentsMargins(20, 14, 20, 14)
+        fl.setSpacing(12)
+        fl.addLayout(preview_row)
+        fl.addLayout(button_row)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(f'Add to {recipe_name}'))
-        layout.addWidget(self.filter_edit)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addLayout(header)
+        layout.addLayout(top)
         layout.addWidget(self.results, stretch=1)
-        layout.addLayout(qty_row)
-        layout.addWidget(buttons)
+        layout.addWidget(self.create_link)
+        layout.addWidget(footer)
 
-    def _on_filter(self, text):
-        needle = text.strip().lower()
+        # Ctrl+S stays a synonym for Add, as in the previous picker.
+        QShortcut(QKeySequence.Save, self, activated=self._on_add_clicked)
+        if self._can_create:
+            QShortcut(QKeySequence('Ctrl+Shift+N'), self, activated=self._create_ingredient)
+
+        self._load()
+        self.filter_edit.setFocus()
+
+    # --- data ----------------------------------------------------------
+
+    def _load(self, select_key=None):
+        '''(Re)build the list from the DB: eligible components, what's
+        already in the recipe, and the recipe's current totals.'''
+        eligible = db.get_eligible_ingredients(self.recipe_id)
+        if self._ingredients_only:
+            eligible = [row for row in eligible if row[1] != 'recipe']
+        self._existing = {}
+        self._recipe = None
+        self._recipe_allergens = set()
+        if self.recipe_id:
+            for r in db.query('SELECT ChildIngredient, ChildRecipe, Quantity FROM Connections'
+                              ' WHERE ParentRecipe = ?', (self.recipe_id,))['data']:
+                key = ('recipe', r['ChildRecipe']) if r['ChildRecipe'] else ('ingredient', r['ChildIngredient'])
+                self._existing[key] = r['Quantity']
+            self._recipe = db.recipe_info(self.recipe_id)
+            self._recipe_allergens = set(db.get_recipe_allergens(self.recipe_id))
+
+        self.results.clear()
+        for row in eligible:
+            child_id, mode, name, unit, tag_name = row[:5]
+            item = QListWidgetItem()
+            # Item text is the filter target: name, unit, and the pill's
+            # visible word (category, or "sub-recipe").
+            item.setText(' '.join(filter(None, [name, unit, 'sub-recipe' if mode == 'recipe' else tag_name])))
+            item.setData(_ROW_ROLE, tuple(row))
+            existing = self._existing.get((mode, child_id))
+            item.setData(_EXISTING_ROLE, existing)
+            if existing is not None:
+                item.setFlags(item.flags() & ~Qt.ItemIsSelectable & ~Qt.ItemIsEnabled)
+            self.results.addItem(item)
+        self._apply_filter()
+        if select_key is not None:
+            for i in range(self.results.count()):
+                row = self.results.item(i).data(_ROW_ROLE)
+                if (row[1], row[0]) == select_key:
+                    self.results.setCurrentRow(i)
+                    break
+
+    # --- filtering + navigation ----------------------------------------
+
+    def _set_kind(self, kind):
+        self._kind = kind
+        self._apply_filter()
+
+    def _apply_filter(self, *_):
+        needle = self.filter_edit.text().strip().lower()
+        shown = 0
         for i in range(self.results.count()):
             item = self.results.item(i)
-            item.setHidden(bool(needle) and needle not in item.text().lower())
+            mode = item.data(_ROW_ROLE)[1]
+            hide = (bool(needle) and needle not in item.text().lower()) or \
+                   (self._kind != 'all' and mode != self._kind)
+            item.setHidden(hide)
+            shown += not hide
+        self.match_label.setText(f"{shown} match{'es' if shown != 1 else ''}" if needle else '')
+        current = self.results.currentItem()
+        if current is None or current.isHidden() or not (current.flags() & Qt.ItemIsEnabled):
+            self._select_first()
+        if self._can_create and needle:
+            text = self.filter_edit.text().strip().replace('<', '&lt;')
+            self.create_link.setText(
+                f'Not here? <a href="create" style="color: {_ROMAINE}">Create "{text}" as a new'
+                f' ingredient</a> (Ctrl+Shift+N)')
+            self.create_link.show()
+        else:
+            self.create_link.hide()
+
+    def _pickable(self, item):
+        return not item.isHidden() and bool(item.flags() & Qt.ItemIsEnabled)
+
+    def _select_first(self):
+        for i in range(self.results.count()):
+            if self._pickable(self.results.item(i)):
+                self.results.setCurrentRow(i)
+                return
+        self.results.setCurrentRow(-1)
+        self._on_selection_changed(None, None)
+
+    def _move(self, step):
+        n = self.results.count()
+        i = self.results.currentRow()
+        direction = 1 if step > 0 else -1
+        remaining = abs(step)
+        target = i
+        j = i
+        while remaining and 0 <= j + direction < n:
+            j += direction
+            if self._pickable(self.results.item(j)):
+                target = j
+                remaining -= 1
+        if target != i and target >= 0:
+            self.results.setCurrentRow(target)
+            self.results.scrollToItem(self.results.item(target))
 
     def _on_selection_changed(self, current, _previous):
-        if current is None:
-            self.unit_label.setText('')
-            return
-        unit = current.data(Qt.UserRole)[3]
-        self.unit_label.setText(f'× {unit}')
+        row = current.data(_ROW_ROLE) if current is not None else None
+        self.unit_label.setText(f'× {row[3]}' if row and row[3] else '')
+        self.add_btn.setEnabled(row is not None)
+        self._update_preview()
 
-    def _on_save(self, *_):
+    # --- preview -------------------------------------------------------
+
+    def _update_preview(self, *_):
         current = self.results.currentItem()
-        if current is None or current.isHidden():
+        if current is None or self._recipe is None or not self._pickable(current):
+            self.preview.setText('')
+            return
+        row = current.data(_ROW_ROLE)
+        child_id, mode = row[0], row[1]
+        try:
+            qty = float(self.qty_edit.text() or 0)
+        except ValueError:
+            qty = 0.0
+        try:
+            servings = float(self._recipe.get('OutputQty') or 1) or 1.0
+        except (TypeError, ValueError):
+            servings = 1.0
+        add_cost = float(row[6] or 0) * qty / servings
+        add_kcal = float(row[7] or 0) * qty / servings
+        brings = self._allergen_maps[1 if mode == 'recipe' else 0].get(child_id, set())
+        new_allergens = sorted(brings - self._recipe_allergens)
+        allergen_text = ', '.join(new_allergens) if new_allergens else 'none new'
+
+        cost_now = float(self._recipe.get('CostRaw') or 0)
+        total = cost_now + add_cost
+        tail = f'→ ${total:.2f}'
+        try:
+            price = float(self._recipe.get('MenuPrice') or 0)
+        except (TypeError, ValueError):
+            price = 0.0
+        if price > 0:
+            tail += f' · {total / price * 100:.1f}%'
+        self.preview.setText(
+            f'Cost <b>+${add_cost:.2f}</b>&nbsp;&nbsp; Calories <b>+{add_kcal:,.0f}</b>'
+            f'&nbsp;&nbsp; Allergens <b>{allergen_text}</b>'
+            f'&nbsp;&nbsp; <span style="color: {_MUTED}">{tail}</span>'
+        )
+
+    # --- actions -------------------------------------------------------
+
+    def _on_add_clicked(self, *_):
+        current = self.results.currentItem()
+        if current is None or not self._pickable(current):
             QMessageBox.warning(self, 'No Selection', 'Pick an ingredient or recipe to add.')
             return
         try:
             qty = float(self.qty_edit.text() or 0)
         except ValueError:
-            QMessageBox.warning(self, 'Invalid Qty', 'Qty must be numeric.')
-            return
+            qty = 0.0
         if qty <= 0:
             QMessageBox.warning(self, 'Invalid Qty', 'Qty must be greater than zero.')
+            self.qty_edit.setFocus()
             return
-        self.selected = current.data(Qt.UserRole)
-        self.qty = qty
-        self.accept()
+        row = current.data(_ROW_ROLE)
+        if self._on_add is None:
+            self.selected = row
+            self.qty = qty
+            self.accept()
+            return
+        self._on_add(row[0], row[1], qty, row[2])
+        if not self.keep_open.isChecked():
+            self.accept()
+            return
+        # Ready for the next pick: reload (the added row is now
+        # "already in recipe"), reset the quantity, back to the search.
+        self._load()
+        self.qty_edit.setText('1')
+        self.filter_edit.selectAll()
+        self.filter_edit.setFocus()
+
+    def _create_ingredient(self):
+        '''"Create '<text>' as a new ingredient": the USDA-search create
+        flow, pre-filled; the new ingredient comes back selected.'''
+        from gui.dialogs.ingredient_create_from_usda import IngredientCreateFromUsdaDialog
+        text = self.filter_edit.text().strip()
+        dlg = IngredientCreateFromUsdaDialog(parent=self)
+        if hasattr(dlg, 'query_edit'):
+            dlg.query_edit.setText(text)
+        if dlg.exec() != QDialog.Accepted or not dlg.new_id:
+            return
+        self._allergen_maps = db.get_component_allergen_maps()
+        self.filter_edit.blockSignals(True)
+        self.filter_edit.clear()
+        self.filter_edit.blockSignals(False)
+        self._load(select_key=('ingredient', dlg.new_id))
+        self.qty_edit.setFocus()
+        self.qty_edit.selectAll()

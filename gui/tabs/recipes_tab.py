@@ -38,7 +38,7 @@ class RecipesTab(QWidget):
 
         library_view = self._build_library(source_model, action_buttons)
 
-        self.editor_tabs = EditorTabs(library_view)
+        self.editor_tabs = EditorTabs(library_view, compare_tray=compare_tray)
         self.editor_tabs.recipeDeleted.connect(self.recipeDeletedFromTabs.emit)
 
         layout = QVBoxLayout(self)

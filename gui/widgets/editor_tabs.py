@@ -6,6 +6,11 @@ recipe sit side by side. Opening a recipe that's already open just
 switches to its tab. Closing a recipe tab with unsaved changes asks
 first (the widget's close_requested decides).
 
+Styled per the Framework canvas: a warm strip with 40 px tabs, the
+current one lifted onto white. Each recipe tab carries a small wedge
+of its recipe, an unsaved dot and its own ×; Library carries the
+recipe count and sits a little apart, since it's pinned.
+
 Keyboard: Ctrl+W closes the current recipe tab, Ctrl+Tab cycles
 through every tab including Library, Ctrl+0 jumps to Library (the
 main window owns that shortcut via its View menu).
@@ -17,9 +22,44 @@ from PySide6.QtWidgets import (
 )
 
 from gui.dialogs.recipe_edit import RecipeEditWidget
+from gui.widgets.wedge_view import WedgeView
 
 
 LIBRARY_INDEX = 0
+
+_KALE = '#082c00'
+_ROMAINE = '#347200'
+_MUTED = '#55624c'
+_BORDER = '#ebe1cd'
+_STRIP = '#efe9de'
+
+_STYLE = f'''
+    EditorTabs {{ background: {_STRIP}; }}
+    EditorTabs::pane {{ border: 0; border-top: 1px solid {_BORDER}; top: -1px; }}
+    EditorTabs::tab-bar {{ left: 16px; }}
+    EditorTabs > QStackedWidget {{ background: #fffaf2; }}
+    QTabBar {{ background: transparent; }}
+    QTabBar::tab {{
+        height: 40px;
+        padding: 0 8px 0 12px;
+        margin: 8px 2px 0 0;
+        border: 1px solid transparent;
+        border-bottom: 0;
+        border-top-left-radius: 8px;
+        border-top-right-radius: 8px;
+        background: transparent;
+        color: {_MUTED};
+        font-size: 14px;
+    }}
+    QTabBar::tab:first {{ margin-right: 12px; padding-right: 14px; }}
+    QTabBar::tab:hover:!selected {{ background: #f7f1e6; }}
+    QTabBar::tab:selected {{
+        background: #ffffff;
+        border-color: {_BORDER};
+        color: {_KALE};
+        font-weight: 600;
+    }}
+'''
 
 
 class EditorTabs(QTabWidget):
@@ -30,22 +70,35 @@ class EditorTabs(QTabWidget):
     currentEditorChanged = Signal(object)  # RecipeEditWidget or None (Library)
     dirtyChanged = Signal()       # any tab's unsaved-edit count changed
 
-    def __init__(self, library_widget, parent=None):
+    def __init__(self, library_widget, compare_tray=None, parent=None):
         super().__init__(parent)
-        self.setTabsClosable(True)
+        self._compare_tray = compare_tray
+        # Close buttons are our own (_TabTail), so the unsaved dot can
+        # sit beside the × the way the canvas draws it.
+        self.setTabsClosable(False)
         self.setDocumentMode(True)
         self.setUsesScrollButtons(True)
-        self.tabCloseRequested.connect(self.close_tab)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet(_STYLE)
+        self.tabBar().setDrawBase(False)
+        self.tabBar().setExpanding(False)
 
         self.addTab(library_widget, 'Library')
-        # Pinned: no close button on the Library tab.
+        # Pinned: a library glyph, no close button.
+        glyph = QLabel('▦')
+        glyph.setStyleSheet(f'color: {_ROMAINE}; font-size: 15px; background: transparent;')
+        self.tabBar().setTabButton(LIBRARY_INDEX, QTabBar.LeftSide, glyph)
         self.tabBar().setTabButton(LIBRARY_INDEX, QTabBar.RightSide, None)
-        self.tabBar().setTabButton(LIBRARY_INDEX, QTabBar.LeftSide, None)
+        self.setTabToolTip(LIBRARY_INDEX, 'Library (pinned) · Ctrl+0')
 
         plus = QToolButton()
         plus.setText('+')
         plus.setToolTip('New recipe (Ctrl+N)')
         plus.setAutoRaise(True)
+        plus.setFixedSize(32, 32)
+        plus.setStyleSheet(f'QToolButton {{ border: 0; border-radius: 6px; font-size: 18px;'
+                           f' color: {_MUTED}; background: transparent; }}'
+                           f' QToolButton:hover {{ background: #f7f1e6; color: {_KALE}; }}')
         plus.clicked.connect(self.newTabRequested.emit)
         self.setCornerWidget(_TabCorner(plus), Qt.TopRightCorner)
 
@@ -71,15 +124,27 @@ class EditorTabs(QTabWidget):
         if existing >= 0:
             self.setCurrentIndex(existing)
             return existing
-        widget = RecipeEditWidget(recipe_id, parent=self)
+        widget = RecipeEditWidget(recipe_id, compare_tray=self._compare_tray, parent=self)
+        widget.libraryRequested.connect(self.show_library)
+        widget.openRecipeRequested.connect(self.open_recipe)
         widget.titleChanged.connect(lambda _name, w=widget: self._sync_tab_text(w))
-        widget.modifiedChanged.connect(lambda _m, w=widget: self._sync_tab_text(w))
         widget.dirtyCountChanged.connect(lambda _n: self.dirtyChanged.emit())
         widget.saved.connect(self.recipeSaved.emit)
         widget.recipeDeleted.connect(
             lambda _rid, w=widget: self._on_recipe_deleted(w, _rid)
         )
         idx = self.addTab(widget, widget.title())
+        bar = self.tabBar()
+        # A small wedge of the recipe, redrawn as its components change.
+        icon = WedgeView(recipe_id, size=24)
+        icon.setStyleSheet('background: transparent;')
+        widget.undo_stack.indexChanged.connect(lambda _i, v=icon: v.refresh())
+        bar.setTabButton(idx, QTabBar.LeftSide, icon)
+        tail = _TabTail(widget.title())
+        tail.closeClicked.connect(lambda w=widget: self.close_tab(self.indexOf(w)))
+        widget.modifiedChanged.connect(tail.set_unsaved)
+        widget.titleChanged.connect(tail.set_title)
+        bar.setTabButton(idx, QTabBar.RightSide, tail)
         self.setCurrentIndex(idx)
         self.recipeOpened.emit(recipe_id)
         return idx
@@ -136,8 +201,7 @@ class EditorTabs(QTabWidget):
     def _sync_tab_text(self, widget):
         idx = self.indexOf(widget)
         if idx >= 0:
-            # Bullet marks unsaved edits, as in the canvas tab strip.
-            self.setTabText(idx, widget.title() + ('  •' if widget.modified else ''))
+            self.setTabText(idx, widget.title())
 
     def _remove_widget(self, widget):
         idx = self.indexOf(widget)
@@ -179,16 +243,58 @@ class EditorTabs(QTabWidget):
         return [w.recipe_id for w in self.editors()]
 
 
+class _TabTail(QWidget):
+    '''Right side of a recipe tab: the unsaved dot (romaine, shown
+    while the recipe has unsaved edits) and a × close button.'''
+
+    closeClicked = Signal()
+
+    def __init__(self, title, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet('background: transparent;')
+        # The dot always takes its space and only changes color: QTabBar
+        # sizes side widgets once, so showing a hidden dot later would
+        # squeeze the × out (and make the tab jump in width).
+        self._dot = QLabel()
+        self._dot.setFixedSize(8, 8)
+        self.set_unsaved(False)
+        self._close = QToolButton()
+        self._close.setText('×')
+        self._close.setFixedSize(20, 20)
+        self._close.setAutoRaise(True)
+        self._close.setCursor(Qt.PointingHandCursor)
+        self._close.setStyleSheet(f'QToolButton {{ border: 0; border-radius: 4px; font-size: 15px;'
+                                  f' color: {_MUTED}; background: transparent; }}'
+                                  f' QToolButton:hover {{ background: {_STRIP}; color: {_KALE}; }}')
+        self._close.clicked.connect(self.closeClicked.emit)
+        self.set_title(title)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(6, 0, 0, 0)
+        layout.setSpacing(6)
+        layout.addWidget(self._dot)
+        layout.addWidget(self._close)
+
+    def set_unsaved(self, unsaved):
+        self.unsaved = bool(unsaved)
+        color = _ROMAINE if unsaved else 'transparent'
+        self._dot.setStyleSheet(f'background: {color}; border-radius: 4px;')
+        self._dot.setToolTip('Unsaved changes' if unsaved else '')
+
+    def set_title(self, title):
+        self._close.setToolTip(f'Close {title} (Ctrl+W)')
+
+
 class _TabCorner(QWidget):
     '''Right-hand corner of the tab strip: the "+" button and a muted
     keyboard hint.'''
 
     def __init__(self, plus_button, parent=None):
         super().__init__(parent)
+        self.setStyleSheet('background: transparent;')
         hint = QLabel('Ctrl+Tab next tab · Ctrl+W close · Ctrl+0 Library')
-        hint.setStyleSheet('color: #55624c; font-size: 11px;')
+        hint.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 0, 8, 0)
+        layout.setContentsMargins(4, 4, 16, 0)
         layout.setSpacing(12)
         layout.addWidget(plus_button)
         layout.addWidget(hint)
