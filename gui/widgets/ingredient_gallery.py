@@ -1,10 +1,10 @@
 '''Responsive grid of IngredientCard widgets.
 
-Mirrors home_tab._RecipeGallery's reflow-on-resize behavior but
-specialized for ingredients: synchronous thumbnail rendering (no
-wedge-rendering threadpool), and context menu actions matching the
-table view so right-click "Edit / Delete" works the same way regardless
-of which view the user has chosen.
+Reflows on resize. Cards are cheap to build: each thumbnail shows its
+initial tile at once and loads its photo in the background from the
+thumbnail cache (gui.thumbs), so a rebuild never decodes a full-size
+photo on the UI thread. Context menu actions match the table view so
+right-click "Edit / Delete" works the same way in either view.
 '''
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -24,7 +24,8 @@ class IngredientGallery(QWidget):
     view's `rowActivated` signal so callers can route both through the
     same handler.'''
 
-    ingredientActivated = Signal(int)
+    ingredientClicked = Signal(int)     # source row — select
+    ingredientActivated = Signal(int)   # source row — open (double-click)
 
     def __init__(self, source_model, context_actions=None, parent=None):
         super().__init__(parent)
@@ -32,7 +33,10 @@ class IngredientGallery(QWidget):
         self._context_actions = context_actions or []
         self._cards = []
         self._current_columns = 4
-        self._filter = ''
+        # Row filter shared with the table: the Ingredients place passes
+        # its facet proxy's accepts_row, so both views show the same set.
+        self._predicate = None
+        self._selected_id = None
         # Lazy build: don't construct any cards until the gallery is first
         # shown. On app launch the user is on the Home tab and may never
         # switch to Ingredients; building hundreds of cards eagerly was
@@ -55,9 +59,16 @@ class IngredientGallery(QWidget):
 
         self._model.modelReset.connect(self._on_model_reset)
 
-    def setFilterText(self, text):
-        self._filter = (text or '').strip().lower()
-        self._relayout()
+    def set_selected_id(self, ingredient_id):
+        self._selected_id = ingredient_id
+        for card in self._cards:
+            card.set_selected(card.ingredient_id == ingredient_id)
+
+    def set_row_filter(self, predicate):
+        '''`predicate(row_dict) -> bool`, or None to show every card.'''
+        self._predicate = predicate
+        if not self._stale:
+            self._relayout()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -120,7 +131,8 @@ class IngredientGallery(QWidget):
                 card.setVisible(False)
             visible_index = 0
             for card in self._cards:
-                matches_filter = not self._filter or self._filter in card._search_text
+                matches_filter = (self._predicate is None
+                                  or self._predicate(self._model.row_dict(card._row)))
                 if not matches_filter:
                     continue
                 self.grid.addWidget(
@@ -134,37 +146,44 @@ class IngredientGallery(QWidget):
             self.grid_container.setUpdatesEnabled(True)
 
     def refresh(self):
-        # Tear down old cards (model has been replaced).
-        for card in self._cards:
-            self.grid.removeWidget(card)
-            card.deleteLater()
+        '''Sync cards with the model. A card whose ingredient looks the
+        same (name, category, photo) is kept and just re-pointed at its
+        new row, so a refresh after an unrelated edit costs almost
+        nothing; only new or changed ingredients get a fresh card.'''
+        old = {card.ingredient_id: card for card in self._cards}
         self._cards = []
-
         for i in range(self._model.rowCount()):
             row = self._model.row_dict(i)
-            card = IngredientCard(
-                row['Id'], row.get('Name'),
-                tag_name=row.get('TagName'),
-                tag_color=row.get('TagColor'),
-                image_filename=row.get('ImageFilename'),
-            )
+            look = (row.get('Name'), row.get('TagName'), row.get('TagColor'), row.get('ImageFilename'))
+            card = old.pop(row['Id'], None)
+            if card is None or card._look != look:
+                if card is not None:
+                    self.grid.removeWidget(card)
+                    card.deleteLater()
+                card = IngredientCard(
+                    row['Id'], row.get('Name'),
+                    tag_name=row.get('TagName'),
+                    tag_color=row.get('TagColor'),
+                    image_filename=row.get('ImageFilename'),
+                )
+                card._look = look
+                # Handlers read card._row at click time, so a kept card
+                # follows its ingredient to a new row.
+                card.clicked.connect(lambda _id, c=card: self.ingredientClicked.emit(c._row))
+                card.doubleClicked.connect(lambda _id, c=card: self.ingredientActivated.emit(c._row))
+                card.set_selected(row['Id'] == self._selected_id)
+                if self._context_actions:
+                    card.setContextMenuPolicy(Qt.CustomContextMenu)
+                    card.customContextMenuRequested.connect(
+                        lambda point, c=card: self._show_context_menu(c, point)
+                    )
             # Stamp the source-row index on the card so context-menu actions
             # can call back to the same handlers as the table view.
             card._row = i
-            # Precompute a multi-field search blob so the gallery's filter
-            # behaves the same way the table's MultiColumnFilterProxy does
-            # (substring match across name, tag, portion/unit, calories).
-            card._search_text = ' '.join(
-                str(row.get(k) or '')
-                for k in ('Name', 'TagName', 'Portion', 'Unit', 'Calories')
-            ).lower()
-            card.clicked.connect(lambda _id, r=i: self.ingredientActivated.emit(r))
-            if self._context_actions:
-                card.setContextMenuPolicy(Qt.CustomContextMenu)
-                card.customContextMenuRequested.connect(
-                    lambda point, c=card: self._show_context_menu(c, point)
-                )
             self._cards.append(card)
+        for card in old.values():   # ingredients that are gone
+            self.grid.removeWidget(card)
+            card.deleteLater()
 
         self._relayout()
 
