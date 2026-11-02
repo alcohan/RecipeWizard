@@ -1,6 +1,7 @@
-'''Top app bar — kale background, parmesan text, five place names
+'''Top app bar — kale background, parmesan text, four place names
 along the left with an avocado underline on the active one, and a
-"prices as of" freshness line pinned to the right.
+"costed at supplier prices as of" line pinned to the right. A place
+can carry a count badge (Configure shows the Library health count).
 
 Replaces PlaceRail from the earlier left-rail design iteration. The
 API intentionally mirrors it (add_place, set_current, install_shortcuts,
@@ -8,7 +9,6 @@ placeChanged) so main_window swaps one widget for the other without
 other code changes.
 '''
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton
 
 
@@ -20,14 +20,15 @@ _HEADER_HEIGHT = 44
 
 
 class AppHeader(QFrame):
-    '''Horizontal navigation band. Five places max (⌘1-⌘5), avocado
-    underline on the active place, "prices as of" pinned right.
+    '''Horizontal navigation band. Four places max (Ctrl+1-4), avocado
+    underline on the active place, "prices as of" pinned right. No
+    actions live here — commands are in the menu bar.
 
     `icon_key` is accepted on add_place for parity with the old rail
     but ignored — the app bar is text-only per the current design.'''
 
     placeChanged = Signal(int)
-    MAX_PLACES = 5
+    MAX_PLACES = 4
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -123,12 +124,11 @@ class AppHeader(QFrame):
                 return i
         return 0
 
-    def install_shortcuts(self, host):
-        '''Register ⌘1..⌘N on `host`. Call once after all add_place
-        calls finish.'''
-        for i, _b in enumerate(self._buttons):
-            sc = QShortcut(QKeySequence(f'Ctrl+{i + 1}'), host)
-            sc.activated.connect(lambda i=i: self.set_current(i))
+    def set_badge(self, index, count):
+        '''Show `count` as a small avocado pill after the place name;
+        zero or None hides it.'''
+        if 0 <= index < len(self._buttons):
+            self._buttons[index].set_badge(count)
 
     def set_freshness(self, text):
         '''"Prices as of Oct 14" — set by main_window from the latest
@@ -146,6 +146,7 @@ class _PlaceButton(QPushButton):
         self.setFlat(True)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedHeight(_HEADER_HEIGHT)
+        self._label = label
         self._active = False
         self._apply_style()
 
@@ -177,6 +178,11 @@ class _PlaceButton(QPushButton):
                     border-bottom: 3px solid rgba(187, 202, 0, 0.4);
                 }}
             ''')
+
+    def set_badge(self, count):
+        # QPushButton can't mix styles inside its label, so the badge is
+        # a plain trailing count — readable and keeps the button one widget.
+        self.setText(f'{self._label}  {count}' if count else self._label)
 
     def set_active(self, active):
         self._active = bool(active)

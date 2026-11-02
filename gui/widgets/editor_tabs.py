@@ -1,38 +1,63 @@
-'''QTabWidget that manages a set of open RecipeEditWidget instances.
+'''The Recipes place's tab strip: a pinned Library tab followed by one
+tab per open recipe (a RecipeEditWidget).
 
-Each tab is one recipe open for editing. Opening a recipe that's
-already open just switches to its tab; closing the last tab emits
-`allClosed` so the containing workspace can switch back to its
-library view.
+Library is always tab 0 and can't be closed, so home and every open
+recipe sit side by side. Opening a recipe that's already open just
+switches to its tab. Closing a recipe tab with unsaved changes asks
+first (the widget's close_requested decides).
 
-Keyboard: ⌘W closes the current tab, ⌃Tab cycles to the next.
+Keyboard: Ctrl+W closes the current recipe tab, Ctrl+Tab cycles
+through every tab including Library, Ctrl+0 jumps to Library (the
+main window owns that shortcut via its View menu).
 '''
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import QTabWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout, QLabel, QTabBar, QTabWidget, QToolButton, QWidget,
+)
 
 from gui.dialogs.recipe_edit import RecipeEditWidget
 
 
+LIBRARY_INDEX = 0
+
+
 class EditorTabs(QTabWidget):
-    allClosed = Signal()
     recipeOpened = Signal(int)
     recipeDeleted = Signal(int)   # a tab's recipe was deleted; parent should refresh its models
+    recipeSaved = Signal(int)     # a tab saved; parent should refresh its models
+    newTabRequested = Signal()    # the "+" button
+    currentEditorChanged = Signal(object)  # RecipeEditWidget or None (Library)
+    dirtyChanged = Signal()       # any tab's unsaved-edit count changed
 
-    def __init__(self, parent=None):
+    def __init__(self, library_widget, parent=None):
         super().__init__(parent)
         self.setTabsClosable(True)
-        self.setMovable(True)
         self.setDocumentMode(True)
         self.setUsesScrollButtons(True)
         self.tabCloseRequested.connect(self.close_tab)
 
-        # ⌘W closes current, ⌃Tab cycles. Scoped so other places don't
-        # intercept — Ctrl+W elsewhere might legitimately mean something
-        # different (close window). Here it closes the tab.
+        self.addTab(library_widget, 'Library')
+        # Pinned: no close button on the Library tab.
+        self.tabBar().setTabButton(LIBRARY_INDEX, QTabBar.RightSide, None)
+        self.tabBar().setTabButton(LIBRARY_INDEX, QTabBar.LeftSide, None)
+
+        plus = QToolButton()
+        plus.setText('+')
+        plus.setToolTip('New recipe (Ctrl+N)')
+        plus.setAutoRaise(True)
+        plus.clicked.connect(self.newTabRequested.emit)
+        self.setCornerWidget(_TabCorner(plus), Qt.TopRightCorner)
+
+        self.currentChanged.connect(
+            lambda _i: self.currentEditorChanged.emit(self.current_editor())
+        )
+
+        # Ctrl+W closes current, Ctrl+Tab cycles. Scoped so other places
+        # don't intercept.
         close_sc = QShortcut(QKeySequence('Ctrl+W'), self)
         close_sc.setContext(Qt.WidgetWithChildrenShortcut)
-        close_sc.activated.connect(self._close_current)
+        close_sc.activated.connect(self.close_current)
         next_sc = QShortcut(QKeySequence('Ctrl+Tab'), self)
         next_sc.setContext(Qt.WidgetWithChildrenShortcut)
         next_sc.activated.connect(self._cycle_tab)
@@ -41,16 +66,16 @@ class EditorTabs(QTabWidget):
 
     def open_recipe(self, recipe_id):
         '''If this recipe is already open, switch to its tab. Otherwise
-        build a RecipeEditWidget and append it. Returns the final tab
-        index.'''
+        build a RecipeEditWidget and append it. Returns the tab index.'''
         existing = self._index_of_recipe(recipe_id)
         if existing >= 0:
             self.setCurrentIndex(existing)
             return existing
         widget = RecipeEditWidget(recipe_id, parent=self)
-        widget.titleChanged.connect(
-            lambda name, w=widget: self._on_title_changed(w, name)
-        )
+        widget.titleChanged.connect(lambda _name, w=widget: self._sync_tab_text(w))
+        widget.modifiedChanged.connect(lambda _m, w=widget: self._sync_tab_text(w))
+        widget.dirtyCountChanged.connect(lambda _n: self.dirtyChanged.emit())
+        widget.saved.connect(self.recipeSaved.emit)
         widget.recipeDeleted.connect(
             lambda _rid, w=widget: self._on_recipe_deleted(w, _rid)
         )
@@ -59,32 +84,40 @@ class EditorTabs(QTabWidget):
         self.recipeOpened.emit(recipe_id)
         return idx
 
+    def show_library(self):
+        self.setCurrentIndex(LIBRARY_INDEX)
+
+    def set_library_count(self, n):
+        self.setTabText(LIBRARY_INDEX, f'Library  {n}')
+
     # --- closing -------------------------------------------------------
 
     def close_tab(self, index):
-        '''Flush pending edits via widget.close_requested(), then remove
-        the tab. Fires allClosed if that was the last one.'''
+        '''Ask the widget to close (it may prompt about unsaved edits),
+        then remove the tab. Returns False if the user cancelled.'''
+        if index == LIBRARY_INDEX:
+            return True
         widget = self.widget(index)
         if widget is None:
-            return
+            return True
+        self.setCurrentIndex(index)
         if not widget.close_requested():
-            # Future: a false return will mean "I have unsaved work,
-            # please don't close me". Not reachable today (editor
-            # auto-commits every edit).
-            return
+            return False
         self.removeTab(index)
         widget.deleteLater()
-        if self.count() == 0:
-            self.allClosed.emit()
+        self.dirtyChanged.emit()
+        return True
 
     def close_all(self):
-        '''Walk and close every tab, flushing each. Called by the parent
-        on tear-down (window close) to ensure cost snapshots stamp.'''
-        while self.count() > 0:
-            self.close_tab(0)
+        '''Close every recipe tab, left to right. Stops and returns
+        False at the first one the user refuses to close.'''
+        while self.count() > 1:
+            if not self.close_tab(1):
+                return False
+        return True
 
-    def _close_current(self):
-        if self.currentIndex() >= 0:
+    def close_current(self):
+        if self.currentIndex() > LIBRARY_INDEX:
             self.close_tab(self.currentIndex())
 
     def _cycle_tab(self):
@@ -95,48 +128,67 @@ class EditorTabs(QTabWidget):
     # --- internal ------------------------------------------------------
 
     def _index_of_recipe(self, recipe_id):
-        for i in range(self.count()):
-            w = self.widget(i)
-            if getattr(w, 'recipe_id', None) == recipe_id:
+        for i in range(1, self.count()):
+            if getattr(self.widget(i), 'recipe_id', None) == recipe_id:
                 return i
         return -1
 
-    def _on_title_changed(self, widget, name):
+    def _sync_tab_text(self, widget):
         idx = self.indexOf(widget)
         if idx >= 0:
-            self.setTabText(idx, name)
+            # Bullet marks unsaved edits, as in the canvas tab strip.
+            self.setTabText(idx, widget.title() + ('  •' if widget.modified else ''))
 
-    def _on_recipe_deleted(self, widget, recipe_id):
-        '''The widget's _on_delete already removed the row from the DB
-        and marked itself not-to-snapshot. Just remove the tab —
-        close_requested would otherwise try to re-read the gone row.'''
+    def _remove_widget(self, widget):
         idx = self.indexOf(widget)
         if idx >= 0:
             self.removeTab(idx)
             widget.deleteLater()
+        self.dirtyChanged.emit()
+
+    def _on_recipe_deleted(self, widget, recipe_id):
+        '''The widget's _on_delete already removed the row from the DB
+        and marked itself not-to-snapshot. Just remove the tab.'''
+        self._remove_widget(widget)
         self.recipeDeleted.emit(recipe_id)
-        if self.count() == 0:
-            self.allClosed.emit()
 
     def handle_external_delete(self, recipe_id):
         '''Called when a recipe is deleted from outside the editor
-        (library row context menu, bulk delete, etc.). Finds any
-        matching open tab, flags its widget as deleted so tear-down
-        skips the gone-row UPDATE paths, and removes the tab.'''
+        (library row context menu, etc.). Flags the widget as deleted
+        so tear-down skips the gone-row paths, and removes the tab.'''
         idx = self._index_of_recipe(recipe_id)
         if idx < 0:
             return
         widget = self.widget(idx)
         widget.mark_deleted()
-        self.removeTab(idx)
-        widget.deleteLater()
-        if self.count() == 0:
-            self.allClosed.emit()
+        self._remove_widget(widget)
 
     # --- state helpers -------------------------------------------------
 
+    def current_editor(self):
+        '''The RecipeEditWidget in the current tab, or None on Library.'''
+        idx = self.currentIndex()
+        return self.widget(idx) if idx > LIBRARY_INDEX else None
+
+    def editors(self):
+        return [self.widget(i) for i in range(1, self.count())]
+
     def open_recipe_ids(self):
-        '''List of recipe ids currently open in tabs, in tab order.
-        Useful for persisting + restoring the editor state across
-        app launches (not wired yet).'''
-        return [self.widget(i).recipe_id for i in range(self.count())]
+        '''Recipe ids open in tabs, in tab order — persisted so tabs
+        survive restarts.'''
+        return [w.recipe_id for w in self.editors()]
+
+
+class _TabCorner(QWidget):
+    '''Right-hand corner of the tab strip: the "+" button and a muted
+    keyboard hint.'''
+
+    def __init__(self, plus_button, parent=None):
+        super().__init__(parent)
+        hint = QLabel('Ctrl+Tab next tab · Ctrl+W close · Ctrl+0 Library')
+        hint.setStyleSheet('color: #55624c; font-size: 11px;')
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 0, 8, 0)
+        layout.setSpacing(12)
+        layout.addWidget(plus_button)
+        layout.addWidget(hint)
