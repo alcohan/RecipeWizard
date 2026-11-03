@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 import db
 from gui.models.recipes_model import SORTS
+from gui.widgets.elided_label import ElidedLabel
 from gui.widgets.wedge_view import WedgeView
 from utilities.diets import DIET_NAMES
 
@@ -102,13 +103,14 @@ class RecipeCard(QFrame):
         self.wedge.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.wedge.renderComplete.connect(self._on_wedge_ready)
 
-        self.name_label = QLabel()
+        self.name_label = ElidedLabel()
         self.name_label.setStyleSheet(f'color: {_KALE}; font-weight: 650; font-size: 14px;')
         self.cost_label = QLabel()
         self.cost_label.setStyleSheet(f'color: {_KALE}; font-weight: 650; font-size: 14px;')
         self.kcal_label = QLabel()
         self.kcal_label.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
-        self.food_label = QLabel()
+        self.food_label = ElidedLabel()
+        self.food_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.chips = QHBoxLayout()
         self.chips.setContentsMargins(0, 0, 0, 0)
         self.chips.setSpacing(4)
@@ -167,9 +169,7 @@ class RecipeCard(QFrame):
     def set_row(self, row):
         self.row = row
         name = row['Name'] or ''
-        metrics = self.name_label.fontMetrics()
-        self.name_label.setText(metrics.elidedText(name, Qt.ElideRight, self.WIDTH - 24 - 64))
-        self.name_label.setToolTip(name)
+        self.name_label.setText(name)
         self.setToolTip(name)
         self.cost_label.setText(f'${float(row.get("CostRaw") or 0):.2f}')
         self.kcal_label.setText(f'{row.get("CaloriesPerServing", 0):.0f} kcal')

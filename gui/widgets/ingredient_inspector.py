@@ -58,6 +58,7 @@ class IngredientInspector(QScrollArea):
         self.setFixedWidth(320)
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setStyleSheet(f'QScrollArea {{ border: 0; border-left: 1px solid {_BORDER};'
                            ' background: #ffffff; }')
         self._id = None
@@ -255,6 +256,7 @@ class IngredientInspector(QScrollArea):
             line = QLabel(f'<a href="{u["Id"]}" style="color: {_KALE}; text-decoration: none">'
                           f'{u["Name"]}</a> <span style="color: {_MUTED}">· {qty} {u["Unit"] or ""}</span>')
             line.setTextFormat(Qt.RichText)
+            line.setWordWrap(True)   # long recipe names wrap instead of widening the panel
             line.setToolTip('Open in a tab')
             line.linkActivated.connect(lambda href: self.recipeRequested.emit(int(href)))
             amount = QLabel(f'<b>{value}</b>')

@@ -50,6 +50,7 @@ _STYLE = f'''
         background: transparent;
         color: {_MUTED};
         font-size: 14px;
+        max-width: 260px;
     }}
     QTabBar::tab:first {{ margin-right: 12px; padding-right: 14px; }}
     QTabBar::tab:hover:!selected {{ background: #f7f1e6; }}
@@ -82,6 +83,8 @@ class EditorTabs(QTabWidget):
         self.setStyleSheet(_STYLE)
         self.tabBar().setDrawBase(False)
         self.tabBar().setExpanding(False)
+        # Long recipe names shorten with … instead of making huge tabs.
+        self.tabBar().setElideMode(Qt.ElideRight)
 
         self.addTab(library_widget, 'Library')
         # Pinned: a library glyph, no close button.

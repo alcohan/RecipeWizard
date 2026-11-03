@@ -5,8 +5,8 @@ with the data-model slice): an allergen diet excludes recipes that
 contain any of its allergens; a nutrient diet needs at least so much
 per serving. A serving is one unit of the recipe's yield.
 
-No Qt here — the Library filter pane, cards and inspector all read
-`diets_for` / `diet_blockers`.
+No Qt here — the Library model, filter pane, cards and inspector all
+use `diets_for`.
 '''
 
 # key, name, tooltip, excluded allergens, (nutrient key, minimum per serving)
@@ -23,8 +23,6 @@ DIETS = (
 
 DIET_NAMES = {key: name for key, name, *_ in DIETS}
 DIET_TIPS = {key: tip for key, _name, tip, *_ in DIETS}
-
-_UNITS = {'Protein': 'g protein', 'Fiber': 'g fiber'}
 
 
 def diets_for(allergens, per_serving):
@@ -43,25 +41,3 @@ def diets_for(allergens, per_serving):
         out.append(key)
     return out
 
-
-def diet_blockers(allergen_sources, per_serving, only=None):
-    '''Why a recipe misses each diet it doesn't fit, for the inspector:
-    [(diet name, reason)], e.g. ('Vegetarian', 'chicken (Meat)').
-    `allergen_sources` is [(allergen, [component names])] as from
-    db.get_recipe_allergen_sources. `only` limits to those diet keys.'''
-    sources = dict(allergen_sources or ())
-    out = []
-    for key, name, _tip, excluded, nutrient in DIETS:
-        if only is not None and key not in only:
-            continue
-        if excluded:
-            hits = [(a, sources[a]) for a in excluded if a in sources]
-            if hits:
-                out.append((name, '; '.join(f'{", ".join(src)} ({a})' for a, src in hits)))
-                continue
-        if nutrient is not None:
-            field, minimum = nutrient
-            have = float(per_serving.get(field) or 0)
-            if have < minimum:
-                out.append((name, f'{have:.0f} {_UNITS[field]} per serving, needs {minimum:.0f}'))
-    return out
