@@ -16,7 +16,7 @@ Emits `rowActivated(int)` (source row) for Edit, like before, plus
 from PySide6.QtCore import QItemSelectionModel, Qt, QSettings, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractItemView, QButtonGroup, QFrame, QHBoxLayout, QHeaderView, QLabel,
+    QAbstractItemView, QFrame, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMenu, QPushButton, QStackedWidget, QTableView, QVBoxLayout, QWidget,
 )
 
@@ -27,6 +27,7 @@ from gui.widgets.ingredient_table import (
     ChangeDelegate, NameDelegate, PlainDelegate, TwoLineDelegate,
 )
 from gui.widgets.ingredients_facet_pane import IngredientsFacetPane
+from gui.widgets.toolbar_controls import SegmentedSwitch
 
 
 _SETTINGS_KEY = 'ingredients/view'
@@ -158,28 +159,8 @@ class IngredientsTab(QWidget):
         self.count_label = QLabel('')
         self.count_label.setStyleSheet(f'color: {_MUTED};')
 
-        views = QFrame()
-        views.setObjectName('ViewSwitch')
-        views.setStyleSheet(f'''
-            QFrame#ViewSwitch {{ border: 1px solid {_FIELD_BORDER}; border-radius: 8px; }}
-            QFrame#ViewSwitch QPushButton {{ border: 0; padding: 0 12px; min-height: 32px;
-                background: #ffffff; color: {_KALE}; }}
-            QFrame#ViewSwitch QPushButton:checked {{ background: {_ROMAINE}; color: #ffffff;
-                font-weight: 600; }}
-        ''')
-        vl = QHBoxLayout(views)
-        vl.setContentsMargins(1, 1, 1, 1)
-        vl.setSpacing(0)
-        self._view_group = QButtonGroup(self)
-        self._view_buttons = {}
-        for key, label in (('gallery', 'Gallery'), ('table', 'Table')):
-            btn = QPushButton(label)
-            btn.setCheckable(True)
-            btn.setFocusPolicy(Qt.NoFocus)
-            btn.clicked.connect(lambda _c=False, k=key: self._set_view(k))
-            self._view_group.addButton(btn)
-            self._view_buttons[key] = btn
-            vl.addWidget(btn)
+        self.view_switch = SegmentedSwitch([('gallery', 'Gallery'), ('table', 'Table')])
+        self.view_switch.changed.connect(self._set_view)
 
         new_btn = QPushButton('New ingredient   Ctrl+Shift+N')
         new_btn.setStyleSheet(
@@ -195,7 +176,7 @@ class IngredientsTab(QWidget):
         row.addWidget(field, stretch=1)
         row.addWidget(self.count_label)
         row.addStretch()
-        row.addWidget(views)
+        row.addWidget(self.view_switch)
         row.addWidget(new_btn)
         return bar
 
@@ -265,7 +246,7 @@ class IngredientsTab(QWidget):
     # --- view + filtering ----------------------------------------------
 
     def _set_view(self, name, persist=True):
-        self._view_buttons[name].setChecked(True)
+        self.view_switch.set_current(name)
         self.stack.setCurrentIndex(0 if name == 'gallery' else 1)
         if persist:
             QSettings().setValue(_SETTINGS_KEY, name)
