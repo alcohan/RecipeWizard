@@ -6,6 +6,7 @@ DROP TABLE IF EXISTS tags;
 DROP TABLE IF EXISTS ingredient_tags_mapping;
 DROP TABLE IF EXISTS recipe_tags_mapping;
 DROP TABLE IF EXISTS saved_views;
+DROP TABLE IF EXISTS saved_comparisons;
 DROP TABLE IF EXISTS diets;
 DROP TABLE IF EXISTS diet_allergens;
 DROP TABLE IF EXISTS app_meta;  -- one-time seed markers: a reset library seeds afresh
@@ -112,6 +113,15 @@ CREATE TABLE saved_views (
   id INTEGER PRIMARY KEY AUTOINCREMENT
   , name TEXT NOT NULL
   , state TEXT NOT NULL
+  , sortOrder INTEGER
+);
+
+-- Named Analytics comparisons: recipe ids and chart settings (JSON).
+CREATE TABLE saved_comparisons (
+  id INTEGER PRIMARY KEY AUTOINCREMENT
+  , name TEXT NOT NULL
+  , recipe_ids TEXT NOT NULL
+  , settings TEXT NOT NULL
   , sortOrder INTEGER
 );
 
