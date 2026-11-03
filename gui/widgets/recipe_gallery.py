@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 import db
-from gui.models.recipes_model import SORTS
+from gui.models.recipes_model import SORTS, prices_drifted as _prices_drifted
 from gui.widgets.elided_label import ElidedLabel
 from gui.widgets.wedge_view import WedgeView
 from utilities.diets import DIET_NAMES, DIETS
@@ -42,20 +42,6 @@ SUB_RECIPE_GROUP = 'Sub-recipes'
 UNTAGGED_GROUP = 'Untagged'
 NO_DIET_GROUP = 'No listed diet'
 GROUP_BY = (('format', 'Format'), ('tags', 'Tags'), ('diets', 'Diets'), ('none', 'None'))
-
-
-def _prices_drifted(cost_raw, cost_snapshot, min_delta=0.01):
-    '''True when the current cost differs from the snapshot by at
-    least min_delta. Both NULL (never snapshotted) counts as "no
-    drift" — no sense in flagging recipes the user has never opened.'''
-    try:
-        a = float(cost_raw) if cost_raw is not None else None
-        b = float(cost_snapshot) if cost_snapshot is not None else None
-    except (TypeError, ValueError):
-        return False
-    if a is None or b is None:
-        return False
-    return abs(a - b) >= min_delta
 
 
 def food_cost_text(row):

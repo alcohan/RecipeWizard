@@ -1,4 +1,5 @@
 import config
+import json
 import sqlite3
 from re import sub
 
@@ -1087,6 +1088,31 @@ def set_recipe_status(recipe_id, status):
     '''Archive ('archived') or restore ('active') a recipe.'''
     assert status in ('active', 'archived'), status
     query('UPDATE Recipes SET status = ? WHERE Id = ?;', (status, recipe_id))
+
+
+def get_saved_views():
+    '''[{id, name, state}] in their order; state is a dict.'''
+    rows = query('SELECT id, name, state FROM saved_views ORDER BY sortOrder, id;')['data']
+    for r in rows:
+        r['state'] = json.loads(r['state'])
+    return rows
+
+
+def create_saved_view(name, state):
+    nxt = query('SELECT COALESCE(MAX(sortOrder), 0) + 1 AS n FROM saved_views;', one=True)['n']
+    return query('INSERT INTO saved_views (name, state, sortOrder) VALUES (?, ?, ?);',
+                 (name, json.dumps(state), nxt))['lastrowid']
+
+
+def update_saved_view(view_id, name=None, state=None):
+    if name is not None:
+        query('UPDATE saved_views SET name = ? WHERE id = ?;', (name, view_id))
+    if state is not None:
+        query('UPDATE saved_views SET state = ? WHERE id = ?;', (json.dumps(state), view_id))
+
+
+def delete_saved_view(view_id):
+    query('DELETE FROM saved_views WHERE id = ?;', (view_id,))
 
 
 def duplicate_recipe(recipe_id):

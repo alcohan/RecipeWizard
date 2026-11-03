@@ -5,6 +5,7 @@ DROP TABLE IF EXISTS tag_category_multipliers;
 DROP TABLE IF EXISTS tags;
 DROP TABLE IF EXISTS ingredient_tags_mapping;
 DROP TABLE IF EXISTS recipe_tags_mapping;
+DROP TABLE IF EXISTS saved_views;
 DROP TABLE IF EXISTS allergens;
 DROP TABLE IF EXISTS ingredient_allergens;
 
@@ -101,6 +102,14 @@ CREATE TABLE ingredient_tags_mapping (
   , ingredient_id INTEGER
   , FOREIGN KEY (ingredient_id) REFERENCES ingredients(id)
   , FOREIGN KEY (tag_id) REFERENCES tags(id)
+);
+
+-- Named Library filter states (JSON from the filter pane).
+CREATE TABLE saved_views (
+  id INTEGER PRIMARY KEY AUTOINCREMENT
+  , name TEXT NOT NULL
+  , state TEXT NOT NULL
+  , sortOrder INTEGER
 );
 
 CREATE TABLE recipe_tags_mapping (

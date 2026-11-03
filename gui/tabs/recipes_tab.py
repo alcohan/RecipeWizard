@@ -387,7 +387,7 @@ class RecipesTab(QWidget):
         self._after_filter()
 
     def _apply_facets(self):
-        self.proxy.set_facets(*self.facet_pane.selection())
+        self.proxy.set_state(self.facet_pane.state())
         self._after_filter()
 
     def _after_filter(self):
@@ -429,7 +429,7 @@ class RecipesTab(QWidget):
     def _sync_to_model(self):
         self._stale = False
         self.facet_pane.set_library(self.source_model.rows())
-        self.proxy.set_facets(*self.facet_pane.selection())
+        self.proxy.set_state(self.facet_pane.state())
         self._after_filter()
         QTimer.singleShot(0, self._restore_selection)
 

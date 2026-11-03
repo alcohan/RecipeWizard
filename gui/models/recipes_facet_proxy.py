@@ -1,54 +1,80 @@
 '''Filter + sort proxy for the Recipes Library.
 
-Facets, combined with AND across groups (see RecipesFacetPane):
-- formats: set of format names to show (SUB_RECIPES = no format);
+Filters come as one state dict (RecipesFacetPane.state(), which saved
+views store as JSON), combined with AND across keys:
+- formats: list of format names to show (SUB_RECIPES = no format);
   None means "no format filter".
-- tags: set of recipe-tag ids (None = untagged); a recipe passes with
-  any of them. Empty set = no tag filter.
-- diets: set of diet keys; a recipe must fit all of them.
-- categories: set of ingredient-category ids; a recipe must contain
-  all of them somewhere in its tree.
-- free_from: set of allergen names; a recipe containing any is hidden.
+- tags: recipe-tag ids (None = untagged); a recipe passes with any of
+  them. Empty = no tag filter.
+- diets: diet keys; a recipe must fit all of them.
+- categories: ingredient-category ids; a recipe must contain all of
+  them somewhere in its tree.
+- free_from: allergen names; a recipe containing any is hidden.
 - max_food_cost: percent, or None. Recipes without a menu price are
   hidden while it's set (their food cost is unknown).
-- text: substring of name, format, unit, allergens or tags.
 - include_archived: archived recipes are hidden unless it's set.
+- needs_review: only recipes with ReviewReasons (the Needs review view).
 
+Plus the toolbar's text filter: a substring of name, format, unit,
+allergens or tags (not part of the state; views don't save it).
+
+matches() is shared with the filter pane, which counts each saved view.
 The gallery filters through accepts_row, so both views show the same
 recipes.
 '''
 from PySide6.QtCore import QSortFilterProxyModel, Qt
 
-from gui.models.recipes_model import SORTS
-from gui.widgets.recipes_facet_pane import SUB_RECIPES
+from gui.models.recipes_model import SORTS, SUB_RECIPES
+
+
+def matches(row, state):
+    if row.get('Archived') and not state.get('include_archived'):
+        return False
+    if state.get('needs_review') and not row.get('ReviewReasons'):
+        return False
+    formats = state.get('formats')
+    if formats is not None and (row.get('TagName') or SUB_RECIPES) not in formats:
+        return False
+    tags = state.get('tags') or ()
+    if tags and not ((None in tags and not row['TagIds']) or set(tags).intersection(row['TagIds'])):
+        return False
+    diets = state.get('diets') or ()
+    if diets and not set(diets).issubset(row['Diets']):
+        return False
+    categories = state.get('categories') or ()
+    if categories and not set(categories).issubset(row['CategoryIds']):
+        return False
+    free_from = state.get('free_from') or ()
+    if free_from and set(free_from).intersection(row['Allergens']):
+        return False
+    cap = state.get('max_food_cost')
+    if cap is not None:
+        pct = row.get('FoodCostPct')
+        if pct is None or pct > cap:
+            return False
+    return True
 
 
 class RecipesFacetProxy(QSortFilterProxyModel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setSortRole(Qt.UserRole)
-        self._formats = None
-        self._tags = set()
-        self._diets = set()
-        self._categories = set()
-        self._free_from = set()
-        self._max_food_cost = None
-        self._include_archived = False
+        self._state = {}
         self._text = ''
 
-    def set_facets(self, formats, tags=(), diets=(), categories=(), free_from=(), max_food_cost=None,
-                   include_archived=False):
-        self._formats = formats
-        self._tags = set(tags or ())
-        self._diets = set(diets or ())
-        self._categories = set(categories or ())
-        self._free_from = set(free_from or ())
-        self._max_food_cost = max_food_cost
-        self._include_archived = include_archived
+    def set_state(self, state):
+        self._state = dict(state)
         self.invalidateFilter()
 
+    def set_facets(self, formats, tags=(), diets=(), categories=(), free_from=(), max_food_cost=None,
+                   include_archived=False, needs_review=False):
+        self.set_state({'formats': formats, 'tags': list(tags or ()), 'diets': list(diets or ()),
+                        'categories': list(categories or ()), 'free_from': list(free_from or ()),
+                        'max_food_cost': max_food_cost, 'include_archived': include_archived,
+                        'needs_review': needs_review})
+
     def includes_archived(self):
-        return self._include_archived
+        return bool(self._state.get('include_archived'))
 
     def setFilterText(self, text):
         self._text = (text or '').strip().lower()
@@ -82,23 +108,8 @@ class RecipesFacetProxy(QSortFilterProxyModel):
         return key(model.row_dict(left.row())) < key(model.row_dict(right.row()))
 
     def accepts_row(self, row):
-        if row.get('Archived') and not self._include_archived:
+        if not matches(row, self._state):
             return False
-        if self._formats is not None and (row.get('TagName') or SUB_RECIPES) not in self._formats:
-            return False
-        if self._tags and not ((None in self._tags and not row['TagIds'])
-                               or self._tags.intersection(row['TagIds'])):
-            return False
-        if self._diets and not self._diets.issubset(row['Diets']):
-            return False
-        if self._categories and not self._categories.issubset(row['CategoryIds']):
-            return False
-        if self._free_from and self._free_from.intersection(row['Allergens']):
-            return False
-        if self._max_food_cost is not None:
-            pct = row.get('FoodCostPct')
-            if pct is None or pct > self._max_food_cost:
-                return False
         if self._text and self._text not in row['SearchText']:
             return False
         return True
