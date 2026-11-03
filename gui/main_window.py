@@ -678,7 +678,7 @@ class MainWindow(QMainWindow):
         self._flash_status(f"Duplicated as '{name}'")
 
     def _on_new_recipe(self):
-        create_dlg = RecipeCreateDialog(parent=self)
+        create_dlg = RecipeCreateDialog(parent=self, edit_templates=self._on_recipe_templates)
         if create_dlg.exec() != QDialog.Accepted or not create_dlg.new_id:
             return
         # Pick up the new row in the recipes model, then open it in a
