@@ -23,6 +23,46 @@ SORTS = {
 }
 
 
+FOOD_COST_TARGET = 28.0
+SUB_RECIPES = '__sub__'     # the format filter's key for recipes with no format
+
+
+def prices_drifted(cost_raw, cost_snapshot, min_delta=0.01):
+    '''True when the current cost differs from the snapshot by at
+    least min_delta. Both NULL (never snapshotted) counts as "no
+    drift" — no sense in flagging recipes the user has never opened.'''
+    try:
+        a = float(cost_raw) if cost_raw is not None else None
+        b = float(cost_snapshot) if cost_snapshot is not None else None
+    except (TypeError, ValueError):
+        return False
+    if a is None or b is None:
+        return False
+    return abs(a - b) >= min_delta
+
+
+def review_reasons(row, prices_in_use=True):
+    '''Why a recipe is in the Needs review view (empty = it isn't):
+    prices moved since its last save, a menu item (it has a format)
+    without a menu price or over the food-cost target, or no calories
+    (its ingredients are missing nutrition). "No menu price" only
+    counts once the library uses menu prices (prices_in_use), or every
+    menu item would need review.'''
+    reasons = []
+    if prices_drifted(row.get('CostRaw'), row.get('CostSnapshot')):
+        reasons.append('Prices changed since last save')
+    if row.get('TagName'):
+        pct = row.get('FoodCostPct')
+        if pct is None:
+            if prices_in_use:
+                reasons.append('No menu price')
+        elif pct > FOOD_COST_TARGET:
+            reasons.append(f'Food cost over {FOOD_COST_TARGET:.0f}%')
+    if not row.get('CaloriesPerServing'):
+        reasons.append('Missing nutrition')
+    return reasons
+
+
 def _neg_text(s):
     '''Sorts ISO timestamps newest first under an ascending sort.'''
     return tuple(-ord(ch) for ch in s)
@@ -68,6 +108,9 @@ class RecipesModel(QAbstractTableModel):
                 str(v) for v in (r['Name'], r.get('TagName'), r.get('Unit'), ' '.join(r['Allergens']),
                                  ' '.join(r['TagNames']), 'archived' if r['Archived'] else '')
                 if v).lower()
+        prices_in_use = any(r['FoodCostPct'] is not None for r in rows)
+        for r in rows:
+            r['ReviewReasons'] = review_reasons(r, prices_in_use)
         self._rows = rows
         self._by_id = {r['Id']: i for i, r in enumerate(rows)}
         self.endResetModel()

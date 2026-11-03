@@ -344,6 +344,15 @@ def migrateDB():
                 )
         cursor.execute("INSERT INTO app_meta (key, value) VALUES ('seeded_recipe_tags', '1');")
 
+    # Saved views: named Library filter states (the filter pane's state()
+    # as JSON). Kept with the library, so they travel with backups.
+    cursor.execute('''CREATE TABLE IF NOT EXISTS saved_views (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        state TEXT NOT NULL,
+        sortOrder INTEGER
+    );''')
+
     # Archived used to be a recipe tag; it's Recipes.status now. Once:
     # recipes tagged Archived become archived, and the tag goes away.
     cursor.execute("SELECT 1 FROM app_meta WHERE key = 'archived_tag_to_status';")
