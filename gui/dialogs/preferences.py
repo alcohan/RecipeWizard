@@ -1,4 +1,4 @@
-'''Configure › Preferences — currently just the USDA API key.
+'''Configure › Preferences — the USDA API key and update checks.
 
 The key is stored in QSettings under 'usda/apiKey'. main_window pushes the
 stored value into api.usda.set_api_key() at startup, and this page does
@@ -9,11 +9,17 @@ saving it.
 
 USDA keys are free and unlimited; we ship with no key and fall back to
 the public DEMO_KEY (30 req/hour per IP) until the user provides one.
+
+Updates: whether to check GitHub once a day at startup, and whether
+pre-releases count (on by default while every release is one). Both
+are read by gui.services.updates at check time.
 '''
 from PySide6.QtCore import Qt, QSettings, Signal
-from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QCheckBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 import api.usda
+import config
+from gui.services import updates as update_prefs
 from gui.widgets import config_kit as kit
 
 
@@ -66,8 +72,29 @@ class PreferencesPage(QWidget):
         layout.addWidget(kit.heading('Preferences'))
         layout.addWidget(kit.note('Settings for this computer. Changes save as you make them.'))
         layout.addWidget(card)
+        layout.addWidget(self._updates_card())
         layout.addStretch()
         self._show_saved()
+
+    def _updates_card(self):
+        card, cl = kit.card()
+        card.setMaximumWidth(720)
+        cl.addWidget(kit.subheading('Updates'))
+        cl.addWidget(kit.note(f'This is RecipeWizard v{config.__version__}. '
+                              'Help › Check for Updates… checks any time.'))
+        self.auto_check = QCheckBox('Check for updates once a day when RecipeWizard starts')
+        self.auto_check.setChecked(update_prefs.check_automatically())
+        self.auto_check.toggled.connect(
+            lambda on: QSettings().setValue(update_prefs.KEY_AUTO, on))
+        self.prereleases = QCheckBox('Include pre-releases')
+        self.prereleases.setToolTip('Test builds published ahead of a full release')
+        self.prereleases.setChecked(update_prefs.include_prereleases())
+        self.prereleases.toggled.connect(
+            lambda on: QSettings().setValue(update_prefs.KEY_PRERELEASES, on))
+        for box in (self.auto_check, self.prereleases):
+            box.setStyleSheet(f'color: {kit.KALE};')
+            cl.addWidget(box)
+        return card
 
     def has_key(self):
         return bool(QSettings().value(_KEY, '', type=str))
