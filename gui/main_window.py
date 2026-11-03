@@ -20,7 +20,7 @@ from gui.dialogs.ingredient_new import IngredientNewDialog
 from gui.dialogs.ingredient_price_edit import IngredientPriceEditDialog
 from gui.dialogs.preferences import PreferencesPage
 from gui.dialogs.recipe_create import RecipeCreateDialog
-from gui.dialogs.update import UpdateDialog
+from gui.dialogs.update import UpdateDialog, install_update
 from gui.dialogs.template_editor import TemplatesEditor, TemplatesManagerDialog
 from gui.models.ingredients_model import IngredientsModel
 from gui.models.recipes_model import RecipesModel
@@ -759,9 +759,10 @@ class MainWindow(QMainWindow):
             shutil.copy(config.DATABASE, path)
         except OSError as exc:
             QMessageBox.critical(self, 'Backup Failed', str(exc))
-            return
+            return False
         self.status_bar.refresh()
         self.library_health_tab.mark_stale()
+        return True
 
     def _on_backup_database(self):
         default_name = f'RecipeWizard_backup_{datetime.date.today().isoformat()}.db'
@@ -884,8 +885,12 @@ class MainWindow(QMainWindow):
         self.update_action.setText(f'&Update Available: {release.tag}…')
 
     def _on_show_update(self):
-        if self.updates.release is not None:
-            UpdateDialog(self.updates.release, parent=self).exec()
+        release = self.updates.release
+        if release is None:
+            return
+        dlg = UpdateDialog(release, parent=self)
+        if dlg.exec() == QDialog.Accepted and dlg.install:
+            install_update(self, release, backup=self._on_backup_now)
 
     def _on_check_updates(self):
         '''Help › Check for Updates…: always reports back.'''
