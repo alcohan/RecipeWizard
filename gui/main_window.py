@@ -18,7 +18,7 @@ from gui.dialogs.bulk_image_assign import BulkImageAssignDialog
 from gui.dialogs.ingredient_edit import IngredientEditDialog
 from gui.dialogs.ingredient_new import IngredientNewDialog
 from gui.dialogs.ingredient_price_edit import IngredientPriceEditDialog
-from gui.dialogs.preferences import PreferencesDialog
+from gui.dialogs.preferences import PreferencesPage
 from gui.dialogs.recipe_create import RecipeCreateDialog
 from gui.dialogs.template_editor import TemplatesEditor, TemplatesManagerDialog
 from gui.models.ingredients_model import IngredientsModel
@@ -309,11 +309,9 @@ class MainWindow(QMainWindow):
             ],
         ))
         cfg.add_group('App')
-        cfg.add_section('preferences', 'Preferences', LauncherPage(
-            'Preferences',
-            'USDA FoodData Central API key, used by New ingredient lookups.',
-            [('Open preferences…', self._on_preferences)],
-        ))
+        self.preferences_page = PreferencesPage()
+        self.preferences_page.changed.connect(self._refresh_configure_counts)
+        cfg.add_section('preferences', 'Preferences', self.preferences_page)
         self.configure_tab = cfg
         return cfg
 
@@ -387,6 +385,8 @@ class MainWindow(QMainWindow):
                        ('allergens', len(db.get_all_allergen_rows())), ('recipe_tags', len(db.get_tags('recipe_tag'))),
                        ('diets', len(db.get_diets())), ('suppliers', len(db.get_suppliers()))):
             cfg.set_section_count(key, n)
+        # The nav hints at what Preferences holds, as the canvas does.
+        cfg.set_section_count('preferences', 'USDA key' if self.preferences_page.has_key() else 'demo key')
 
     def _refresh_library_count(self):
         self.recipes_tab.editor_tabs.set_library_count(self.recipes_model.rowCount())
@@ -858,7 +858,7 @@ class MainWindow(QMainWindow):
         AboutDialog(parent=self).exec()
 
     def _on_preferences(self):
-        PreferencesDialog(parent=self).exec()
+        self._show_configure('preferences')
 
 
 def _parse_id_list(value):
