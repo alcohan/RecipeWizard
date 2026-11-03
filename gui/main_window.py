@@ -251,9 +251,17 @@ class MainWindow(QMainWindow):
             self.refresh()
 
     def _analytics_place(self):
-        tab = AnalyticsTab(self.recipes_model, compare_tray=self.compare_tray)
+        tab = AnalyticsTab(self.recipes_model, compare_tray=self.compare_tray,
+                           library_ids=lambda: self.recipes_tab.visible_ids())
         tab.recipeActivated.connect(self._on_recipe_edit_by_id)
+        tab.dockRequested.connect(self._on_dock_tray)
+        self.analytics_tab = tab
         return tab
+
+    def _on_dock_tray(self):
+        '''Analytics › Dock to bottom: back to Recipes with the tray docked.'''
+        self._set_tray_docked(True)
+        self._go_to_place('recipes')
 
     def _configure_place(self):
         '''Setup and upkeep. Suppliers and Library health are hosted
