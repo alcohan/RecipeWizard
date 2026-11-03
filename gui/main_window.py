@@ -18,14 +18,16 @@ from gui.dialogs.bulk_image_assign import BulkImageAssignDialog
 from gui.dialogs.ingredient_edit import IngredientEditDialog
 from gui.dialogs.ingredient_new import IngredientNewDialog
 from gui.dialogs.ingredient_price_edit import IngredientPriceEditDialog
-from gui.dialogs.preferences import PreferencesDialog
+from gui.dialogs.preferences import PreferencesPage
 from gui.dialogs.recipe_create import RecipeCreateDialog
-from gui.dialogs.tags_manager import IngredientTagsDialog, RecipeTagsDialog
-from gui.dialogs.template_editor import TemplatesManagerDialog
+from gui.dialogs.template_editor import TemplatesEditor, TemplatesManagerDialog
 from gui.models.ingredients_model import IngredientsModel
 from gui.models.recipes_model import RecipesModel
 from gui.tabs.analytics_tab import AnalyticsTab
+from gui.dialogs.tags_manager import TagsPage
+from gui.tabs.allergens_page import AllergensPage
 from gui.tabs.configure_tab import ConfigureTab, LauncherPage
+from gui.tabs.diets_page import DietsPage
 from gui.tabs.ingredients_tab import IngredientsTab
 from gui.tabs.library_health_tab import LibraryHealthTab
 from gui.tabs.recipes_tab import ARCHIVE_ACTION, RecipesTab
@@ -185,11 +187,15 @@ class MainWindow(QMainWindow):
             m.modelReset.connect(self.library_health_tab.mark_stale)
             m.modelReset.connect(self._refresh_header_freshness)
             m.modelReset.connect(self._refresh_health_count)
+            m.modelReset.connect(self._refresh_configure_counts)
         self.recipes_model.modelReset.connect(self._refresh_library_count)
+        # Diet fit counts follow the recipes.
+        self.recipes_model.modelReset.connect(lambda: self.diets_page.refresh())
         self.status_bar.refresh()
         self._refresh_header_freshness()
         self._refresh_health_count()
         self._refresh_library_count()
+        self._refresh_configure_counts()
 
     # --- place builders ------------------------------------------------
 
@@ -255,25 +261,27 @@ class MainWindow(QMainWindow):
         inline in a later slice.'''
         cfg = ConfigureTab()
         cfg.add_group('Menu library')
-        cfg.add_section('formats', 'Formats & templates', LauncherPage(
-            'Formats & templates',
-            'A format is a recipe tag with a shape, a color and a template: '
-            'items added to every recipe of that format, and portion '
-            'multipliers per ingredient category.',
-            [('Open formats & templates…', self._on_recipe_templates)],
-        ))
-        cfg.add_section('recipe_tags', 'Recipe tags', LauncherPage(
-            'Recipe tags',
-            'Labels such as Core, Seasonal or Archived. A recipe can have '
-            'several; the Library filters and groups by them.',
-            [('Open recipe tags…', self._on_recipe_tags)],
-        ))
-        cfg.add_section('categories', 'Ingredient categories', LauncherPage(
-            'Ingredient categories',
-            'Categories color the wedge slices and group components in the '
-            'editor. Their order is the wedge order.',
-            [('Open ingredient categories…', self._on_ingredient_tags)],
-        ))
+        self.templates_page = TemplatesEditor()
+        cfg.add_section('formats', 'Formats & templates', self.templates_page)
+        self.categories_page = TagsPage(
+            'Ingredient categories', 'ingredient',
+            'Categories color the wedge slices and group components in a recipe tab. Their order is the wedge'
+            ' order. Double-click a name to rename; click the swatch to pick a color. Changes save as you make them.')
+        cfg.add_section('categories', 'Ingredient categories', self.categories_page)
+        self.allergens_page = AllergensPage()
+        self.allergens_page.changed.connect(self._on_config_changed)
+        cfg.add_section('allergens', 'Allergens', self.allergens_page)
+        self.recipe_tags_page = TagsPage(
+            'Recipe tags', 'recipe_tag',
+            'Labels such as Core or Seasonal. A recipe can have several; assign them in a recipe tab. The Library'
+            ' filters and groups by them. Double-click a name to rename; click the swatch to pick a color.')
+        cfg.add_section('recipe_tags', 'Recipe tags', self.recipe_tags_page)
+        self.diets_page = DietsPage(self.recipes_model)
+        self.diets_page.changed.connect(self._on_config_changed)
+        cfg.add_section('diets', 'Diets', self.diets_page)
+        # Template, category and tag edits save as they're made; the
+        # Library picks them up when you move on.
+        cfg.sectionChanged.connect(self._on_config_section_changed)
         cfg.add_group('Purchasing')
         cfg.add_section('suppliers', 'Suppliers', SuppliersTab())
         cfg.add_group('Upkeep')
@@ -301,13 +309,33 @@ class MainWindow(QMainWindow):
             ],
         ))
         cfg.add_group('App')
-        cfg.add_section('preferences', 'Preferences', LauncherPage(
-            'Preferences',
-            'USDA FoodData Central API key, used by New ingredient lookups.',
-            [('Open preferences…', self._on_preferences)],
-        ))
+        self.preferences_page = PreferencesPage()
+        self.preferences_page.changed.connect(self._refresh_configure_counts)
+        cfg.add_section('preferences', 'Preferences', self.preferences_page)
         self.configure_tab = cfg
         return cfg
+
+    def _on_config_section_changed(self, key):
+        left = getattr(self, '_config_section', None)
+        self._config_section = key
+        if left in ('formats', 'categories', 'recipe_tags', 'suppliers'):
+            self.refresh()
+        page = {'formats': None, 'categories': self.categories_page, 'recipe_tags': self.recipe_tags_page,
+                'allergens': self.allergens_page, 'diets': self.diets_page}.get(key)
+        if page is not None:
+            page.refresh()
+        if key == 'formats':
+            self.templates_page._refresh_list()
+
+    def _on_config_changed(self):
+        '''A Configure page saved a change the Library depends on
+        (allergens, diet rules): recompute, and let the other pages
+        pick it up.'''
+        self.refresh()
+        sender = self.sender()
+        for page in (self.allergens_page, self.diets_page):
+            if page is not sender:
+                page.refresh()
 
     # --- shell state ---------------------------------------------------
 
@@ -350,6 +378,15 @@ class MainWindow(QMainWindow):
             n = 0
         self.app_header.set_badge(self._PLACES.index('configure'), n)
         self.configure_tab.set_section_count('health', n)
+
+    def _refresh_configure_counts(self):
+        cfg = self.configure_tab
+        for key, n in (('formats', len(db.get_tags('recipe'))), ('categories', len(db.get_tags('ingredient'))),
+                       ('allergens', len(db.get_all_allergen_rows())), ('recipe_tags', len(db.get_tags('recipe_tag'))),
+                       ('diets', len(db.get_diets())), ('suppliers', len(db.get_suppliers()))):
+            cfg.set_section_count(key, n)
+        # The nav hints at what Preferences holds, as the canvas does.
+        cfg.set_section_count('preferences', 'USDA key' if self.preferences_page.has_key() else 'demo key')
 
     def _refresh_library_count(self):
         self.recipes_tab.editor_tabs.set_library_count(self.recipes_model.rowCount())
@@ -538,7 +575,7 @@ class MainWindow(QMainWindow):
         add(tools_menu, '&Restore Library…', self._on_restore_database)
         add(tools_menu, '&Open Data Folder', self._on_open_data_folder)
         tools_menu.addSeparator()
-        add(tools_menu, '&Formats && Templates…', self._on_recipe_templates)
+        add(tools_menu, '&Formats && Templates…', lambda: self._show_configure('formats'))
         add(tools_menu, '&Auto-assign Images', self._on_auto_assign_images)
         add(tools_menu, 'Bulk &Assign Images…', self._on_bulk_assign_images)
         tools_menu.addSeparator()
@@ -806,12 +843,10 @@ class MainWindow(QMainWindow):
         self.refresh()
 
     def _on_ingredient_tags(self):
-        IngredientTagsDialog(parent=self).exec()
-        self.refresh()
+        self._show_configure('categories')
 
     def _on_recipe_tags(self):
-        RecipeTagsDialog(parent=self).exec()
-        self.refresh()
+        self._show_configure('recipe_tags')
 
     def _on_recipe_templates(self):
         TemplatesManagerDialog(parent=self).exec()
@@ -823,7 +858,7 @@ class MainWindow(QMainWindow):
         AboutDialog(parent=self).exec()
 
     def _on_preferences(self):
-        PreferencesDialog(parent=self).exec()
+        self._show_configure('preferences')
 
 
 def _parse_id_list(value):

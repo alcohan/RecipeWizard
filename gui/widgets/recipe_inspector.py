@@ -23,7 +23,7 @@ from gui.widgets.elided_label import ElidedLabel
 from gui.widgets.flow_layout import FlowLayout
 from gui.widgets.recipe_gallery import FOOD_COST_TARGET, diet_chip, tag_chip
 from gui.widgets.wedge_view import WedgeView
-from utilities.diets import DIET_NAMES
+from utilities import diets
 
 
 _KALE = '#082c00'
@@ -312,13 +312,14 @@ class RecipeInspector(QScrollArea):
 
     def _fill_diets(self, row):
         _clear(self._diet_chips)
-        diets = row.get('Diets') or []
+        keys = row.get('Diets') or []
         tags = row.get('TagNames') or []
+        names = diets.names()
         for name in tags:
             self._diet_chips.addWidget(tag_chip(name))
-        for key in diets:
-            self._diet_chips.addWidget(diet_chip(DIET_NAMES[key]))
-        if not diets and not tags:
-            none = QLabel('No tags, and none of the built-in diets')
+        for key in keys:
+            self._diet_chips.addWidget(diet_chip(names.get(key, key)))
+        if not keys and not tags:
+            none = QLabel('No tags, and no diets fit')
             none.setStyleSheet(f'color: {_MUTED};')
             self._diet_chips.addWidget(none)

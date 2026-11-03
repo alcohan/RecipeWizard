@@ -28,7 +28,7 @@ import db
 from gui.models.recipes_model import SORTS, prices_drifted as _prices_drifted
 from gui.widgets.elided_label import ElidedLabel
 from gui.widgets.wedge_view import WedgeView
-from utilities.diets import DIET_NAMES, DIETS
+from utilities import diets
 
 
 _KALE = '#082c00'
@@ -195,7 +195,7 @@ class RecipeCard(QFrame):
         archived = bool(row.get('Archived'))
         labels = ([('Archived', 'archived')] if archived else []) \
             + [(n, 'tag') for n in row.get('TagNames') or []] \
-            + [(DIET_NAMES[k], 'diet') for k in row.get('Diets') or []]
+            + [(diets.names().get(k, k), 'diet') for k in row.get('Diets') or []]
         make = {'archived': lambda _t: archived_chip(), 'tag': tag_chip, 'diet': diet_chip}
         for text, kind in labels[:_MAX_CHIPS]:
             self.chips.addWidget(make[kind](text))
@@ -396,7 +396,7 @@ class RecipeGallery(QWidget):
         if self._group_by == 'tags':
             return list(row.get('TagNames') or []) or [UNTAGGED_GROUP]
         if self._group_by == 'diets':
-            return [DIET_NAMES[k] for k in row.get('Diets') or []] or [NO_DIET_GROUP]
+            return [diets.names().get(k, k) for k in row.get('Diets') or []] or [NO_DIET_GROUP]
         if self._group_by == 'none':
             return ['']
         return [row.get('TagName') or SUB_RECIPE_GROUP]
@@ -405,7 +405,7 @@ class RecipeGallery(QWidget):
         if self._group_by == 'tags':
             return (name == UNTAGGED_GROUP, self._tag_rank.get(name, 999), name)
         if self._group_by == 'diets':
-            rank = {n: i for i, (_k, n, *_r) in enumerate(DIETS)}
+            rank = {d['name']: i for i, d in enumerate(diets.rules())}
             return (name == NO_DIET_GROUP, rank.get(name, 999), name)
         return (name == SUB_RECIPE_GROUP, self._format_rank.get(name, 999), name)
 
