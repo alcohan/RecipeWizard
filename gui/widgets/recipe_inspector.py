@@ -2,9 +2,9 @@
 canvas: a quick look at the selected recipe without opening it.
 
 Wedge, name, format · yield · when it was last edited, Cost / Food
-cost / Calories, components counted by category, diets it fits (and,
-for the allergen diets it misses, which components rule it out),
-allergens with their sources, and Open in tab / Duplicate.
+cost / Calories, components counted by category, diets it fits,
+allergens with their sources (which also say why it misses a diet),
+and Open in tab / Duplicate.
 
 Only the selected recipe's components and allergen sources are
 queried, when the selection changes.
@@ -18,10 +18,11 @@ from PySide6.QtWidgets import (
 )
 
 import db
+from gui.widgets.elided_label import ElidedLabel
 from gui.widgets.flow_layout import FlowLayout
 from gui.widgets.recipe_gallery import FOOD_COST_TARGET, chip
 from gui.widgets.wedge_view import WedgeView
-from utilities.diets import DIET_NAMES, diet_blockers
+from utilities.diets import DIET_NAMES
 
 
 _KALE = '#082c00'
@@ -31,7 +32,6 @@ _MUTED = '#55624c'
 _BORDER = '#ebe1cd'
 _WARN = '#8a4a00'
 _WEDGE = 184
-_ALLERGEN_DIETS = ('vegetarian', 'vegan', 'dairy_free', 'gluten_free')
 
 
 def _eyebrow(text):
@@ -135,9 +135,6 @@ class RecipeInspector(QScrollArea):
         self._diet_chips = FlowLayout()
         diet_wrap = QWidget()
         diet_wrap.setLayout(self._diet_chips)
-        self.diet_note = QLabel('')
-        self.diet_note.setWordWrap(True)
-        self.diet_note.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
 
         self.allergens = QLabel('')
         self.allergens.setWordWrap(True)
@@ -185,7 +182,6 @@ class RecipeInspector(QScrollArea):
         diet_col.setSpacing(6)
         diet_col.addWidget(_eyebrow('Diets'))
         diet_col.addWidget(diet_wrap)
-        diet_col.addWidget(self.diet_note)
         bl.addLayout(diet_col)
         allergen_col = QVBoxLayout()
         allergen_col.setSpacing(4)
@@ -247,7 +243,7 @@ class RecipeInspector(QScrollArea):
 
         self._fill_components(rid)
         sources = db.get_recipe_allergen_sources(rid)
-        self._fill_diets(row, sources)
+        self._fill_diets(row)
         if sources:
             self.allergens.setText('<br>'.join(
                 f'{a} <span style="color: {_MUTED}">— {", ".join(src)}</span>' for a, src in sources))
@@ -276,13 +272,13 @@ class RecipeInspector(QScrollArea):
             dot.setFixedSize(10, 10)
             dot.setStyleSheet(f'background: {color}; border-radius: 5px;')
             hl.addWidget(dot)
-            hl.addWidget(QLabel(name), stretch=1)
+            hl.addWidget(ElidedLabel(name), stretch=1)
             num = QLabel(str(count))
             num.setStyleSheet(f'color: {_MUTED};')
             hl.addWidget(num)
             self._component_rows.addWidget(row)
 
-    def _fill_diets(self, row, sources):
+    def _fill_diets(self, row):
         _clear(self._diet_chips)
         diets = row.get('Diets') or []
         for key in diets:
@@ -291,11 +287,3 @@ class RecipeInspector(QScrollArea):
             none = QLabel('None of the built-in diets')
             none.setStyleSheet(f'color: {_MUTED};')
             self._diet_chips.addWidget(none)
-        # Why it misses the allergen diets. Vegan is implied when
-        # vegetarian already fails, so it isn't repeated.
-        missed = [k for k in _ALLERGEN_DIETS if k not in diets]
-        if 'vegetarian' in missed and 'vegan' in missed:
-            missed.remove('vegan')
-        reasons = diet_blockers(sources, row.get('PerServing') or {}, only=missed)
-        self.diet_note.setText(' '.join(f'Not {name.lower()}: {why}.' for name, why in reasons))
-        self.diet_note.setVisible(bool(reasons))

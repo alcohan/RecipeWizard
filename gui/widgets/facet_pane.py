@@ -21,6 +21,8 @@ from PySide6.QtWidgets import (
     QToolButton, QVBoxLayout, QWidget,
 )
 
+from gui.widgets.elided_label import ElidedLabel
+
 
 KALE = '#082c00'
 ROMAINE = '#347200'
@@ -180,7 +182,7 @@ class FacetPane(QScrollArea):
                 d.setFixedSize(10, 10)
                 d.setStyleSheet(f'background: {dot}; border-radius: 5px;')
                 hl.addWidget(d)
-            text = QLabel(label)
+            text = ElidedLabel(label)
             text.setStyleSheet(f'color: {KALE};')
             # Clicking the label toggles too, like a <label for>.
             text.mousePressEvent = lambda _e, c=cb: c.toggle()
