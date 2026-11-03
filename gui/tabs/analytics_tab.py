@@ -195,9 +195,12 @@ class AnalyticsTab(QWidget):
                     if needle in (name or '').lower()
                 ]
         else:
+            # The full library means what's on the menu: archived
+            # recipes only show when picked into the tray.
+            archived = {r['Id'] for r in self._recipes_model.rows() if r.get('Archived')}
             visible_recipes = [
                 (rid, name, unit) for rid, name, unit in self._recipe_order
-                if not needle or needle in (name or '').lower()
+                if rid not in archived and (not needle or needle in (name or '').lower())
             ]
 
         # Pivot for current metric: pivot[recipe_id][category] = {'total', 'items'}.

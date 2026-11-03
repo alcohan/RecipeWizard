@@ -28,7 +28,7 @@ from gui.tabs.analytics_tab import AnalyticsTab
 from gui.tabs.configure_tab import ConfigureTab, LauncherPage
 from gui.tabs.ingredients_tab import IngredientsTab
 from gui.tabs.library_health_tab import LibraryHealthTab
-from gui.tabs.recipes_tab import RecipesTab
+from gui.tabs.recipes_tab import ARCHIVE_ACTION, RecipesTab
 from gui.tabs.suppliers_tab import SuppliersTab
 from gui.services.compare_tray import CompareTray
 from gui.widgets.app_header import AppHeader
@@ -200,6 +200,7 @@ class MainWindow(QMainWindow):
                 ('Open in tab', self._on_recipe_edit),
                 ('Add to compare (Space)', self._on_toggle_tray_for_row),
                 ('Duplicate', lambda r: self._duplicate_recipe(self.recipes_model.id_at_row(r))),
+                (ARCHIVE_ACTION, None),
                 (None, None),
                 ('Delete…', self._on_recipe_delete),
             ],
@@ -515,6 +516,8 @@ class MainWindow(QMainWindow):
                              lambda: self._with_editor('show_price_history'))
         recipe_menu.addSeparator()
         add(recipe_menu, 'D&uplicate Recipe', self._on_duplicate_current, 'Ctrl+D')
+        self.archive_action = add(recipe_menu, 'A&rchive Recipe', self._on_toggle_archive_current)
+        recipe_menu.aboutToShow.connect(self._sync_archive_action)
         add(recipe_menu, 'Recipe &Tags…', self._on_recipe_tags)
         delete_action = add(recipe_menu, '&Delete Recipe…',
                             lambda: self._with_editor('delete_recipe'))
@@ -643,6 +646,26 @@ class MainWindow(QMainWindow):
         rid = self.recipes_tab.selected_recipe_id()
         if rid is not None and self.stack.currentWidget() is self.recipes_tab:
             self._duplicate_recipe(rid)
+
+    def _sync_archive_action(self):
+        editor = self._current_editor()
+        if editor is not None:
+            archived = editor._archived
+        else:
+            rid = self.recipes_tab.selected_recipe_id()
+            archived = rid is not None and self.recipes_tab.is_archived(rid)
+        self.archive_action.setText('&Restore Recipe to Menu' if archived else 'A&rchive Recipe')
+
+    def _on_toggle_archive_current(self):
+        '''In a recipe tab, an edit in that tab; on the Library, the
+        selection (undoable there with Ctrl+Z).'''
+        editor = self._current_editor()
+        if editor is not None:
+            editor.toggle_archived()
+            return
+        rid = self.recipes_tab.selected_recipe_id()
+        if rid is not None and self.stack.currentWidget() is self.recipes_tab:
+            self.recipes_tab.toggle_archived(rid)
 
     def _duplicate_recipe(self, recipe_id):
         '''Copy the recipe and open the copy in a tab, so it can be

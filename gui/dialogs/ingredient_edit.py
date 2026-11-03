@@ -545,7 +545,9 @@ class IngredientEditDialog(QDialog):
             wedge = WedgeView(u['Id'], size=24, defer=True)
             wedge.render_async()
             hl.addWidget(wedge)
-            name = QLabel(f'<a href="{u["Id"]}" style="color: {_KALE}">{u["Name"]}</a>')
+            archived = u.get('Status') == 'archived'
+            name = QLabel(f'<a href="{u["Id"]}" style="color: {_MUTED if archived else _KALE}">{u["Name"]}</a>'
+                          + (f'<span style="color: {_MUTED}"> · archived</span>' if archived else ''))
             name.setToolTip('Close and open this recipe in a tab')
             name.linkActivated.connect(lambda href: self._open_recipe(int(href)))
             hl.addWidget(name, stretch=1)

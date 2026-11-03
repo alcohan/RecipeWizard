@@ -2,6 +2,7 @@ SELECT r.*
     , rec.menu_price AS MenuPrice
     , rec.cost_snapshot AS CostSnapshot
     , rec.cost_snapshot_at AS CostSnapshotAt
+    , rec.status AS Status
     , rtv.Cost AS CostRaw  -- unformatted numeric cost for food-cost math
     , Count(c.ParentRecipe) As Components
     , r.Id

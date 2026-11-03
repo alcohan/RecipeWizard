@@ -1,5 +1,9 @@
 '''Left filter pane for the Recipes Library, per the Framework canvas:
-Format, Tags, Diets, Contains category, Free from and Food cost.
+Include archived, then Format, Tags, Diets, Contains category, Free
+from and Food cost.
+
+- Include archived: archived recipes (off the menu) are hidden until
+  it's checked. Counts below cover what it lets through.
 
 - Format ("include"): one row per recipe format, plus Sub-recipes
   (recipes with no format, e.g. dressings), which start unchecked so
@@ -18,7 +22,7 @@ Format, Tags, Diets, Contains category, Free from and Food cost.
 Saved views come with the data-model slice.
 '''
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
 
 import db
 from gui.widgets.facet_pane import KALE, MUTED, FacetPane, FacetSection
@@ -45,12 +49,33 @@ class RecipesFacetPane(FacetPane):
         super().__init__(parent)
         self._formats = []        # [(name, color)] in format order
         self._categories = []     # [(id, name, color)] in category order
+        self._rows = []
+        self._build_archived()
         self._build_food_cost()
 
     def _default_checked(self, group, key):
         if group == 'format':
             return key != SUB_RECIPES
         return super()._default_checked(group, key)
+
+    def _build_archived(self):
+        row = QWidget()
+        row.setToolTip('Archived recipes are off the menu. Archive or restore one from its'
+                       ' right-click menu or the inspector.')
+        hl = QHBoxLayout(row)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.setSpacing(6)
+        self.include_archived = QCheckBox('Include archived')
+        self.include_archived.toggled.connect(self._on_archived_toggled)
+        self.archived_count = QLabel('0')
+        self.archived_count.setStyleSheet(f'color: {MUTED};')
+        hl.addWidget(self.include_archived, stretch=1)
+        hl.addWidget(self.archived_count)
+        self._layout.insertWidget(0, row)
+
+    def _on_archived_toggled(self, _on):
+        self._refill()
+        self.changed.emit()
 
     def _build_food_cost(self):
         section = FacetSection('food_cost', 'Food cost', 'slider', True, self.SETTINGS_PREFIX)
@@ -75,6 +100,13 @@ class RecipesFacetPane(FacetPane):
     # --- building ------------------------------------------------------
 
     def set_library(self, rows):
+        self._rows = list(rows)
+        self._refill()
+
+    def _refill(self):
+        all_rows = self._rows
+        self.archived_count.setText(str(sum(1 for r in all_rows if r.get('Archived'))))
+        rows = [r for r in all_rows if self.include_archived.isChecked() or not r.get('Archived')]
         # Re-read each time: formats and categories are edited in Configure.
         self._formats = [(t['name'], t.get('color')) for t in db.get_tags('recipe')]
         self._categories = [(t['id'], t['name'], t.get('color')) for t in db.get_tags('ingredient')]
@@ -137,12 +169,17 @@ class RecipesFacetPane(FacetPane):
     # --- reading -------------------------------------------------------
 
     def selection(self):
-        '''(formats, tags, diets, categories, free_from, max_food_cost)
-        for RecipesFacetProxy.set_facets.'''
+        '''(formats, tags, diets, categories, free_from, max_food_cost,
+        include_archived) for RecipesFacetProxy.set_facets.'''
         return (self.included('format'), self.checked('tag'), self.checked('diet'), self.checked('category'),
-                self.checked('allergen'), self.max_food_cost())
+                self.checked('allergen'), self.max_food_cost(), self.include_archived.isChecked())
 
     def clear(self):
+        if self.include_archived.isChecked():
+            self.include_archived.blockSignals(True)
+            self.include_archived.setChecked(False)
+            self.include_archived.blockSignals(False)
+            self._refill()
         self.food_cost.blockSignals(True)
         self.food_cost.setValue(FOOD_COST_OFF)
         self.food_cost.blockSignals(False)

@@ -20,7 +20,7 @@ the background, keeping the old one until the new one arrives.
 '''
 from PySide6.QtCore import QPoint, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QScrollArea,
+    QCheckBox, QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel, QScrollArea,
     QVBoxLayout, QWidget,
 )
 
@@ -79,6 +79,12 @@ def chip(text, fg=_KALE, bg='#f3ece0'):
     lbl = QLabel(text)
     lbl.setStyleSheet(f'color: {fg}; background: {bg}; border-radius: 9px; padding: 1px 8px;'
                       ' font-size: 11px; font-weight: 600;')
+    return lbl
+
+
+def archived_chip():
+    lbl = chip('Archived', fg=_MUTED, bg='#ffffff')
+    lbl.setStyleSheet(lbl.styleSheet() + ' border: 1px solid #c9c2b2;')
     return lbl
 
 
@@ -199,17 +205,27 @@ class RecipeCard(QFrame):
             item = self.chips.takeAt(0)
             if item.widget() is not None:
                 item.widget().deleteLater()
-        # Tags first (dark), then diets (green), three at most.
-        labels = ([(n, 'tag') for n in row.get('TagNames') or []]
-                  + [(DIET_NAMES[k], 'diet') for k in row.get('Diets') or []])
+        # Archived first, then tags (dark), then diets (green), three at most.
+        archived = bool(row.get('Archived'))
+        labels = ([('Archived', 'archived')] if archived else []) \
+            + [(n, 'tag') for n in row.get('TagNames') or []] \
+            + [(DIET_NAMES[k], 'diet') for k in row.get('Diets') or []]
+        make = {'archived': lambda _t: archived_chip(), 'tag': tag_chip, 'diet': diet_chip}
         for text, kind in labels[:_MAX_CHIPS]:
-            self.chips.addWidget(tag_chip(text) if kind == 'tag' else diet_chip(text))
+            self.chips.addWidget(make[kind](text))
         if len(labels) > _MAX_CHIPS:
             more = chip(f'+{len(labels) - _MAX_CHIPS}', fg=_MUTED)
             more.setToolTip(', '.join(t for t, _k in labels[_MAX_CHIPS:]))
             self.chips.addWidget(more)
         self.chips.addStretch()
-        self.drift_chip.setVisible(_prices_drifted(row.get('CostRaw'), row.get('CostSnapshot')))
+        # Archived: dimmed, and no price-drift flag (you're not selling it).
+        if archived and self.graphicsEffect() is None:
+            effect = QGraphicsOpacityEffect(self)
+            effect.setOpacity(0.55)
+            self.setGraphicsEffect(effect)
+        elif not archived and self.graphicsEffect() is not None:
+            self.setGraphicsEffect(None)
+        self.drift_chip.setVisible(not archived and _prices_drifted(row.get('CostRaw'), row.get('CostSnapshot')))
 
     def set_selected(self, selected):
         if self.property('selected') != selected:

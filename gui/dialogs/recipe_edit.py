@@ -44,13 +44,15 @@ from PySide6.QtWidgets import (
 
 import config
 import db
+from gui.dialogs.archive_confirm import confirm_archive
 from gui.dialogs.nutrition_label import NutritionLabelDialog
 from gui.dialogs.price_history import PriceHistoryDialog
 from gui.dialogs.recipe_component_add import RecipeComponentAddDialog
 from gui.models.components_model import RecipeComponentsModel
 from gui.undo.recipe_commands import (
     AddComponentCommand, RemoveComponentCommand, ReorderComponentsCommand,
-    SetComponentQtyCommand, SetRecipeTagCommand, SetRecipeTagsCommand, UpdateRecipeInfoCommand,
+    SetComponentQtyCommand, SetRecipeStatusCommand, SetRecipeTagCommand, SetRecipeTagsCommand,
+    UpdateRecipeInfoCommand,
 )
 from gui.widgets.component_delegates import (
     ChangedRowDelegate, NameDelegate, QuantityDelegate, ShareDelegate,
@@ -363,6 +365,8 @@ class RecipeEditWidget(QWidget):
         self.unsaved_label = QLabel('')
         self.unsaved_label.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
 
+        self.archive_btn = QPushButton('Archive')
+        self.archive_btn.clicked.connect(self.toggle_archived)
         label_btn = QPushButton('Nutrition label')
         label_btn.clicked.connect(self._on_nutrition_label)
         history_btn = QPushButton('Price history')
@@ -370,7 +374,7 @@ class RecipeEditWidget(QWidget):
         self.compare_btn = QPushButton('')
         self.compare_btn.clicked.connect(self._toggle_compare)
         self.compare_btn.setVisible(self._compare_tray is not None)
-        for btn in (label_btn, history_btn, self.compare_btn):
+        for btn in (self.archive_btn, label_btn, history_btn, self.compare_btn):
             btn.setStyleSheet(_SECONDARY_BTN)
             btn.setAutoDefault(False)
         self.save_btn = QPushButton('Save   Ctrl+S')
@@ -385,6 +389,7 @@ class RecipeEditWidget(QWidget):
         row.addWidget(self.breadcrumb)
         row.addWidget(self.unsaved_label)
         row.addStretch()
+        row.addWidget(self.archive_btn)
         row.addWidget(label_btn)
         row.addWidget(history_btn)
         row.addWidget(self.compare_btn)
@@ -455,6 +460,7 @@ class RecipeEditWidget(QWidget):
         self._tag_row = QHBoxLayout()
         self._tag_row.setSpacing(6)
         self.menu_chip = _Chip()
+        self.menu_chip.clicked.connect(lambda: self._archived and self.toggle_archived())
         self.used_in_chip = _Chip()
         self.used_in_chip.clicked.connect(self._show_used_in_menu)
         self.prices_chip = _Chip()
@@ -723,16 +729,25 @@ class RecipeEditWidget(QWidget):
                 self.recipe_id, before, after, f"{'Tag' if on else 'Untag'} {name}"))
 
     def _refresh_chips(self, recipe):
-        if _coerce_menu_price(recipe.get('MenuPrice')):
+        self._archived = recipe.get('Status') == 'archived'
+        self.archive_btn.setText('Restore to menu' if self._archived else 'Archive')
+        self.archive_btn.setToolTip('Put it back on the menu' if self._archived else
+                                    'Take it off the menu: hidden from the Library and analytics, kept for later')
+        if self._archived:
+            self.menu_chip.configure('Archived · off the menu', 'neutral',
+                                     'Hidden from the Library and analytics. Click to restore it.',
+                                     clickable=True)
+        elif _coerce_menu_price(recipe.get('MenuPrice')):
             self.menu_chip.configure('On the menu', 'positive')
         else:
-            self.menu_chip.configure('Not on the menu', 'neutral',
-                                     'Set a menu price to put it on the menu.')
+            self.menu_chip.configure('On the menu · no price', 'neutral',
+                                     'Set a menu price to see its food cost.')
 
         self._parents = db.get_parent_recipes(self.recipe_id)
         n = len(self._parents)
         if n:
-            names = ', '.join(p['Name'] for p in self._parents)
+            names = ', '.join(p['Name'] + (' (archived)' if p.get('Status') == 'archived' else '')
+                              for p in self._parents)
             self.used_in_chip.configure(
                 f"Used in {n} recipe{'s' if n != 1 else ''}", 'neutral',
                 f'Used as a sub-recipe in {names}. Click to open one.', clickable=True)
@@ -751,6 +766,22 @@ class RecipeEditWidget(QWidget):
                 f'Prices changed {sign}${abs(drift):.2f} since last save', 'warn',
                 'Supplier prices moved since this recipe was last saved. Save to confirm the new cost.')
         self.prices_chip.setVisible(abs(drift) >= 0.01)
+
+    def toggle_archived(self):
+        '''Archive or restore this recipe — an edit in this tab, so it
+        counts as unsaved and Discard puts it back.'''
+        if self._being_deleted:
+            return
+        before = 'archived' if self._archived else 'active'
+        after = 'active' if self._archived else 'archived'
+        if after == 'archived' and not confirm_archive(self, self.recipe_id, self._title):
+            return
+        self.undo_stack.push(SetRecipeStatusCommand(self.recipe_id, before, after, self._title))
+
+    def refresh_status(self):
+        '''The Library archived or restored this recipe.'''
+        if not self._being_deleted:
+            self._refresh_chips(db.recipe_info(self.recipe_id))
 
     def _sync_compare_button(self):
         if self._compare_tray is None:
@@ -789,7 +820,7 @@ class RecipeEditWidget(QWidget):
             return
         menu = QMenu(self)
         for p in self._parents:
-            action = menu.addAction(p['Name'])
+            action = menu.addAction(p['Name'] + ('  · archived' if p.get('Status') == 'archived' else ''))
             action.triggered.connect(lambda _c=False, rid=p['Id']: self.openRecipeRequested.emit(rid))
         menu.exec(self.used_in_chip.mapToGlobal(self.used_in_chip.rect().bottomLeft()))
 

@@ -75,6 +75,7 @@ def _clear(layout):
 class RecipeInspector(QScrollArea):
     openRequested = Signal(int)
     duplicateRequested = Signal(int)
+    archiveRequested = Signal(int, bool)   # recipe id, True = archive / False = restore
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -107,6 +108,11 @@ class RecipeInspector(QScrollArea):
         self.meta = QLabel('')
         self.meta.setWordWrap(True)
         self.meta.setStyleSheet(f'color: {_MUTED};')
+        self.archived_note = QLabel('Archived · off the menu, hidden from the Library and analytics')
+        self.archived_note.setWordWrap(True)
+        self.archived_note.setMinimumWidth(1)
+        self.archived_note.setStyleSheet(f'color: {_MUTED}; background: #f3ece0; border-radius: 6px;'
+                                         ' padding: 4px 8px; font-size: 12px;')
 
         stats = QFrame()
         stats.setObjectName('Stats')
@@ -158,6 +164,13 @@ class RecipeInspector(QScrollArea):
         buttons.setSpacing(8)
         buttons.addWidget(self.open_btn)
         buttons.addWidget(self.dup_btn)
+        self.archive_btn = QPushButton('')
+        self.archive_btn.setCursor(Qt.PointingHandCursor)
+        self.archive_btn.setStyleSheet(
+            f'QPushButton {{ border: 0; background: transparent; color: {_ROMAINE}; padding: 2px 0; }}'
+            ' QPushButton:hover { text-decoration: underline; }')
+        self.archive_btn.clicked.connect(self._on_archive_clicked)
+        self.archive_btn.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
 
         self.empty = QLabel('Select a recipe to see its cost, components, diets and allergens.')
         self.empty.setWordWrap(True)
@@ -172,6 +185,7 @@ class RecipeInspector(QScrollArea):
         name_col.setSpacing(4)
         name_col.addWidget(self.name)
         name_col.addWidget(self.meta)
+        name_col.addWidget(self.archived_note)
         bl.addLayout(name_col)
         bl.addWidget(stats)
         comp_col = QVBoxLayout()
@@ -191,6 +205,7 @@ class RecipeInspector(QScrollArea):
         bl.addLayout(allergen_col)
         bl.addStretch()
         bl.addLayout(buttons)
+        bl.addWidget(self.archive_btn)
 
         layout = QVBoxLayout(host)
         layout.setContentsMargins(20, 20, 20, 20)
@@ -200,6 +215,10 @@ class RecipeInspector(QScrollArea):
 
     def current_id(self):
         return self._id
+
+    def _on_archive_clicked(self):
+        if self._id is not None:
+            self.archiveRequested.emit(self._id, not self._archived)
 
     def show_recipe(self, row):
         '''`row` is a RecipesModel row dict, or None to clear.'''
@@ -227,6 +246,9 @@ class RecipeInspector(QScrollArea):
                 f'yields {_fmt(row.get("OutputQty") or 1)} {unit}'.strip(),
                 edited_ago(row.get('UpdatedAt'))]
         self.meta.setText(' · '.join(b for b in bits if b))
+        self._archived = bool(row.get('Archived'))
+        self.archived_note.setVisible(self._archived)
+        self.archive_btn.setText('Restore to the menu' if self._archived else 'Archive (take off the menu)')
 
         self._stats['cost'].setText(f'${float(row.get("CostRaw") or 0):.2f}')
         pct = row.get('FoodCostPct')

@@ -253,6 +253,13 @@ def migrateDB():
         cursor.execute('ALTER TABLE Recipes ADD COLUMN cost_snapshot NUMERIC')
         cursor.execute('ALTER TABLE Recipes ADD COLUMN cost_snapshot_at TEXT')
 
+    # status: 'active' (on the menu) or 'archived' (kept, but hidden from
+    # the Library by default and left out of analytics). Lifecycle state,
+    # not a tag: the app depends on it, so the user can't rename it away.
+    if not column_exists('Recipes', 'status'):
+        print('Migrating: adding Recipes.status')
+        cursor.execute("ALTER TABLE Recipes ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
+
     # Trigger set is rebuilt on every migration so changes to the bump
     # logic propagate without bespoke migration steps. The WHEN guard on
     # the row-self-update triggers prevents infinite recursion.
@@ -264,15 +271,15 @@ def migrateDB():
           UPDATE Ingredients SET updated_at = datetime('now') WHERE Id = NEW.Id;
         END;
 
-        -- Snapshot-only writes (updating cost_snapshot / cost_snapshot_at
-        -- after an editor close) shouldn't count as "the user edited this
-        -- recipe", so we skip the bump when the only columns that moved
-        -- are the snapshot ones.
+        -- Snapshot writes (cost_snapshot / cost_snapshot_at after an
+        -- editor save) and archiving / restoring shouldn't count as "the
+        -- user edited this recipe", so we skip the bump for those.
         DROP TRIGGER IF EXISTS recipes_bump_updated_at;
         CREATE TRIGGER recipes_bump_updated_at AFTER UPDATE ON Recipes
         WHEN NEW.updated_at = OLD.updated_at
           AND NOT (NEW.cost_snapshot IS NOT OLD.cost_snapshot
-                   OR NEW.cost_snapshot_at IS NOT OLD.cost_snapshot_at)
+                   OR NEW.cost_snapshot_at IS NOT OLD.cost_snapshot_at
+                   OR NEW.status IS NOT OLD.status)
         BEGIN
           UPDATE Recipes SET updated_at = datetime('now') WHERE Id = NEW.Id;
         END;
@@ -337,6 +344,19 @@ def migrateDB():
                 )
         cursor.execute("INSERT INTO app_meta (key, value) VALUES ('seeded_recipe_tags', '1');")
 
+    # Archived used to be a recipe tag; it's Recipes.status now. Once:
+    # recipes tagged Archived become archived, and the tag goes away.
+    cursor.execute("SELECT 1 FROM app_meta WHERE key = 'archived_tag_to_status';")
+    if cursor.fetchone() is None:
+        cursor.execute("SELECT id FROM tags WHERE kind = 'recipe_tag' AND lower(name) = 'archived';")
+        for (tag_id,) in cursor.fetchall():
+            print('Migrating: Archived recipe tag -> Recipes.status')
+            cursor.execute("UPDATE Recipes SET status = 'archived' WHERE Id IN"
+                           ' (SELECT recipe_id FROM recipe_tags_mapping WHERE tag_id = ?);', (tag_id,))
+            cursor.execute('DELETE FROM recipe_tags_mapping WHERE tag_id = ?;', (tag_id,))
+            cursor.execute('DELETE FROM tags WHERE id = ?;', (tag_id,))
+        cursor.execute("INSERT INTO app_meta (key, value) VALUES ('archived_tag_to_status', '1');")
+
     connection.commit()
     connection.close()
 
@@ -345,7 +365,6 @@ def migrateDB():
 _DEFAULT_RECIPE_TAGS = (
     ('Core', '#082c00'),
     ('Seasonal', '#ff8c00'),
-    ('Archived', '#7d8771'),
 )
 
 

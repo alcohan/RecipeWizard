@@ -119,14 +119,16 @@ def get_ingredient_library(change_days=90):
 def get_ingredient_usage(ingredient_id):
     '''Recipes using this ingredient directly, with the quantity each
     uses and that line's current cost — for the inspector's "impact of
-    the increase" list and the edit dialog's Used in list.'''
+    the increase" list and the edit dialog's Used in list. Archived
+    recipes come last, with Status 'archived'.'''
     sql = '''
-        SELECT r.Id, r.Name, c.Quantity, i.Unit, i.Cost * c.Quantity AS LineCost
+        SELECT r.Id, r.Name, r.status AS Status, c.Quantity, i.Unit,
+               i.Cost * c.Quantity AS LineCost
         FROM Connections c
         JOIN Recipes r ON r.Id = c.ParentRecipe
         JOIN Ingredients i ON i.Id = c.ChildIngredient
         WHERE c.ChildIngredient = ?
-        ORDER BY r.Name COLLATE NOCASE
+        ORDER BY r.status = 'archived', r.Name COLLATE NOCASE
     '''
     return query(sql, (ingredient_id,))['data']
 
@@ -977,13 +979,14 @@ def get_recipe_allergen_sources(recipe_id):
 
 
 def get_parent_recipes(recipe_id):
-    '''Recipes that use this one directly as a sub-recipe.'''
+    '''Recipes that use this one directly as a sub-recipe, with their
+    Status ('active' / 'archived'); archived ones last.'''
     sql = '''
-        SELECT DISTINCT r.Id, r.Name
+        SELECT DISTINCT r.Id, r.Name, r.status AS Status
         FROM Connections c
         JOIN Recipes r ON r.Id = c.ParentRecipe
         WHERE c.ChildRecipe = ?
-        ORDER BY r.Name COLLATE NOCASE ASC;
+        ORDER BY r.status = 'archived', r.Name COLLATE NOCASE ASC;
     '''
     return query(sql, (recipe_id,))['data']
 
@@ -1080,10 +1083,17 @@ def set_recipe_tags(recipe_id, tag_ids):
         query('INSERT INTO recipe_tags_mapping (recipe_id, tag_id) VALUES (?, ?);', (recipe_id, tag_id))
 
 
+def set_recipe_status(recipe_id, status):
+    '''Archive ('archived') or restore ('active') a recipe.'''
+    assert status in ('active', 'archived'), status
+    query('UPDATE Recipes SET status = ? WHERE Id = ?;', (status, recipe_id))
+
+
 def duplicate_recipe(recipe_id):
     '''Copy a recipe — its yield, menu price, components (in order,
-    keeping template provenance) and tags — as "<name> (copy)".
-    Returns the new id.'''
+    keeping template provenance) and tags — as "<name> (copy)". The
+    copy starts active, even from an archived recipe. Returns the new
+    id.'''
     connection = sqlite3.connect(config.DATABASE)
     try:
         cur = connection.cursor()

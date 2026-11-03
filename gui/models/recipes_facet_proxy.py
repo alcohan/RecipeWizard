@@ -12,6 +12,7 @@ Facets, combined with AND across groups (see RecipesFacetPane):
 - max_food_cost: percent, or None. Recipes without a menu price are
   hidden while it's set (their food cost is unknown).
 - text: substring of name, format, unit, allergens or tags.
+- include_archived: archived recipes are hidden unless it's set.
 
 The gallery filters through accepts_row, so both views show the same
 recipes.
@@ -32,16 +33,22 @@ class RecipesFacetProxy(QSortFilterProxyModel):
         self._categories = set()
         self._free_from = set()
         self._max_food_cost = None
+        self._include_archived = False
         self._text = ''
 
-    def set_facets(self, formats, tags=(), diets=(), categories=(), free_from=(), max_food_cost=None):
+    def set_facets(self, formats, tags=(), diets=(), categories=(), free_from=(), max_food_cost=None,
+                   include_archived=False):
         self._formats = formats
         self._tags = set(tags or ())
         self._diets = set(diets or ())
         self._categories = set(categories or ())
         self._free_from = set(free_from or ())
         self._max_food_cost = max_food_cost
+        self._include_archived = include_archived
         self.invalidateFilter()
+
+    def includes_archived(self):
+        return self._include_archived
 
     def setFilterText(self, text):
         self._text = (text or '').strip().lower()
@@ -75,6 +82,8 @@ class RecipesFacetProxy(QSortFilterProxyModel):
         return key(model.row_dict(left.row())) < key(model.row_dict(right.row()))
 
     def accepts_row(self, row):
+        if row.get('Archived') and not self._include_archived:
+            return False
         if self._formats is not None and (row.get('TagName') or SUB_RECIPES) not in self._formats:
             return False
         if self._tags and not ((None in self._tags and not row['TagIds'])

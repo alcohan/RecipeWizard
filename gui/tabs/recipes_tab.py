@@ -8,19 +8,23 @@ inspector on the right.
 
 Single click selects a recipe and fills the inspector; double-click
 or Enter opens it in a tab beside Library. Space adds the selected
-recipe to the compare tray. Both views read one RecipesModel through
+recipe to the compare tray. Archived recipes (off the menu) are hidden
+unless the filter pane's Include archived is checked; Archive / Restore
+from the right-click menu or the inspector is undoable with Ctrl+Z on
+the Library. Both views read one RecipesModel through
 RecipesFacetProxy (the gallery via its accepts_row), and the
 selection is kept by recipe id across refreshes. Open tabs survive
 switching places and restarts.
 '''
 from PySide6.QtCore import QItemSelectionModel, QSettings, Qt, QTimer, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QKeySequence, QShortcut, QUndoStack
 from PySide6.QtWidgets import (
     QAbstractItemView, QFrame, QHBoxLayout, QHeaderView,
     QLabel, QLineEdit, QMenu, QPushButton, QStackedWidget, QTableView, QVBoxLayout,
     QWidget,
 )
 
+from gui.dialogs.archive_confirm import confirm_archive
 from gui.models.recipes_facet_proxy import RecipesFacetProxy
 from gui.models.recipes_model import SORTS
 from gui.widgets.editor_tabs import EditorTabs
@@ -28,6 +32,7 @@ from gui.widgets.recipe_gallery import GROUP_BY, RecipeGallery
 from gui.widgets.recipe_inspector import RecipeInspector
 from gui.widgets.recipes_facet_pane import RecipesFacetPane
 from gui.widgets.toolbar_controls import SegmentedSwitch, ToolbarCombo
+from gui.undo.recipe_commands import SetRecipeStatusCommand
 
 
 _VIEW_KEY = 'recipes/view'
@@ -36,6 +41,10 @@ _GROUP_KEY = 'recipes/groupBy'
 _DEFAULT_GROUP = 'format'
 _DEFAULT_VIEW = 'gallery'
 _DEFAULT_SORT = 'name'
+
+# Placeholder in context_actions for Archive / Restore (its label
+# depends on the recipe).
+ARCHIVE_ACTION = '__archive__'
 
 _KALE = '#082c00'
 _ROMAINE = '#347200'
@@ -87,6 +96,16 @@ class RecipesTab(QWidget):
             space_sc.setContext(Qt.WidgetWithChildrenShortcut)
             space_sc.activated.connect(self._toggle_tray_for_current)
 
+        # Library-level undo (Archive / Restore), separate from each
+        # recipe tab's own stack.
+        self.library_undo = QUndoStack(self)
+        self.library_undo.indexChanged.connect(self._on_status_changed)
+        for keys, slot in ((QKeySequence.Undo, self.library_undo.undo),
+                           (QKeySequence.Redo, self.library_undo.redo)):
+            sc = QShortcut(keys, library_view)
+            sc.setContext(Qt.WidgetWithChildrenShortcut)
+            sc.activated.connect(slot)
+
         source_model.modelAboutToBeReset.connect(self._remember_selection)
         source_model.modelReset.connect(self._on_model_reset)
         self._stale = True
@@ -123,6 +142,7 @@ class RecipesTab(QWidget):
         self.inspector = RecipeInspector()
         self.inspector.openRequested.connect(self._open_id)
         self.inspector.duplicateRequested.connect(self.duplicateRequested.emit)
+        self.inspector.archiveRequested.connect(self.set_archived)
 
         self.stack = QStackedWidget()
         self.stack.addWidget(self.gallery)
@@ -292,6 +312,31 @@ class RecipesTab(QWidget):
         self._restore_id = recipe_id
         self._selected_id = recipe_id
 
+    def is_archived(self, recipe_id):
+        src_row = self.source_model.row_for_id(recipe_id)
+        return src_row >= 0 and self.source_model.row_dict(src_row)['Archived']
+
+    def set_archived(self, recipe_id, archived):
+        '''Archive (take off the menu) or restore a recipe, undoably.'''
+        src_row = self.source_model.row_for_id(recipe_id)
+        if src_row < 0 or self.is_archived(recipe_id) == archived:
+            return
+        name = self.source_model.row_dict(src_row)['Name']
+        if archived and not confirm_archive(self, recipe_id, name):
+            return
+        self.library_undo.push(SetRecipeStatusCommand(
+            recipe_id, 'archived' if not archived else 'active',
+            'archived' if archived else 'active', name))
+
+    def toggle_archived(self, recipe_id):
+        self.set_archived(recipe_id, not self.is_archived(recipe_id))
+
+    def _on_status_changed(self, _index):
+        self.source_model.refresh()
+        # An open tab shows the status too.
+        for editor in self.editor_tabs.editors():
+            editor.refresh_status()
+
     def focus_filter(self):
         # Ctrl+F filters the Library, so it brings the Library forward.
         self.editor_tabs.show_library()
@@ -360,7 +405,12 @@ class RecipesTab(QWidget):
             label = (self.source_model.HEADERS[self.source_model.COLUMNS[col]] if col >= 0
                      else SORTS[self.sort_combo.currentData() or _DEFAULT_SORT][0])
             how = 'sorted by ' + label.lower()
-        self.count_label.setText(f'{shown} of {total} · {how}')
+        archived = self.source_model.archived_count()
+        hidden = 0 if self.proxy.includes_archived() else archived
+        text = f'{shown} of {total - hidden} · {how}'
+        if hidden:
+            text += f' · {hidden} archived hidden'
+        self.count_label.setText(text)
         # Keep the inspector on a visible recipe.
         if self._selected_id is not None and not self._select_id(self._selected_id):
             self._select_first()
@@ -469,6 +519,11 @@ class RecipesTab(QWidget):
         for label, handler in self._context_actions:
             if label is None:
                 menu.addSeparator()
+                continue
+            if label == ARCHIVE_ACTION:
+                archived = self.is_archived(recipe_id)
+                action = menu.addAction('Restore to menu' if archived else 'Archive')
+                action.triggered.connect(lambda _c=False, rid=recipe_id: self.toggle_archived(rid))
                 continue
             action = menu.addAction(label)
             action.triggered.connect(lambda _checked=False, r=src_row, h=handler: h(r))
