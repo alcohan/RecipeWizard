@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, QSettings, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QDialog, QFileDialog, QMainWindow, QMessageBox,
-    QPushButton, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
+    QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 import api.usda
@@ -20,7 +20,7 @@ from gui.dialogs.ingredient_new import IngredientNewDialog
 from gui.dialogs.ingredient_price_edit import IngredientPriceEditDialog
 from gui.dialogs.preferences import PreferencesDialog
 from gui.dialogs.recipe_create import RecipeCreateDialog
-from gui.dialogs.tags_manager import IngredientTagsDialog
+from gui.dialogs.tags_manager import IngredientTagsDialog, RecipeTagsDialog
 from gui.dialogs.template_editor import TemplatesManagerDialog
 from gui.models.ingredients_model import IngredientsModel
 from gui.models.recipes_model import RecipesModel
@@ -28,7 +28,7 @@ from gui.tabs.analytics_tab import AnalyticsTab
 from gui.tabs.configure_tab import ConfigureTab, LauncherPage
 from gui.tabs.ingredients_tab import IngredientsTab
 from gui.tabs.library_health_tab import LibraryHealthTab
-from gui.tabs.recipes_tab import RecipesTab
+from gui.tabs.recipes_tab import ARCHIVE_ACTION, RecipesTab
 from gui.tabs.suppliers_tab import SuppliersTab
 from gui.services.compare_tray import CompareTray
 from gui.widgets.app_header import AppHeader
@@ -194,18 +194,20 @@ class MainWindow(QMainWindow):
     # --- place builders ------------------------------------------------
 
     def _recipes_place(self):
-        new_recipe_btn = QPushButton('+ New Recipe')
-        new_recipe_btn.clicked.connect(self._on_new_recipe)
         tab = RecipesTab(
             source_model=self.recipes_model,
             context_actions=[
-                ('Open', self._on_recipe_edit),
-                ('Add to Compare (Space)', self._on_toggle_tray_for_row),
-                ('Delete', self._on_recipe_delete),
+                ('Open in tab', self._on_recipe_edit),
+                ('Add to compare (Space)', self._on_toggle_tray_for_row),
+                ('Duplicate', lambda r: self._duplicate_recipe(self.recipes_model.id_at_row(r))),
+                (ARCHIVE_ACTION, None),
+                (None, None),
+                ('Delete…', self._on_recipe_delete),
             ],
-            action_buttons=[new_recipe_btn],
             compare_tray=self.compare_tray,
         )
+        tab.newRecipeRequested.connect(self._on_new_recipe)
+        tab.duplicateRequested.connect(self._duplicate_recipe)
         # A recipe deleted or saved from its tab changes what the
         # library, gallery and counts show.
         tab.recipeDeletedFromTabs.connect(lambda _rid: self.refresh())
@@ -259,6 +261,12 @@ class MainWindow(QMainWindow):
             'items added to every recipe of that format, and portion '
             'multipliers per ingredient category.',
             [('Open formats & templates…', self._on_recipe_templates)],
+        ))
+        cfg.add_section('recipe_tags', 'Recipe tags', LauncherPage(
+            'Recipe tags',
+            'Labels such as Core, Seasonal or Archived. A recipe can have '
+            'several; the Library filters and groups by them.',
+            [('Open recipe tags…', self._on_recipe_tags)],
         ))
         cfg.add_section('categories', 'Ingredient categories', LauncherPage(
             'Ingredient categories',
@@ -507,6 +515,10 @@ class MainWindow(QMainWindow):
         history_action = add(recipe_menu, '&Price History…',
                              lambda: self._with_editor('show_price_history'))
         recipe_menu.addSeparator()
+        add(recipe_menu, 'D&uplicate Recipe', self._on_duplicate_current, 'Ctrl+D')
+        self.archive_action = add(recipe_menu, 'A&rchive Recipe', self._on_toggle_archive_current)
+        recipe_menu.aboutToShow.connect(self._sync_archive_action)
+        add(recipe_menu, 'Recipe &Tags…', self._on_recipe_tags)
         delete_action = add(recipe_menu, '&Delete Recipe…',
                             lambda: self._with_editor('delete_recipe'))
         self._recipe_actions = (
@@ -627,6 +639,43 @@ class MainWindow(QMainWindow):
         self.recipes_tab.handle_recipe_deleted(row['Id'])
         self.refresh()
         self._flash_status(f"Deleted '{row['Name']}'")
+
+    def _on_duplicate_current(self):
+        '''Ctrl+D: the recipe in the current tab, or the Library's
+        selection.'''
+        rid = self.recipes_tab.selected_recipe_id()
+        if rid is not None and self.stack.currentWidget() is self.recipes_tab:
+            self._duplicate_recipe(rid)
+
+    def _sync_archive_action(self):
+        editor = self._current_editor()
+        if editor is not None:
+            archived = editor._archived
+        else:
+            rid = self.recipes_tab.selected_recipe_id()
+            archived = rid is not None and self.recipes_tab.is_archived(rid)
+        self.archive_action.setText('&Restore Recipe to Menu' if archived else 'A&rchive Recipe')
+
+    def _on_toggle_archive_current(self):
+        '''In a recipe tab, an edit in that tab; on the Library, the
+        selection (undoable there with Ctrl+Z).'''
+        editor = self._current_editor()
+        if editor is not None:
+            editor.toggle_archived()
+            return
+        rid = self.recipes_tab.selected_recipe_id()
+        if rid is not None and self.stack.currentWidget() is self.recipes_tab:
+            self.recipes_tab.toggle_archived(rid)
+
+    def _duplicate_recipe(self, recipe_id):
+        '''Copy the recipe and open the copy in a tab, so it can be
+        renamed straight away.'''
+        new_id = db.duplicate_recipe(recipe_id)
+        self.recipes_tab.select_recipe(new_id)
+        self.refresh()
+        self._on_recipe_edit_by_id(new_id)
+        name = (db.recipe_info(new_id) or {}).get('Name', 'recipe')
+        self._flash_status(f"Duplicated as '{name}'")
 
     def _on_new_recipe(self):
         create_dlg = RecipeCreateDialog(parent=self)
@@ -758,6 +807,10 @@ class MainWindow(QMainWindow):
 
     def _on_ingredient_tags(self):
         IngredientTagsDialog(parent=self).exec()
+        self.refresh()
+
+    def _on_recipe_tags(self):
+        RecipeTagsDialog(parent=self).exec()
         self.refresh()
 
     def _on_recipe_templates(self):

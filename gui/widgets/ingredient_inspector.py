@@ -58,6 +58,7 @@ class IngredientInspector(QScrollArea):
         self.setFixedWidth(320)
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setStyleSheet(f'QScrollArea {{ border: 0; border-left: 1px solid {_BORDER};'
                            ' background: #ffffff; }')
         self._id = None
@@ -235,29 +236,37 @@ class IngredientInspector(QScrollArea):
             item = self._usage_rows.takeAt(0)
             if item.widget() is not None:
                 item.widget().deleteLater()
-        usage = db.get_ingredient_usage(row['Id'])
+        usage = db.get_ingredient_usage(row['Id'])   # archived recipes last
         n = len(usage)
+        n_archived = sum(1 for u in usage if u.get('Status') == 'archived')
+        n_live = n - n_archived
         changed = bool(prev and cur and abs(cur - prev) > 1e-9)
+        archived_bit = f' · {n_archived} ARCHIVED' if n_archived else ''
         if not n:
             self.usage_title.setText('NOT USED IN ANY RECIPE')
         elif changed:
-            self.usage_title.setText(f"USED IN {n} RECIPE{'S' if n != 1 else ''} · IMPACT OF THE CHANGE")
+            self.usage_title.setText(f"USED IN {n_live} RECIPE{'S' if n_live != 1 else ''}{archived_bit}"
+                                     ' · IMPACT OF THE CHANGE')
         else:
-            self.usage_title.setText(f"USED IN {n} RECIPE{'S' if n != 1 else ''}")
+            self.usage_title.setText(f"USED IN {n_live} RECIPE{'S' if n_live != 1 else ''}{archived_bit}")
         shown = usage if self._show_all_usage else usage[:_USAGE_PREVIEW]
         for u in shown:
+            archived = u.get('Status') == 'archived'
+            color = _MUTED if archived else _KALE
             qty = _fmt(u['Quantity'])
             if changed:
                 delta = float(u['Quantity'] or 0) * (cur - prev)
                 value = f'{"+" if delta >= 0 else "−"}${abs(delta):.2f}'
             else:
                 value = f'${float(u["LineCost"] or 0):.2f}'
-            line = QLabel(f'<a href="{u["Id"]}" style="color: {_KALE}; text-decoration: none">'
-                          f'{u["Name"]}</a> <span style="color: {_MUTED}">· {qty} {u["Unit"] or ""}</span>')
+            line = QLabel(f'<a href="{u["Id"]}" style="color: {color}; text-decoration: none">'
+                          f'{u["Name"]}</a> <span style="color: {_MUTED}">· {qty} {u["Unit"] or ""}'
+                          f'{" · archived" if archived else ""}</span>')
             line.setTextFormat(Qt.RichText)
+            line.setWordWrap(True)   # long recipe names wrap instead of widening the panel
             line.setToolTip('Open in a tab')
             line.linkActivated.connect(lambda href: self.recipeRequested.emit(int(href)))
-            amount = QLabel(f'<b>{value}</b>')
+            amount = QLabel(f'<span style="color: {_MUTED}">{value}</span>' if archived else f'<b>{value}</b>')
             amount.setAlignment(Qt.AlignRight)
             wrap = QWidget()
             hl = QHBoxLayout(wrap)

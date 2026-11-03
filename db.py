@@ -1,4 +1,5 @@
 import config
+import json
 import sqlite3
 from re import sub
 
@@ -119,14 +120,16 @@ def get_ingredient_library(change_days=90):
 def get_ingredient_usage(ingredient_id):
     '''Recipes using this ingredient directly, with the quantity each
     uses and that line's current cost — for the inspector's "impact of
-    the increase" list and the edit dialog's Used in list.'''
+    the increase" list and the edit dialog's Used in list. Archived
+    recipes come last, with Status 'archived'.'''
     sql = '''
-        SELECT r.Id, r.Name, c.Quantity, i.Unit, i.Cost * c.Quantity AS LineCost
+        SELECT r.Id, r.Name, r.status AS Status, c.Quantity, i.Unit,
+               i.Cost * c.Quantity AS LineCost
         FROM Connections c
         JOIN Recipes r ON r.Id = c.ParentRecipe
         JOIN Ingredients i ON i.Id = c.ChildIngredient
         WHERE c.ChildIngredient = ?
-        ORDER BY r.Name COLLATE NOCASE
+        ORDER BY r.status = 'archived', r.Name COLLATE NOCASE
     '''
     return query(sql, (ingredient_id,))['data']
 
@@ -977,13 +980,14 @@ def get_recipe_allergen_sources(recipe_id):
 
 
 def get_parent_recipes(recipe_id):
-    '''Recipes that use this one directly as a sub-recipe.'''
+    '''Recipes that use this one directly as a sub-recipe, with their
+    Status ('active' / 'archived'); archived ones last.'''
     sql = '''
-        SELECT DISTINCT r.Id, r.Name
+        SELECT DISTINCT r.Id, r.Name, r.status AS Status
         FROM Connections c
         JOIN Recipes r ON r.Id = c.ParentRecipe
         WHERE c.ChildRecipe = ?
-        ORDER BY r.Name COLLATE NOCASE ASC;
+        ORDER BY r.status = 'archived', r.Name COLLATE NOCASE ASC;
     '''
     return query(sql, (recipe_id,))['data']
 
@@ -1017,6 +1021,126 @@ def get_all_recipe_allergens():
     for r in rows:
         out.setdefault(r['recipe_id'], []).append(r['name'])
     return out
+
+def get_recipe_library_extras():
+    '''{recipe_id: {...}} — what the Library adds to recipe_info, in
+    four queries for the whole library (no per-recipe lookups):
+    Calories / Protein / Fiber per serving (one unit of yield), Unit and
+    OutputQty, UpdatedAt, IsSubRecipe (used inside another recipe),
+    Allergens (canonical order), CategoryIds (ingredient categories
+    anywhere in the tree) and TagIds (recipe tags).'''
+    out = {}
+    for r in query('''
+        SELECT r.Id, r.OutputQty, r.updated_at AS UpdatedAt,
+               n.Calories, n.ProteinGrams, n.FiberGrams,
+               EXISTS (SELECT 1 FROM Connections c WHERE c.ChildRecipe = r.Id) AS IsSubRecipe
+        FROM Recipes r LEFT JOIN RecipeTotalValues n ON n.Id = r.Id;''')['data']:
+        per = float(r['OutputQty'] or 1) or 1.0
+        out[r['Id']] = {
+            'CaloriesPerServing': (r['Calories'] or 0) / per,
+            'PerServing': {'Protein': (r['ProteinGrams'] or 0) / per,
+                           'Fiber': (r['FiberGrams'] or 0) / per},
+            'UpdatedAt': r['UpdatedAt'],
+            'IsSubRecipe': bool(r['IsSubRecipe']),
+            'Allergens': [],
+            'CategoryIds': set(),
+            'TagIds': set(),
+        }
+    for r in query('''
+        SELECT ra.recipe_id AS rid, a.name FROM RecipeAllergens ra
+        JOIN allergens a ON a.id = ra.allergen_id
+        ORDER BY ra.recipe_id, a.sortOrder, a.id;''')['data']:
+        if r['rid'] in out and r['name'] not in out[r['rid']]['Allergens']:
+            out[r['rid']]['Allergens'].append(r['name'])
+    for r in query('''
+        SELECT DISTINCT e.recipe_id AS rid, itm.tag_id
+        FROM recipe_ingredients_expanded e
+        JOIN ingredient_tags_mapping itm ON itm.ingredient_id = e.ingredient_id
+        JOIN tags t ON t.id = itm.tag_id AND t.kind = 'ingredient';''')['data']:
+        if r['rid'] in out:
+            out[r['rid']]['CategoryIds'].add(r['tag_id'])
+    for r in query('''
+        SELECT m.recipe_id AS rid, m.tag_id FROM recipe_tags_mapping m
+        JOIN tags t ON t.id = m.tag_id AND t.kind = 'recipe_tag';''')['data']:
+        if r['rid'] in out:
+            out[r['rid']]['TagIds'].add(r['tag_id'])
+    return out
+
+
+def get_recipe_tags(recipe_id):
+    '''Ids of the recipe tags (kind 'recipe_tag') on this recipe.'''
+    rows = query('''
+        SELECT m.tag_id FROM recipe_tags_mapping m
+        JOIN tags t ON t.id = m.tag_id AND t.kind = 'recipe_tag'
+        WHERE m.recipe_id = ?;''', (recipe_id,))['data']
+    return {r['tag_id'] for r in rows}
+
+
+def set_recipe_tags(recipe_id, tag_ids):
+    '''Replace this recipe's recipe tags (not its format) with tag_ids.'''
+    query('''DELETE FROM recipe_tags_mapping WHERE recipe_id = ?
+             AND tag_id IN (SELECT id FROM tags WHERE kind = 'recipe_tag');''', (recipe_id,))
+    for tag_id in tag_ids:
+        query('INSERT INTO recipe_tags_mapping (recipe_id, tag_id) VALUES (?, ?);', (recipe_id, tag_id))
+
+
+def set_recipe_status(recipe_id, status):
+    '''Archive ('archived') or restore ('active') a recipe.'''
+    assert status in ('active', 'archived'), status
+    query('UPDATE Recipes SET status = ? WHERE Id = ?;', (status, recipe_id))
+
+
+def get_saved_views():
+    '''[{id, name, state}] in their order; state is a dict.'''
+    rows = query('SELECT id, name, state FROM saved_views ORDER BY sortOrder, id;')['data']
+    for r in rows:
+        r['state'] = json.loads(r['state'])
+    return rows
+
+
+def create_saved_view(name, state):
+    nxt = query('SELECT COALESCE(MAX(sortOrder), 0) + 1 AS n FROM saved_views;', one=True)['n']
+    return query('INSERT INTO saved_views (name, state, sortOrder) VALUES (?, ?, ?);',
+                 (name, json.dumps(state), nxt))['lastrowid']
+
+
+def update_saved_view(view_id, name=None, state=None):
+    if name is not None:
+        query('UPDATE saved_views SET name = ? WHERE id = ?;', (name, view_id))
+    if state is not None:
+        query('UPDATE saved_views SET state = ? WHERE id = ?;', (json.dumps(state), view_id))
+
+
+def delete_saved_view(view_id):
+    query('DELETE FROM saved_views WHERE id = ?;', (view_id,))
+
+
+def duplicate_recipe(recipe_id):
+    '''Copy a recipe — its yield, menu price, components (in order,
+    keeping template provenance) and tags — as "<name> (copy)". The
+    copy starts active, even from an archived recipe. Returns the new
+    id.'''
+    connection = sqlite3.connect(config.DATABASE)
+    try:
+        cur = connection.cursor()
+        cur.execute('''
+            INSERT INTO Recipes (Name, Unit, OutputQty, menu_price, updated_at)
+            SELECT Name || ' (copy)', Unit, OutputQty, menu_price, datetime('now')
+            FROM Recipes WHERE Id = ?;''', (recipe_id,))
+        new_id = cur.lastrowid
+        cur.execute('''
+            INSERT INTO Connections (ParentRecipe, ChildRecipe, ChildIngredient, Quantity,
+                                     SortOrder, from_template_tag_id)
+            SELECT ?, ChildRecipe, ChildIngredient, Quantity, SortOrder, from_template_tag_id
+            FROM Connections WHERE ParentRecipe = ?;''', (new_id, recipe_id))
+        cur.execute('''
+            INSERT INTO recipe_tags_mapping (tag_id, recipe_id)
+            SELECT tag_id, ? FROM recipe_tags_mapping WHERE recipe_id = ?;''', (new_id, recipe_id))
+        connection.commit()
+        return new_id
+    finally:
+        connection.close()
+
 
 def update_tag(tag_id, name=None, color=None, shape=None):
     '''Patch a tag's name, color, and/or shape (any combination). Kind is

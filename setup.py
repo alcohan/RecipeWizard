@@ -253,6 +253,13 @@ def migrateDB():
         cursor.execute('ALTER TABLE Recipes ADD COLUMN cost_snapshot NUMERIC')
         cursor.execute('ALTER TABLE Recipes ADD COLUMN cost_snapshot_at TEXT')
 
+    # status: 'active' (on the menu) or 'archived' (kept, but hidden from
+    # the Library by default and left out of analytics). Lifecycle state,
+    # not a tag: the app depends on it, so the user can't rename it away.
+    if not column_exists('Recipes', 'status'):
+        print('Migrating: adding Recipes.status')
+        cursor.execute("ALTER TABLE Recipes ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
+
     # Trigger set is rebuilt on every migration so changes to the bump
     # logic propagate without bespoke migration steps. The WHEN guard on
     # the row-self-update triggers prevents infinite recursion.
@@ -264,15 +271,15 @@ def migrateDB():
           UPDATE Ingredients SET updated_at = datetime('now') WHERE Id = NEW.Id;
         END;
 
-        -- Snapshot-only writes (updating cost_snapshot / cost_snapshot_at
-        -- after an editor close) shouldn't count as "the user edited this
-        -- recipe", so we skip the bump when the only columns that moved
-        -- are the snapshot ones.
+        -- Snapshot writes (cost_snapshot / cost_snapshot_at after an
+        -- editor save) and archiving / restoring shouldn't count as "the
+        -- user edited this recipe", so we skip the bump for those.
         DROP TRIGGER IF EXISTS recipes_bump_updated_at;
         CREATE TRIGGER recipes_bump_updated_at AFTER UPDATE ON Recipes
         WHEN NEW.updated_at = OLD.updated_at
           AND NOT (NEW.cost_snapshot IS NOT OLD.cost_snapshot
-                   OR NEW.cost_snapshot_at IS NOT OLD.cost_snapshot_at)
+                   OR NEW.cost_snapshot_at IS NOT OLD.cost_snapshot_at
+                   OR NEW.status IS NOT OLD.status)
         BEGIN
           UPDATE Recipes SET updated_at = datetime('now') WHERE Id = NEW.Id;
         END;
@@ -317,8 +324,57 @@ def migrateDB():
         print(f'Migrating: removing {self_refs} self-referential Connections row(s)')
         cursor.execute('DELETE FROM Connections WHERE ParentRecipe = ChildRecipe;')
 
+    # One-time markers for seeds the user may later delete on purpose
+    # (seeding by name, like the canonical tags above, would bring them
+    # back on every launch).
+    cursor.execute('CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT);')
+
+    # Recipe tags (kind 'recipe_tag'): user-configurable labels such as
+    # Core / Seasonal / Archived, many per recipe, separate from the one
+    # format tag (kind 'recipe'). Seeded once.
+    cursor.execute("SELECT 1 FROM app_meta WHERE key = 'seeded_recipe_tags';")
+    if cursor.fetchone() is None:
+        cursor.execute("SELECT COUNT(*) FROM tags WHERE kind = 'recipe_tag';")
+        if cursor.fetchone()[0] == 0:
+            print('Migrating: adding default recipe tags')
+            for order, (name, color) in enumerate(_DEFAULT_RECIPE_TAGS, start=1):
+                cursor.execute(
+                    "INSERT INTO tags (name, kind, color, shape, sortOrder) VALUES (?, 'recipe_tag', ?, 'none', ?);",
+                    (name, color, order),
+                )
+        cursor.execute("INSERT INTO app_meta (key, value) VALUES ('seeded_recipe_tags', '1');")
+
+    # Saved views: named Library filter states (the filter pane's state()
+    # as JSON). Kept with the library, so they travel with backups.
+    cursor.execute('''CREATE TABLE IF NOT EXISTS saved_views (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        state TEXT NOT NULL,
+        sortOrder INTEGER
+    );''')
+
+    # Archived used to be a recipe tag; it's Recipes.status now. Once:
+    # recipes tagged Archived become archived, and the tag goes away.
+    cursor.execute("SELECT 1 FROM app_meta WHERE key = 'archived_tag_to_status';")
+    if cursor.fetchone() is None:
+        cursor.execute("SELECT id FROM tags WHERE kind = 'recipe_tag' AND lower(name) = 'archived';")
+        for (tag_id,) in cursor.fetchall():
+            print('Migrating: Archived recipe tag -> Recipes.status')
+            cursor.execute("UPDATE Recipes SET status = 'archived' WHERE Id IN"
+                           ' (SELECT recipe_id FROM recipe_tags_mapping WHERE tag_id = ?);', (tag_id,))
+            cursor.execute('DELETE FROM recipe_tags_mapping WHERE tag_id = ?;', (tag_id,))
+            cursor.execute('DELETE FROM tags WHERE id = ?;', (tag_id,))
+        cursor.execute("INSERT INTO app_meta (key, value) VALUES ('archived_tag_to_status', '1');")
+
     connection.commit()
     connection.close()
+
+
+# Recipe tags seeded once on first run of this version (see migrateDB).
+_DEFAULT_RECIPE_TAGS = (
+    ('Core', '#082c00'),
+    ('Seasonal', '#ff8c00'),
+)
 
 
 # Default silhouette shape for each canonical recipe-kind tag. Used both by

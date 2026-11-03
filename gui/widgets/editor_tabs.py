@@ -15,7 +15,7 @@ Keyboard: Ctrl+W closes the current recipe tab, Ctrl+Tab cycles
 through every tab including Library, Ctrl+0 jumps to Library (the
 main window owns that shortcut via its View menu).
 '''
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QTabBar, QTabWidget, QToolButton, QWidget,
@@ -50,6 +50,7 @@ _STYLE = f'''
         background: transparent;
         color: {_MUTED};
         font-size: 14px;
+        max-width: 260px;
     }}
     QTabBar::tab:first {{ margin-right: 12px; padding-right: 14px; }}
     QTabBar::tab:hover:!selected {{ background: #f7f1e6; }}
@@ -82,12 +83,14 @@ class EditorTabs(QTabWidget):
         self.setStyleSheet(_STYLE)
         self.tabBar().setDrawBase(False)
         self.tabBar().setExpanding(False)
+        # Long recipe names shorten with … instead of making huge tabs.
+        self.tabBar().setElideMode(Qt.ElideRight)
 
         self.addTab(library_widget, 'Library')
         # Pinned: a library glyph, no close button.
         glyph = QLabel('▦')
         glyph.setStyleSheet(f'color: {_ROMAINE}; font-size: 15px; background: transparent;')
-        self.tabBar().setTabButton(LIBRARY_INDEX, QTabBar.LeftSide, glyph)
+        self.tabBar().setTabButton(LIBRARY_INDEX, QTabBar.LeftSide, _inset(glyph, left=6))
         self.tabBar().setTabButton(LIBRARY_INDEX, QTabBar.RightSide, None)
         self.setTabToolTip(LIBRARY_INDEX, 'Library (pinned) · Ctrl+0')
 
@@ -106,14 +109,19 @@ class EditorTabs(QTabWidget):
             lambda _i: self.currentEditorChanged.emit(self.current_editor())
         )
 
-        # Ctrl+W closes current, Ctrl+Tab cycles. Scoped so other places
-        # don't intercept.
-        close_sc = QShortcut(QKeySequence('Ctrl+W'), self)
-        close_sc.setContext(Qt.WidgetWithChildrenShortcut)
-        close_sc.activated.connect(self.close_current)
-        next_sc = QShortcut(QKeySequence('Ctrl+Tab'), self)
-        next_sc.setContext(Qt.WidgetWithChildrenShortcut)
-        next_sc.activated.connect(self._cycle_tab)
+        # Ctrl+W closes current, Ctrl+Tab / Ctrl+Shift+Tab cycle.
+        # Window-wide, so they work wherever focus is (after a restart it
+        # starts in the header, outside this widget); Qt skips window
+        # shortcuts on hidden widgets, so other places aren't affected.
+        for keys, handler in ((QKeySequence('Ctrl+W'), self.close_current),
+                              (QKeySequence.NextChild, lambda: self._cycle_tab(1)),
+                              (QKeySequence.PreviousChild, lambda: self._cycle_tab(-1))):
+            sc = QShortcut(keys, self)
+            sc.setContext(Qt.WindowShortcut)
+            sc.activated.connect(handler)
+
+        # Middle-click closes a tab, like a browser.
+        self.tabBar().installEventFilter(self)
 
     # --- opening -------------------------------------------------------
 
@@ -139,7 +147,7 @@ class EditorTabs(QTabWidget):
         icon = WedgeView(recipe_id, size=24)
         icon.setStyleSheet('background: transparent;')
         widget.undo_stack.indexChanged.connect(lambda _i, v=icon: v.refresh())
-        bar.setTabButton(idx, QTabBar.LeftSide, icon)
+        bar.setTabButton(idx, QTabBar.LeftSide, _inset(icon, left=6))
         tail = _TabTail(widget.title())
         tail.closeClicked.connect(lambda w=widget: self.close_tab(self.indexOf(w)))
         widget.modifiedChanged.connect(tail.set_unsaved)
@@ -165,11 +173,15 @@ class EditorTabs(QTabWidget):
         widget = self.widget(index)
         if widget is None:
             return True
+        previous = self.currentWidget()
         self.setCurrentIndex(index)
         if not widget.close_requested():
             return False
         self.removeTab(index)
         widget.deleteLater()
+        # Closing a background tab (× or middle-click) keeps you where you were.
+        if previous is not widget and self.indexOf(previous) >= 0:
+            self.setCurrentWidget(previous)
         self.dirtyChanged.emit()
         return True
 
@@ -185,10 +197,19 @@ class EditorTabs(QTabWidget):
         if self.currentIndex() > LIBRARY_INDEX:
             self.close_tab(self.currentIndex())
 
-    def _cycle_tab(self):
+    def _cycle_tab(self, step=1):
         n = self.count()
         if n > 1:
-            self.setCurrentIndex((self.currentIndex() + 1) % n)
+            self.setCurrentIndex((self.currentIndex() + step) % n)
+
+    def eventFilter(self, obj, event):
+        if (obj is self.tabBar() and event.type() == QEvent.MouseButtonRelease
+                and event.button() == Qt.MiddleButton):
+            index = obj.tabAt(event.position().toPoint())
+            if index > LIBRARY_INDEX:
+                self.close_tab(index)
+            return True
+        return super().eventFilter(obj, event)
 
     # --- internal ------------------------------------------------------
 
@@ -243,6 +264,17 @@ class EditorTabs(QTabWidget):
         return [w.recipe_id for w in self.editors()]
 
 
+def _inset(widget, left=0, right=0):
+    '''Wrap a tab side widget so it sits clear of the tab's edge (tab
+    padding in the stylesheet doesn't apply to side widgets).'''
+    box = QWidget()
+    box.setStyleSheet('background: transparent;')
+    layout = QHBoxLayout(box)
+    layout.setContentsMargins(left, 0, right, 0)
+    layout.addWidget(widget)
+    return box
+
+
 class _TabTail(QWidget):
     '''Right side of a recipe tab: the unsaved dot (romaine, shown
     while the recipe has unsaved edits) and a × close button.'''
@@ -269,7 +301,7 @@ class _TabTail(QWidget):
         self._close.clicked.connect(self.closeClicked.emit)
         self.set_title(title)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 0, 0, 0)
+        layout.setContentsMargins(6, 0, 6, 0)   # keep the × off the tab's edge
         layout.setSpacing(6)
         layout.addWidget(self._dot)
         layout.addWidget(self._close)
