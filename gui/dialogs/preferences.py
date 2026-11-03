@@ -1,96 +1,106 @@
-'''Preferences dialog — currently just the USDA API key.
+'''Configure › Preferences — currently just the USDA API key.
 
 The key is stored in QSettings under 'usda/apiKey'. main_window pushes the
-stored value into api.usda.set_api_key() at startup and again every time
-this dialog accepts a change, so the running session picks it up without
-a restart.
+stored value into api.usda.set_api_key() at startup, and this page does
+again whenever the key changes, so the running session picks it up
+without a restart. Like the other Configure pages, it saves as you go
+(when you leave the field); Test checks the key typed in without
+saving it.
 
 USDA keys are free and unlimited; we ship with no key and fall back to
 the public DEMO_KEY (30 req/hour per IP) until the user provides one.
 '''
-from PySide6.QtCore import Qt, QSettings
-from PySide6.QtWidgets import (
-    QApplication, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
-    QLineEdit, QMessageBox, QPushButton, QVBoxLayout,
-)
+from PySide6.QtCore import Qt, QSettings, Signal
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 import api.usda
+from gui.widgets import config_kit as kit
 
 
-class PreferencesDialog(QDialog):
+_KEY = 'usda/apiKey'
+_OK = '#24502A'
+
+
+class PreferencesPage(QWidget):
+    changed = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle('Preferences')
-        self.resize(520, 200)
-
+        card, cl = kit.card()
+        card.setMaximumWidth(720)
+        cl.addWidget(kit.subheading('USDA FoodData Central'))
         intro = QLabel(
-            'RecipeWizard uses the <b>USDA FoodData Central</b> API to look up '
-            'nutrition data when creating ingredients. Without a key, requests '
-            'fall back to a shared demo key capped at 30 requests/hour.'
-            '<br><br>'
-            'Get a free, unlimited key at '
-            '<a href="https://fdc.nal.usda.gov/api-key-signup.html">'
-            'fdc.nal.usda.gov/api-key-signup.html</a> '
-            'and paste it below.'
-        )
+            'New ingredient looks up nutrition with the USDA FoodData Central API. Without a key it uses a'
+            ' shared demo key capped at 30 searches an hour. Get a free key at '
+            f'<a href="https://fdc.nal.usda.gov/api-key-signup.html" style="color: {kit.ROMAINE}">'
+            'fdc.nal.usda.gov/api-key-signup.html</a> and paste it below.')
         intro.setWordWrap(True)
         intro.setOpenExternalLinks(True)
         intro.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        intro.setStyleSheet(f'color: {kit.KALE};')
+        cl.addWidget(intro)
 
-        self.key_edit = QLineEdit()
-        self.key_edit.setPlaceholderText('Leave blank to use the shared demo key')
-        self.key_edit.setText(QSettings().value('usda/apiKey', '', type=str))
-
-        self.test_btn = QPushButton('Test')
-        self.test_btn.setToolTip('Verify the key by running a quick USDA search.')
-        self.test_btn.clicked.connect(self._on_test)
-
-        key_row = QHBoxLayout()
-        key_row.addWidget(self.key_edit, stretch=1)
-        key_row.addWidget(self.test_btn)
-
-        form = QFormLayout()
-        form.addRow('USDA API key:', key_row)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self._on_save)
-        buttons.rejected.connect(self.reject)
+        self.key_edit = kit.field()
+        self.key_edit.setPlaceholderText('Blank uses the shared demo key')
+        self.key_edit.setText(QSettings().value(_KEY, '', type=str))
+        self.key_edit.editingFinished.connect(self.save)
+        self.test_btn = kit.button('Test')
+        self.test_btn.setToolTip('Run a quick USDA search with the key above (doesn’t save it)')
+        self.test_btn.clicked.connect(self.test)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.addWidget(self.key_edit, stretch=1)
+        row.addWidget(self.test_btn)
+        col = QVBoxLayout()
+        col.setSpacing(4)
+        col.addWidget(kit.eyebrow('API key'))
+        col.addLayout(row)
+        cl.addLayout(col)
+        self.status = QLabel('')
+        self.status.setWordWrap(True)
+        cl.addWidget(self.status)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(intro)
-        layout.addSpacing(8)
-        layout.addLayout(form)
+        layout.setContentsMargins(28, 20, 28, 28)
+        layout.setSpacing(12)
+        layout.addWidget(kit.heading('Preferences'))
+        layout.addWidget(kit.note('Settings for this computer. Changes save as you make them.'))
+        layout.addWidget(card)
         layout.addStretch()
-        layout.addWidget(buttons)
+        self._show_saved()
 
-    def _on_test(self):
-        '''Run a one-off search with the currently-entered value (not the
-        saved one) so the user can verify a key before committing.'''
-        candidate = self.key_edit.text().strip()
-        previous = QSettings().value('usda/apiKey', '', type=str)
-        api.usda.set_api_key(candidate)
-        try:
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            try:
-                api.usda.search('apple')
-            finally:
-                QApplication.restoreOverrideCursor()
-        except Exception as exc:
-            QMessageBox.warning(self, 'USDA Key Test Failed', str(exc))
-        else:
-            if not candidate:
-                QMessageBox.information(
-                    self, 'USDA Key Test',
-                    'The shared demo key worked. For higher rate limits, paste your own key.',
-                )
-            else:
-                QMessageBox.information(self, 'USDA Key Test', 'Key accepted — USDA responded successfully.')
-        finally:
-            # Restore whatever was actually saved; the Test button is non-committal.
-            api.usda.set_api_key(previous)
+    def has_key(self):
+        return bool(QSettings().value(_KEY, '', type=str))
 
-    def _on_save(self):
+    def _say(self, text, color=kit.MUTED):
+        self.status.setText(text)
+        self.status.setStyleSheet(f'color: {color}; font-size: 12px;')
+
+    def _show_saved(self):
+        self._say('Saved · using your key' if self.has_key() else 'Using the shared demo key (30 searches an hour)')
+
+    def save(self):
         value = self.key_edit.text().strip()
-        QSettings().setValue('usda/apiKey', value)
+        if value == QSettings().value(_KEY, '', type=str):
+            return
+        QSettings().setValue(_KEY, value)
         api.usda.set_api_key(value)
-        self.accept()
+        self._show_saved()
+        self.changed.emit()
+
+    def test(self):
+        '''Search once with the key typed in (not necessarily saved).'''
+        candidate = self.key_edit.text().strip()
+        previous = QSettings().value(_KEY, '', type=str)
+        api.usda.set_api_key(candidate)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            api.usda.search('apple')
+        except Exception as exc:
+            self._say(f'USDA didn’t accept it: {exc}', kit.WARN)
+        else:
+            self._say('The shared demo key works. Paste your own for more searches.' if not candidate
+                      else 'Key works: USDA responded.', _OK)
+        finally:
+            QApplication.restoreOverrideCursor()
+            api.usda.set_api_key(previous)
