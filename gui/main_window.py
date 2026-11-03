@@ -33,7 +33,6 @@ from gui.tabs.library_health_tab import LibraryHealthTab
 from gui.tabs.recipes_tab import ARCHIVE_ACTION, RecipesTab
 from gui.tabs.suppliers_tab import SuppliersTab
 from gui.services.compare_tray import CompareTray
-from gui.widgets import config_kit as kit
 from gui.widgets.app_header import AppHeader
 from gui.widgets.command_palette import CommandPalette
 from gui.widgets.compare_tray_dock import CompareTrayDock
@@ -262,10 +261,7 @@ class MainWindow(QMainWindow):
         inline in a later slice.'''
         cfg = ConfigureTab()
         cfg.add_group('Menu library')
-        self.templates_page = _page('Formats & templates',
-                                    'A format is a recipe tag with a shape, a color and a template: items added to'
-                                    ' every recipe of that format, and portion multipliers per ingredient category.'
-                                    ' Changes save as you make them.', TemplatesEditor())
+        self.templates_page = TemplatesEditor()
         cfg.add_section('formats', 'Formats & templates', self.templates_page)
         self.categories_page = TagsPage(
             'Ingredient categories', 'ingredient',
@@ -331,7 +327,7 @@ class MainWindow(QMainWindow):
         if page is not None:
             page.refresh()
         if key == 'formats':
-            self.templates_page.body._refresh_list()
+            self.templates_page._refresh_list()
 
     def _on_config_changed(self):
         '''A Configure page saved a change the Library depends on
@@ -874,16 +870,3 @@ def _parse_id_list(value):
         except ValueError:
             continue
     return ids
-
-
-def _page(title, note, body):
-    '''Heading and note over an editor widget, as a Configure page.'''
-    page = QWidget()
-    layout = QVBoxLayout(page)
-    layout.setContentsMargins(28, 20, 28, 20)
-    layout.setSpacing(12)
-    layout.addWidget(kit.heading(title))
-    layout.addWidget(kit.note(note))
-    layout.addWidget(body, stretch=1)
-    page.body = body
-    return page
