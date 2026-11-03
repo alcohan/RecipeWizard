@@ -1,6 +1,8 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QVBoxLayout
 
+import config
+
 
 class AboutDialog(QDialog):
     def __init__(self, parent=None):
@@ -8,7 +10,7 @@ class AboutDialog(QDialog):
         self.setWindowTitle('About')
         self.resize(380, 200)
 
-        title = QLabel('<b>RecipeWizard</b> &nbsp; v0.0.1')
+        title = QLabel(f'<b>RecipeWizard</b> &nbsp; v{config.__version__}')
         title.setAlignment(Qt.AlignCenter)
         author = QLabel('by Adrian Cohan')
         author.setAlignment(Qt.AlignCenter)
