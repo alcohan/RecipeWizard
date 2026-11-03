@@ -3,8 +3,8 @@
 Shows one card per check: missing nutrition, stale prices, unused
 ingredients, duplicate names. Each card carries a count badge and up
 to five sample names so the user can tell at a glance what needs
-attention. A separate card lists the files in the user's data folder
-whose name contains "backup", so the latest backup is one click away.
+attention. A separate card lists the backups in the user's data folder, so the
+latest backup is one click away.
 
 Lazy-built: the first `showEvent` triggers refresh. The main window
 re-reads whenever a model resets, so adding an ingredient from
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 import config
 import db
+from utilities import backup
 
 
 _CHECKS = (
@@ -190,8 +191,8 @@ class _HealthCard(QFrame):
 
 
 class _BackupsCard(QFrame):
-    '''Lists .db files in the user's data folder whose name contains
-    "backup", newest first. Click a filename to open the containing
+    '''Lists backups in the user's data folder (.rwbackup files, and
+    older *backup*.db copies), newest first. Click a filename to open the containing
     folder (same UX as Tools > Open Data Folder).'''
 
     def __init__(self, parent=None):
@@ -235,7 +236,7 @@ class _BackupsCard(QFrame):
         layout.setSpacing(6)
         layout.addLayout(header_row)
         if not files:
-            body = QLabel('No backup files yet — Tools > Backup Database makes one.')
+            body = QLabel('No backup files yet — Tools > Back Up Library Now makes one.')
             body.setStyleSheet('color: #5B625C;')
             layout.addWidget(body)
             return
@@ -251,17 +252,5 @@ class _BackupsCard(QFrame):
 
 def _list_backups():
     '''Return [(filename, when-string)], newest first.'''
-    data_dir = config.user_data_dir()
-    out = []
-    try:
-        for entry in os.listdir(data_dir):
-            if 'backup' not in entry.lower() or not entry.endswith('.db'):
-                continue
-            full = os.path.join(data_dir, entry)
-            if os.path.isfile(full):
-                out.append((entry, os.path.getmtime(full)))
-    except OSError:
-        return []
-    out.sort(key=lambda t: -t[1])
-    return [(name, datetime.fromtimestamp(mtime).strftime('%b %d, %Y %H:%M'))
-            for name, mtime in out]
+    return [(os.path.basename(path), datetime.fromtimestamp(mtime).strftime('%b %d, %Y %H:%M'))
+            for path, mtime in backup.list_backups()]

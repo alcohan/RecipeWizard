@@ -7,13 +7,12 @@ date, last backup, and a compare-tray link on the right.
 Each section is a QLabel so the main window can bump its text without
 rebuilding anything. refresh() recomputes all three from the DB.
 '''
-import os
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy
 
-import config
 import db
+from utilities.backup import list_backups
 
 
 class RecipeWizardStatusBar(QFrame):
@@ -172,18 +171,9 @@ def _latest_price_date():
 
 def _last_backup_label():
     '''Pull the most recent backup file timestamp from the user's data
-    directory. If none, say so plainly rather than hiding the row.'''
-    data_dir = config.user_data_dir()
-    newest_mtime = 0.0
-    try:
-        for entry in os.listdir(data_dir):
-            if 'backup' not in entry.lower() or not entry.endswith('.db'):
-                continue
-            full = os.path.join(data_dir, entry)
-            if os.path.isfile(full):
-                newest_mtime = max(newest_mtime, os.path.getmtime(full))
-    except OSError:
-        pass
+    directory (utilities.backup.list_backups). If none, say so plainly rather than hiding the row.'''
+    backups = list_backups()
+    newest_mtime = backups[0][1] if backups else 0
     if newest_mtime == 0:
         return 'No backup yet'
     from datetime import datetime, date

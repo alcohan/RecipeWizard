@@ -110,9 +110,11 @@ def auto_assign_images():
     connection.close()
     return counts
 
-def migrateDB():
-    '''Idempotently bring an existing database up to the current schema.'''
-    connection = sqlite3.connect(config.DATABASE)
+def migrateDB(path=None):
+    '''Idempotently bring an existing database up to the current schema.
+    `path` defaults to the library; a restore migrates a backup's copy
+    before merging it.'''
+    connection = sqlite3.connect(path or config.DATABASE)
     cursor = connection.cursor()
 
     def column_exists(table, column):
