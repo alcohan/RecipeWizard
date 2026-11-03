@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 import config
 import db
+from gui.widgets import config_kit as kit
 
 
 _DEFAULT_COLOR = '#64748b'
@@ -137,6 +138,25 @@ class _TagSection(QWidget):
             return
         db.delete_tag(tag_id)
         self.refresh()
+
+
+class TagsPage(QWidget):
+    '''A Configure page for one kind of tag: heading, note, the table.'''
+
+    def __init__(self, title, kind, note, parent=None):
+        super().__init__(parent)
+        self.section = _TagSection('', kind)
+        self.section.layout().itemAt(0).widget().hide()   # the section's own small heading
+        self.section.setMaximumWidth(560)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 20, 28, 28)
+        layout.setSpacing(12)
+        layout.addWidget(kit.heading(title))
+        layout.addWidget(kit.note(note))
+        layout.addWidget(self.section, stretch=1)
+
+    def refresh(self):
+        self.section.refresh()
 
 
 class IngredientTagsDialog(QDialog):

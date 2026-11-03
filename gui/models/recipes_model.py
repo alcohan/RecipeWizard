@@ -10,7 +10,7 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtGui import QColor
 
 import db
-from utilities.diets import diets_for
+from utilities import diets
 
 
 # Per-row sort keys, shared by the table headers and the Sort menu.
@@ -92,6 +92,7 @@ class RecipesModel(QAbstractTableModel):
         self.beginResetModel()
         rows = db.recipe_info()
         extras = db.get_recipe_library_extras()
+        diets.set_rules(db.get_diets())
         tag_order = [(t['id'], t['name']) for t in db.get_tags('recipe_tag')]
         for r in rows:
             r.update(extras.get(r['Id'], {}))
@@ -101,7 +102,7 @@ class RecipesModel(QAbstractTableModel):
             r.setdefault('CaloriesPerServing', 0.0)
             r.setdefault('TagIds', set())
             r['TagNames'] = [name for tid, name in tag_order if tid in r['TagIds']]
-            r['Diets'] = diets_for(r['Allergens'], r['PerServing'])
+            r['Diets'] = diets.diets_for(r['Allergens'], r['PerServing'])
             r['FoodCostPct'] = food_cost_pct(r.get('CostRaw'), r.get('MenuPrice'))
             r['Archived'] = r.get('Status') == 'archived'
             r['SearchText'] = ' '.join(

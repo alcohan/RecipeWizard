@@ -10,19 +10,21 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QWidget,
+    QPushButton, QVBoxLayout, QWidget,
 )
 
 import config
 import db
 from gui.widgets.flow_layout import FlowLayout
 from gui.widgets.ingredient_table import tint
+from utilities import diets
 
 
 _KALE = '#082c00'
 _ROMAINE = '#347200'
 _BORDER = '#ebe1cd'
 _FIELD_BORDER = '#7d8771'
+_MUTED = '#55624c'
 
 
 def num_text(value):
@@ -86,7 +88,17 @@ class AllergenChecks(QWidget):
     def __init__(self, ingredient_id=None, parent=None):
         super().__init__(parent)
         self._boxes = {}
-        grid = QGridLayout(self)
+        self._diets = db.get_diets()
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(6)
+        grid = QGridLayout()
+        outer.addLayout(grid)
+        # Which diets these allergens rule out, per Configure › Diets.
+        self.diet_hint = QLabel('')
+        self.diet_hint.setWordWrap(True)
+        self.diet_hint.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
+        outer.addWidget(self.diet_hint)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(6)
@@ -98,6 +110,14 @@ class AllergenChecks(QWidget):
             self._style(cb)
             self._boxes[a['id']] = cb
             grid.addWidget(cb, i // 3, i % 3)
+        self._sync_hint()
+
+    def _sync_hint(self):
+        names = diets.excluded_by([cb.text() for cb in self._boxes.values() if cb.isChecked()], self._diets)
+        if names:
+            listed = names[0] if len(names) == 1 else ', '.join(names[:-1]) + ' or ' + names[-1]
+            self.diet_hint.setText(f'Recipes with this don’t fit {listed}.')
+        self.diet_hint.setVisible(bool(names))
 
     def checked_ids(self):
         return sorted(a for a, cb in self._boxes.items() if cb.isChecked())
@@ -108,6 +128,7 @@ class AllergenChecks(QWidget):
 
     def _on_toggle(self, cb):
         self._style(cb)
+        self._sync_hint()
         self.changed.emit()
 
     def _style(self, cb):

@@ -42,7 +42,7 @@ from gui.models.recipes_model import SUB_RECIPES
 from gui.widgets.elided_label import ElidedLabel
 from gui.widgets.facet_pane import BORDER, KALE, MUTED, ROMAINE, WARN, FacetPane, FacetSection
 from gui.widgets.toolbar_controls import ToggleSwitch
-from utilities.diets import DIETS
+from utilities import diets
 
 
 FOOD_COST_OFF = 50          # slider top stop = no food-cost filter
@@ -155,8 +155,8 @@ class RecipesFacetPane(FacetPane):
                    + [(None, 'Untagged', None, sum(1 for r in rows if not r['TagIds']), None)])
         self.section('tag').setVisible(bool(tags))
 
-        self._fill('diet', [(key, name, None, sum(1 for r in rows if key in r['Diets']), None, tip)
-                            for key, name, tip, *_ in DIETS])
+        self._fill('diet', [(d['key'], d['name'], None, sum(1 for r in rows if d['key'] in r['Diets']), None,
+                             diets.describe(d)) for d in diets.rules()])
 
         self._fill('category', [(cid, name, color, sum(1 for r in rows if cid in r['CategoryIds']), None)
                                 for cid, name, color in self._categories])

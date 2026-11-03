@@ -353,6 +353,40 @@ def migrateDB():
         sortOrder INTEGER
     );''')
 
+    # Diet rules (Configure › Diets): a diet excludes recipes with any of
+    # its allergens and/or needs a nutrient per serving at least / at most
+    # an amount. `key` is what saved views store. Seeded once from
+    # utilities.diets.DEFAULT_DIETS, so deleted diets stay deleted.
+    cursor.execute('''CREATE TABLE IF NOT EXISTS diets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        key TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        nutrient TEXT,
+        op TEXT NOT NULL DEFAULT 'min',
+        amount REAL,
+        sortOrder INTEGER
+    );''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS diet_allergens (
+        diet_id INTEGER NOT NULL,
+        allergen_id INTEGER NOT NULL,
+        PRIMARY KEY (diet_id, allergen_id)
+    );''')
+    cursor.execute("SELECT 1 FROM app_meta WHERE key = 'seeded_diets';")
+    if cursor.fetchone() is None:
+        from utilities.diets import DEFAULT_DIETS
+        cursor.execute('SELECT COUNT(*) FROM diets;')
+        if cursor.fetchone()[0] == 0:
+            print('Migrating: adding default diets')
+            for order, (key, name, excluded, nutrient, op, amount) in enumerate(DEFAULT_DIETS, start=1):
+                cursor.execute('INSERT INTO diets (key, name, nutrient, op, amount, sortOrder)'
+                               ' VALUES (?, ?, ?, ?, ?, ?);', (key, name, nutrient, op, amount, order))
+                diet_id = cursor.lastrowid
+                for allergen in excluded:
+                    cursor.execute('INSERT OR IGNORE INTO diet_allergens (diet_id, allergen_id)'
+                                   ' SELECT ?, id FROM allergens WHERE lower(name) = lower(?);',
+                                   (diet_id, allergen))
+        cursor.execute("INSERT INTO app_meta (key, value) VALUES ('seeded_diets', '1');")
+
     # Archived used to be a recipe tag; it's Recipes.status now. Once:
     # recipes tagged Archived become archived, and the tag goes away.
     cursor.execute("SELECT 1 FROM app_meta WHERE key = 'archived_tag_to_status';")

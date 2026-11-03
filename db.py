@@ -1036,6 +1036,11 @@ def get_all_allergens():
     return [row['name'] for row in rows]
 
 
+def get_all_allergen_rows():
+    '''[{id, name}] in canonical order.'''
+    return query('SELECT id, name FROM allergens ORDER BY sortOrder, id;')['data']
+
+
 def get_all_recipe_allergens():
     '''{recipe_id: [allergen_names]} for every recipe that has any
     allergen in its tree. Recipes with no allergens are missing from
@@ -1056,14 +1061,18 @@ def get_recipe_library_extras():
     out = {}
     for r in query('''
         SELECT r.Id, r.OutputQty, r.updated_at AS UpdatedAt,
-               n.Calories, n.ProteinGrams, n.FiberGrams,
+               n.Calories, n.ProteinGrams, n.FiberGrams, n.CarbGrams, n.SugarGrams,
+               n.TTLFatGrams, n.SatFatGrams, n.SodiumMilligrams, n.CholesterolMilligrams,
                EXISTS (SELECT 1 FROM Connections c WHERE c.ChildRecipe = r.Id) AS IsSubRecipe
         FROM Recipes r LEFT JOIN RecipeTotalValues n ON n.Id = r.Id;''')['data']:
         per = float(r['OutputQty'] or 1) or 1.0
         out[r['Id']] = {
             'CaloriesPerServing': (r['Calories'] or 0) / per,
-            'PerServing': {'Protein': (r['ProteinGrams'] or 0) / per,
-                           'Fiber': (r['FiberGrams'] or 0) / per},
+            'PerServing': {key: (r[col] or 0) / per for key, col in (
+                ('Calories', 'Calories'), ('Protein', 'ProteinGrams'), ('Fiber', 'FiberGrams'),
+                ('Carbs', 'CarbGrams'), ('Sugar', 'SugarGrams'), ('Fat', 'TTLFatGrams'),
+                ('SatFat', 'SatFatGrams'), ('Sodium', 'SodiumMilligrams'),
+                ('Cholesterol', 'CholesterolMilligrams'))},
             'UpdatedAt': r['UpdatedAt'],
             'IsSubRecipe': bool(r['IsSubRecipe']),
             'Allergens': [],
@@ -1112,6 +1121,86 @@ def set_recipe_status(recipe_id, status):
     '''Archive ('archived') or restore ('active') a recipe.'''
     assert status in ('active', 'archived'), status
     query('UPDATE Recipes SET status = ? WHERE Id = ?;', (status, recipe_id))
+
+
+def get_diets():
+    '''Diet rules in order: [{id, key, name, excluded: [allergen
+    names], allergen_ids, nutrient, op, amount}].'''
+    rows = query('SELECT id, key, name, nutrient, op, amount FROM diets ORDER BY sortOrder, id;')['data']
+    links = query('SELECT da.diet_id, a.id, a.name FROM diet_allergens da'
+                  ' JOIN allergens a ON a.id = da.allergen_id ORDER BY a.sortOrder, a.id;')['data']
+    for r in rows:
+        mine = [l for l in links if l['diet_id'] == r['id']]
+        r['excluded'] = [l['name'] for l in mine]
+        r['allergen_ids'] = [l['id'] for l in mine]
+    return rows
+
+
+def create_diet(name):
+    nxt = query('SELECT COALESCE(MAX(sortOrder), 0) + 1 AS n FROM diets;', one=True)['n']
+    new_id = query("INSERT INTO diets (key, name, op, sortOrder) VALUES ('', ?, 'min', ?);",
+                   (name, nxt))['lastrowid']
+    query('UPDATE diets SET key = ? WHERE id = ?;', (f'diet_{new_id}', new_id))
+    return new_id
+
+
+def update_diet(diet_id, name=None, nutrient=..., op=None, amount=...):
+    '''Patch a diet. nutrient / amount accept None to clear (... = unchanged).'''
+    if name is not None:
+        query('UPDATE diets SET name = ? WHERE id = ?;', (name, diet_id))
+    if nutrient is not ...:
+        query('UPDATE diets SET nutrient = ? WHERE id = ?;', (nutrient, diet_id))
+    if op is not None:
+        query('UPDATE diets SET op = ? WHERE id = ?;', (op, diet_id))
+    if amount is not ...:
+        query('UPDATE diets SET amount = ? WHERE id = ?;', (amount, diet_id))
+
+
+def set_diet_allergens(diet_id, allergen_ids):
+    query('DELETE FROM diet_allergens WHERE diet_id = ?;', (diet_id,))
+    for a in allergen_ids:
+        query('INSERT INTO diet_allergens (diet_id, allergen_id) VALUES (?, ?);', (diet_id, a))
+
+
+def delete_diet(diet_id):
+    query('DELETE FROM diet_allergens WHERE diet_id = ?;', (diet_id,))
+    query('DELETE FROM diets WHERE id = ?;', (diet_id,))
+
+
+def reorder_diets(ids):
+    for order, diet_id in enumerate(ids, start=1):
+        query('UPDATE diets SET sortOrder = ? WHERE id = ?;', (order, diet_id))
+
+
+def get_allergen_usage():
+    '''Allergens in order with how many ingredients and recipes have
+    each: [{id, name, Ingredients, Recipes}].'''
+    return query('''
+        SELECT a.id, a.name,
+               (SELECT COUNT(*) FROM ingredient_allergens ia WHERE ia.allergen_id = a.id) AS Ingredients,
+               (SELECT COUNT(DISTINCT recipe_id) FROM RecipeAllergens ra WHERE ra.allergen_id = a.id) AS Recipes
+        FROM allergens a ORDER BY a.sortOrder, a.id;''')['data']
+
+
+def create_allergen(name):
+    nxt = query('SELECT COALESCE(MAX(sortOrder), 0) + 1 AS n FROM allergens;', one=True)['n']
+    return query('INSERT INTO allergens (name, sortOrder) VALUES (?, ?);', (name, nxt))['lastrowid']
+
+
+def rename_allergen(allergen_id, name):
+    query('UPDATE allergens SET name = ? WHERE id = ?;', (name, allergen_id))
+
+
+def delete_allergen(allergen_id):
+    '''Also clears it from ingredients and diet rules.'''
+    query('DELETE FROM ingredient_allergens WHERE allergen_id = ?;', (allergen_id,))
+    query('DELETE FROM diet_allergens WHERE allergen_id = ?;', (allergen_id,))
+    query('DELETE FROM allergens WHERE id = ?;', (allergen_id,))
+
+
+def reorder_allergens(ids):
+    for order, allergen_id in enumerate(ids, start=1):
+        query('UPDATE allergens SET sortOrder = ? WHERE id = ?;', (order, allergen_id))
 
 
 def get_saved_views():

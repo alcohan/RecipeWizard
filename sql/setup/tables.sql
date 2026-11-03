@@ -6,6 +6,9 @@ DROP TABLE IF EXISTS tags;
 DROP TABLE IF EXISTS ingredient_tags_mapping;
 DROP TABLE IF EXISTS recipe_tags_mapping;
 DROP TABLE IF EXISTS saved_views;
+DROP TABLE IF EXISTS diets;
+DROP TABLE IF EXISTS diet_allergens;
+DROP TABLE IF EXISTS app_meta;  -- one-time seed markers: a reset library seeds afresh
 DROP TABLE IF EXISTS allergens;
 DROP TABLE IF EXISTS ingredient_allergens;
 
