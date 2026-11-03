@@ -20,6 +20,7 @@ from gui.dialogs.ingredient_new import IngredientNewDialog
 from gui.dialogs.ingredient_price_edit import IngredientPriceEditDialog
 from gui.dialogs.preferences import PreferencesPage
 from gui.dialogs.recipe_create import RecipeCreateDialog
+from gui.dialogs.update import UpdateDialog
 from gui.dialogs.template_editor import TemplatesEditor, TemplatesManagerDialog
 from gui.models.ingredients_model import IngredientsModel
 from gui.models.recipes_model import RecipesModel
@@ -33,6 +34,7 @@ from gui.tabs.library_health_tab import LibraryHealthTab
 from gui.tabs.recipes_tab import ARCHIVE_ACTION, RecipesTab
 from gui.tabs.suppliers_tab import SuppliersTab
 from gui.services.compare_tray import CompareTray
+from gui.services.updates import UpdateService
 from gui.widgets.app_header import AppHeader
 from gui.widgets.command_palette import CommandPalette
 from gui.widgets.compare_tray_dock import CompareTrayDock
@@ -62,6 +64,9 @@ class MainWindow(QMainWindow):
         self._build_places()
         self._build_menus()
         self._restore_state()
+        self.updates = UpdateService(self)
+        self.updates.updateAvailable.connect(self._on_update_available)
+        self.updates.schedule_startup_check()
 
     def _restore_state(self):
         '''Restore window geometry and last-active place from QSettings.
@@ -165,6 +170,7 @@ class MainWindow(QMainWindow):
 
         self.status_bar = RecipeWizardStatusBar()
         self.status_bar.compareTrayClicked.connect(self._toggle_tray_docked)
+        self.status_bar.updateClicked.connect(self._on_show_update)
         self.compare_tray.changed.connect(
             lambda: self.status_bar.set_compare_tray_count(self.compare_tray.count())
         )
@@ -446,6 +452,7 @@ class MainWindow(QMainWindow):
             ('suppliers', 'Suppliers'),
             ('health', 'Library Health'),
             ('compare-tray', 'Show / Hide Compare Tray'),
+            ('check-updates', 'Check for Updates…'),
             ('about', 'About RecipeWizard'),
         ]
         self._command_handlers = {
@@ -467,6 +474,7 @@ class MainWindow(QMainWindow):
             'suppliers': lambda: self._show_configure('suppliers'),
             'health': lambda: self._show_configure('health'),
             'compare-tray': self._toggle_tray_docked,
+            'check-updates': self._on_check_updates,
             'about': self._on_about,
         }
         palette = CommandPalette(recipes, ingredients, commands, parent=self)
@@ -598,6 +606,8 @@ class MainWindow(QMainWindow):
         add(tools_menu, 'Reset With &Sample Data…', self._on_reset_sample)
 
         help_menu = bar.addMenu('&Help')
+        self.update_action = add(help_menu, 'Check for &Updates…', self._on_check_updates)
+        help_menu.addSeparator()
         add(help_menu, '&About', self._on_about)
 
         self._sync_recipe_state()
@@ -864,6 +874,38 @@ class MainWindow(QMainWindow):
 
     def _on_about(self):
         AboutDialog(parent=self).exec()
+
+    # --- updates ---
+
+    def _on_update_available(self, release):
+        '''Quiet notice: a status-bar chip, and the Help menu entry
+        names the version. Nothing pops up on its own.'''
+        self.status_bar.set_update(release)
+        self.update_action.setText(f'&Update Available: {release.tag}…')
+
+    def _on_show_update(self):
+        if self.updates.release is not None:
+            UpdateDialog(self.updates.release, parent=self).exec()
+
+    def _on_check_updates(self):
+        '''Help › Check for Updates…: always reports back.'''
+        if self.updates.release is not None:
+            self._on_show_update()
+            return
+        self.update_action.setEnabled(False)
+        self.updates.check_now(self._on_manual_check_result)
+
+    def _on_manual_check_result(self, kind, value):
+        self.update_action.setEnabled(True)
+        title = 'Check for Updates'
+        if kind == 'update':
+            self._on_show_update()
+        elif kind == 'current':
+            QMessageBox.information(
+                self, title, f"You're up to date. RecipeWizard v{config.__version__} "
+                'is the newest version.')
+        else:
+            QMessageBox.warning(self, title, f"Couldn't check for updates.\n\n{value}")
 
     def _on_preferences(self):
         self._show_configure('preferences')

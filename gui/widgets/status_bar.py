@@ -22,6 +22,7 @@ class RecipeWizardStatusBar(QFrame):
     link so the main window can route the click to its place switcher.'''
 
     compareTrayClicked = Signal()
+    updateClicked = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -66,6 +67,12 @@ class RecipeWizardStatusBar(QFrame):
         # in the same spot that opened the tray.
         self._tray_label.setAlignment(Qt.AlignCenter)
         self._update_tray_chip()
+        # Update chip: hidden until a check finds a newer release.
+        self._update_label = QLabel('')
+        self._update_label.setProperty('role', 'link')
+        self._update_label.setCursor(Qt.PointingHandCursor)
+        self._update_label.mousePressEvent = lambda _e: self.updateClicked.emit()
+        self._update_label.hide()
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(16, 6, 16, 6)
@@ -75,6 +82,7 @@ class RecipeWizardStatusBar(QFrame):
         layout.addWidget(self._backup_label)
         layout.addWidget(self._unsaved_label)
         layout.addStretch()
+        layout.addWidget(self._update_label)
         layout.addWidget(self._tray_label)
 
     def refresh(self):
@@ -122,6 +130,14 @@ class RecipeWizardStatusBar(QFrame):
                 f"Unsaved changes · {n} edit{'s' if n != 1 else ''}"
             )
         self._unsaved_label.setVisible(bool(n))
+
+    def set_update(self, release):
+        '''Show the "Update available" chip for a utilities.updates.Release;
+        None hides it.'''
+        if release is not None:
+            self._update_label.setText(f'Update available · {release.tag}')
+            self._update_label.setToolTip('See what’s new and download it')
+        self._update_label.setVisible(release is not None)
 
     def _update_tray_chip(self):
         arrow = '▾' if self._tray_docked else '▴'
