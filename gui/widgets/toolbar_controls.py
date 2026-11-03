@@ -7,10 +7,12 @@ same field border.
 - SegmentedSwitch: a row of exclusive buttons in one rounded frame; the
   end buttons round their outer corners so the checked fill follows the
   frame instead of showing square corners inside it.
+- ToggleSwitch: an on/off switch (a checkable button drawn as a track
+  and knob) for settings like the Library's Include archived.
 '''
-from PySide6.QtCore import QPointF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QPainter, QPainterPath, QPen, QColor
-from PySide6.QtWidgets import QButtonGroup, QComboBox, QFrame, QHBoxLayout, QPushButton
+from PySide6.QtWidgets import QAbstractButton, QButtonGroup, QComboBox, QFrame, QHBoxLayout, QPushButton
 
 
 KALE = '#082c00'
@@ -104,3 +106,37 @@ class SegmentedSwitch(QFrame):
             if btn.isChecked():
                 return key
         return None
+
+
+class ToggleSwitch(QAbstractButton):
+    '''On/off switch: ROMAINE track with the knob right when on.'''
+
+    W, H = 34, 18
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setFixedSize(self.sizeHint())
+
+    def sizeHint(self):
+        return QSize(self.W + 4, self.H + 4)
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        track = QRectF(2, 2, self.W, self.H)
+        on = self.isChecked()
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(ROMAINE if on else '#c9c2b2'))
+        painter.drawRoundedRect(track, self.H / 2, self.H / 2)
+        if self.hasFocus():
+            painter.setPen(QPen(QColor(KALE), 1.5))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(track.adjusted(-1, -1, 1, 1), self.H / 2 + 1, self.H / 2 + 1)
+        d = self.H - 4
+        x = track.right() - d - 2 if on else track.left() + 2
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor('#ffffff'))
+        painter.drawEllipse(QRectF(x, track.top() + 2, d, d))
