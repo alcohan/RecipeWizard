@@ -353,6 +353,16 @@ def migrateDB():
         sortOrder INTEGER
     );''')
 
+    # Saved comparisons: named Analytics sets (recipe ids in tray order,
+    # plus the metric / per / values settings), as JSON.
+    cursor.execute('''CREATE TABLE IF NOT EXISTS saved_comparisons (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        recipe_ids TEXT NOT NULL,
+        settings TEXT NOT NULL,
+        sortOrder INTEGER
+    );''')
+
     # Diet rules (Configure › Diets): a diet excludes recipes with any of
     # its allergens and/or needs a nutrient per serving at least / at most
     # an amount. `key` is what saved views store. Seeded once from

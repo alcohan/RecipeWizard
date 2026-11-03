@@ -312,6 +312,11 @@ class RecipesTab(QWidget):
         self._restore_id = recipe_id
         self._selected_id = recipe_id
 
+    def visible_ids(self):
+        '''Recipe ids the Library is showing, in its order.'''
+        return [self.source_model.id_at_row(self.proxy.mapToSource(self.proxy.index(r, 0)).row())
+                for r in range(self.proxy.rowCount())]
+
     def is_archived(self, recipe_id):
         src_row = self.source_model.row_for_id(recipe_id)
         return src_row >= 0 and self.source_model.row_dict(src_row)['Archived']

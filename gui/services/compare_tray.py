@@ -60,6 +60,23 @@ class CompareTray(QObject):
         self.changed.emit()
         return True
 
+    def set_ids(self, recipe_ids):
+        '''Replace the tray with `recipe_ids` (a saved comparison).'''
+        ids = list(dict.fromkeys(recipe_ids))
+        if ids == self._ids:
+            return False
+        self._ids = ids
+        self.changed.emit()
+        return True
+
+    def move(self, recipe_id, index):
+        '''Move an id to position `index` (drag to reorder).'''
+        if recipe_id not in self._ids:
+            return False
+        ids = [i for i in self._ids if i != recipe_id]
+        ids.insert(max(0, min(index, len(ids))), recipe_id)
+        return self.set_ids(ids)
+
     def contains(self, recipe_id):
         return recipe_id in self._ids
 
