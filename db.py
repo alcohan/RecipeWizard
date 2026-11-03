@@ -457,6 +457,30 @@ def create_recipe(name: str, unit: str, outputqty: float):
     result = query_from_file('sql\\create_recipe.sql', (name, unit, outputqty))
     return result['lastrowid']
     
+def create_recipe_with(name, unit, outputqty, menu_price=None, format_tag_id=None, copy_from=None):
+    '''The New recipe dialog: create a recipe with a format (its
+    template's items and portion multipliers applied) and, optionally,
+    the components of another recipe. Copying goes through the same
+    format switch the editor uses, so the source's template items and
+    multipliers are swapped for the new format's. Recipe tags aren't
+    copied. Returns the new id.'''
+    new_id = create_recipe(name, unit, outputqty)
+    if menu_price is not None:
+        query('UPDATE Recipes SET menu_price = ? WHERE Id = ?;', (menu_price, new_id))
+    old_tag_id = None
+    if copy_from:
+        query('''
+            INSERT INTO Connections (ParentRecipe, ChildRecipe, ChildIngredient, Quantity,
+                                     SortOrder, from_template_tag_id)
+            SELECT ?, ChildRecipe, ChildIngredient, Quantity, SortOrder, from_template_tag_id
+            FROM Connections WHERE ParentRecipe = ?;''', (new_id, copy_from))
+        old_tag_id = (get_recipe_tag(copy_from) or {}).get('id')
+    if old_tag_id or format_tag_id:
+        transition_recipe_format(new_id, old_tag_id, format_tag_id)
+    set_recipe_tag(new_id, format_tag_id)
+    return new_id
+
+
 def get_eligible_ingredients(id: int):
     return query_from_file('sql\\get_eligible_ingredients.sql',(id,), rawdata=True)['data']
 
