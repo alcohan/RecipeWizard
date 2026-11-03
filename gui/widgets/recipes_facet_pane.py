@@ -22,10 +22,12 @@ from and Food cost.
 Saved views come with the data-model slice.
 '''
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
 
 import db
+from gui.widgets.elided_label import ElidedLabel
 from gui.widgets.facet_pane import KALE, MUTED, FacetPane, FacetSection
+from gui.widgets.toolbar_controls import ToggleSwitch
 from utilities.diets import DIETS
 
 
@@ -65,12 +67,17 @@ class RecipesFacetPane(FacetPane):
         hl = QHBoxLayout(row)
         hl.setContentsMargins(0, 0, 0, 0)
         hl.setSpacing(6)
-        self.include_archived = QCheckBox('Include archived')
+        self.include_archived = ToggleSwitch()
         self.include_archived.toggled.connect(self._on_archived_toggled)
+        label = ElidedLabel('Include archived')
+        label.setStyleSheet(f'color: {KALE};')
+        # Clicking the words flips the switch too.
+        label.mousePressEvent = lambda _e: self.include_archived.toggle()
         self.archived_count = QLabel('0')
         self.archived_count.setStyleSheet(f'color: {MUTED};')
-        hl.addWidget(self.include_archived, stretch=1)
+        hl.addWidget(label, stretch=1)
         hl.addWidget(self.archived_count)
+        hl.addWidget(self.include_archived)
         self._layout.insertWidget(0, row)
 
     def _on_archived_toggled(self, _on):

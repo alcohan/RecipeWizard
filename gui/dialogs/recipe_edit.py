@@ -460,7 +460,7 @@ class RecipeEditWidget(QWidget):
         self._tag_row = QHBoxLayout()
         self._tag_row.setSpacing(6)
         self.menu_chip = _Chip()
-        self.menu_chip.clicked.connect(lambda: self._archived and self.toggle_archived())
+        self.menu_chip.clicked.connect(self.toggle_archived)
         self.used_in_chip = _Chip()
         self.used_in_chip.clicked.connect(self._show_used_in_menu)
         self.prices_chip = _Chip()
@@ -738,10 +738,12 @@ class RecipeEditWidget(QWidget):
                                      'Hidden from the Library and analytics. Click to restore it.',
                                      clickable=True)
         elif _coerce_menu_price(recipe.get('MenuPrice')):
-            self.menu_chip.configure('On the menu', 'positive')
+            self.menu_chip.configure('On the menu', 'positive',
+                                     'Click to archive it (take it off the menu).', clickable=True)
         else:
             self.menu_chip.configure('On the menu · no price', 'neutral',
-                                     'Set a menu price to see its food cost.')
+                                     'Set a menu price to see its food cost. Click to archive it'
+                                     ' (take it off the menu).', clickable=True)
 
         self._parents = db.get_parent_recipes(self.recipe_id)
         n = len(self._parents)
@@ -803,6 +805,9 @@ class RecipeEditWidget(QWidget):
         if self.modified != was_modified:
             self.modifiedChanged.emit(self.modified)
         self.save_btn.setEnabled(self.modified)
+        # Save marks the stack clean without moving its index, so
+        # indexChanged doesn't fire: refresh "N unsaved changes" here.
+        self._on_index_changed(self.undo_stack.index())
 
     def _on_index_changed(self, _index):
         n = self.dirty_count()
