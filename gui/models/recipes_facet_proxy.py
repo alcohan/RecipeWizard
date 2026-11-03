@@ -1,93 +1,91 @@
-'''Multi-facet filter proxy for the Recipes place.
+'''Filter + sort proxy for the Recipes Library.
 
-Extends the plain text-filter idea with:
-  - formats     — set of allowed format names (None = all)
-  - free_from   — set of allergen names to EXCLUDE
+Facets, combined with AND across groups (see RecipesFacetPane):
+- formats: set of format names to show (SUB_RECIPES = no format);
+  None means "no format filter".
+- diets: set of diet keys; a recipe must fit all of them.
+- categories: set of ingredient-category ids; a recipe must contain
+  all of them somewhere in its tree.
+- free_from: set of allergen names; a recipe containing any is hidden.
+- max_food_cost: percent, or None. Recipes without a menu price are
+  hidden while it's set (their food cost is unknown).
+- text: substring of name, format, unit or allergens.
 
-The allergen index is kept in self._allergens_by_id and rebuilt on
-every source-model reset so edits to recipes anywhere else in the app
-show up here on next refresh.
+The gallery filters through accepts_row, so both views show the same
+recipes.
 '''
 from PySide6.QtCore import QSortFilterProxyModel, Qt
 
-import db
+from gui.models.recipes_model import SORTS
+from gui.widgets.recipes_facet_pane import SUB_RECIPES
 
 
 class RecipesFacetProxy(QSortFilterProxyModel):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._needle = ''
-        self._formats = None            # None = no format filter
-        self._free_from = set()         # excluded allergens
-        self._allergens_by_id = {}      # populated by _refresh_allergens
         self.setSortRole(Qt.UserRole)
+        self._formats = None
+        self._diets = set()
+        self._categories = set()
+        self._free_from = set()
+        self._max_food_cost = None
+        self._text = ''
 
-    def setSourceModel(self, model):
-        super().setSourceModel(model)
-        self._refresh_allergens()
-        model.modelReset.connect(self._refresh_allergens)
-
-    # --- facet setters -------------------------------------------------
+    def set_facets(self, formats, diets=(), categories=(), free_from=(), max_food_cost=None):
+        self._formats = formats
+        self._diets = set(diets or ())
+        self._categories = set(categories or ())
+        self._free_from = set(free_from or ())
+        self._max_food_cost = max_food_cost
+        self.invalidateFilter()
 
     def setFilterText(self, text):
-        self._needle = (text or '').strip().lower()
+        self._text = (text or '').strip().lower()
         self.invalidateFilter()
 
-    def setFormats(self, formats):
-        '''Pass None (or empty set) to clear the format filter and show
-        every recipe regardless of format tag. Otherwise show only
-        recipes whose TagName is in the given set.'''
-        self._formats = set(formats) if formats else None
-        self.invalidateFilter()
-
-    def setFreeFrom(self, allergens):
-        self._free_from = set(allergens or ())
-        self.invalidateFilter()
-
-    # --- allergen index ------------------------------------------------
-
-    def _refresh_allergens(self):
+    def sort_by(self, key):
+        '''Sort by one of the Sort menu's keys (recipes_model.SORTS).
+        A header click afterwards goes back to sorting by that column.'''
+        self._sort_key = SORTS[key][1]
+        if self.sortColumn() == 0 and self.sortOrder() == Qt.AscendingOrder:
+            # Already "sorted by column 0": Qt won't re-sort for the same
+            # column, so force it with the new key.
+            self.invalidate()
+            return
+        self._custom_sort = True
         try:
-            raw = db.get_all_recipe_allergens()
-        except Exception:
-            raw = {}
-        self._allergens_by_id = {rid: set(names) for rid, names in raw.items()}
-        self.invalidateFilter()
+            self.sort(0, Qt.AscendingOrder)
+        finally:
+            self._custom_sort = False
 
-    # --- Qt filter -----------------------------------------------------
+    def sort(self, column, order=Qt.AscendingOrder):
+        if not getattr(self, '_custom_sort', False):
+            self._sort_key = None
+        super().sort(column, order)
+
+    def lessThan(self, left, right):
+        key = getattr(self, '_sort_key', None)
+        if key is None:
+            return super().lessThan(left, right)
+        model = self.sourceModel()
+        return key(model.row_dict(left.row())) < key(model.row_dict(right.row()))
+
+    def accepts_row(self, row):
+        if self._formats is not None and (row.get('TagName') or SUB_RECIPES) not in self._formats:
+            return False
+        if self._diets and not self._diets.issubset(row['Diets']):
+            return False
+        if self._categories and not self._categories.issubset(row['CategoryIds']):
+            return False
+        if self._free_from and self._free_from.intersection(row['Allergens']):
+            return False
+        if self._max_food_cost is not None:
+            pct = row.get('FoodCostPct')
+            if pct is None or pct > self._max_food_cost:
+                return False
+        if self._text and self._text not in row['SearchText']:
+            return False
+        return True
 
     def filterAcceptsRow(self, source_row, source_parent):
-        model = self.sourceModel()
-        if model is None:
-            return True
-        try:
-            row = model.row_dict(source_row)
-        except (AttributeError, IndexError):
-            return True
-
-        # Text — match across the visible display columns.
-        if self._needle:
-            matched = False
-            for key in ('Name', 'Unit', 'Cost', 'TagName'):
-                v = row.get(key)
-                if v is not None and self._needle in str(v).lower():
-                    matched = True
-                    break
-            if not matched:
-                return False
-
-        # Format — recipes without a format tag never match a format filter
-        # (users who want "untagged" can clear the filter).
-        if self._formats is not None:
-            if (row.get('TagName') or '') not in self._formats:
-                return False
-
-        # Free-from allergens — reject if the recipe contains any of the
-        # excluded allergens. Recipes with no allergens are always clean.
-        if self._free_from:
-            rid = row.get('Id')
-            allergens = self._allergens_by_id.get(rid, set())
-            if allergens & self._free_from:
-                return False
-
-        return True
+        return self.accepts_row(self.sourceModel().row_dict(source_row))

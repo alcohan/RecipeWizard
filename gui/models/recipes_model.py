@@ -1,22 +1,68 @@
+'''Recipes for the Library: db.recipe_info() plus the Library's extras
+(nutrition per serving, allergens, ingredient categories, diets, food
+cost %, sub-recipe flag), in four queries for the whole library.
+
+Rows are dicts; the table shows COLUMNS, sorts on Qt.UserRole, and
+everything else (gallery, filter pane, inspector) reads rows().
+'''
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 
 import db
+from utilities.diets import diets_for
+
+
+# Per-row sort keys, shared by the table headers and the Sort menu.
+SORTS = {
+    'food_cost': ('Food cost %', lambda r: (r['FoodCostPct'] is None, r['FoodCostPct'] or 0)),
+    'name': ('Name', lambda r: r['Name'].lower()),
+    'cost': ('Cost', lambda r: r['CostRaw'] or 0),
+    'calories': ('Calories', lambda r: r['CaloriesPerServing']),
+    'edited': ('Recently edited', lambda r: _neg_text(r.get('UpdatedAt') or '')),
+}
+
+
+def _neg_text(s):
+    '''Sorts ISO timestamps newest first under an ascending sort.'''
+    return tuple(-ord(ch) for ch in s)
+
+
+def food_cost_pct(cost, menu_price):
+    try:
+        cost, menu_price = float(cost), float(menu_price)
+    except (TypeError, ValueError):
+        return None
+    return cost / menu_price * 100.0 if menu_price > 0 else None
 
 
 class RecipesModel(QAbstractTableModel):
-    # db.recipe_info() pre-formats Cost as "$ X.XX"; we keep that for display
-    # but expose a numeric value via UserRole so column sort works correctly.
-    COLUMNS = ('Name', 'Unit', 'Cost', 'Calories', 'Components')
-    NUMERIC_COLUMNS = ('Cost', 'Calories', 'Components')
+    COLUMNS = ('Name', 'TagName', 'Cost', 'FoodCostPct', 'Calories', 'Components')
+    HEADERS = {'Name': 'Name', 'TagName': 'Format', 'Cost': 'Cost', 'FoodCostPct': 'Food cost',
+               'Calories': 'Calories', 'Components': 'Components'}
+    NUMERIC_COLUMNS = ('Cost', 'FoodCostPct', 'Calories', 'Components')
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._rows = []
+        self._by_id = {}
         self.refresh()
 
     def refresh(self):
         self.beginResetModel()
-        self._rows = db.recipe_info()
+        rows = db.recipe_info()
+        extras = db.get_recipe_library_extras()
+        for r in rows:
+            r.update(extras.get(r['Id'], {}))
+            r.setdefault('Allergens', [])
+            r.setdefault('CategoryIds', set())
+            r.setdefault('PerServing', {})
+            r.setdefault('CaloriesPerServing', 0.0)
+            r['Diets'] = diets_for(r['Allergens'], r['PerServing'])
+            r['FoodCostPct'] = food_cost_pct(r.get('CostRaw'), r.get('MenuPrice'))
+            r['SearchText'] = ' '.join(
+                str(v) for v in (r['Name'], r.get('TagName'), r.get('Unit'), ' '.join(r['Allergens']))
+                if v).lower()
+        self._rows = rows
+        self._by_id = {r['Id']: i for i, r in enumerate(rows)}
         self.endResetModel()
 
     def rowCount(self, parent=QModelIndex()):
@@ -28,29 +74,42 @@ class RecipesModel(QAbstractTableModel):
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid():
             return None
+        row = self._rows[index.row()]
         col = self.COLUMNS[index.column()]
-        value = self._rows[index.row()].get(col)
         if role == Qt.DisplayRole:
+            if col == 'Cost':
+                return f'${float(row.get("CostRaw") or 0):.2f}'
+            if col == 'FoodCostPct':
+                return '—' if row['FoodCostPct'] is None else f'{row["FoodCostPct"]:.1f}%'
+            if col == 'Calories':
+                return f'{row["CaloriesPerServing"]:.0f}'
+            if col == 'TagName':
+                return row.get('TagName') or 'Sub-recipe'
+            value = row.get(col)
             return '' if value is None else str(value)
         if role == Qt.UserRole:
+            if col == 'Name':
+                return row['Name'].lower()
             if col == 'Cost':
-                try:
-                    return float(str(value).replace('$', '').strip())
-                except (ValueError, AttributeError, TypeError):
-                    return 0.0
-            if col in self.NUMERIC_COLUMNS:
-                try:
-                    return float(value)
-                except (TypeError, ValueError):
-                    return 0.0
-            return '' if value is None else str(value).lower()
+                return float(row.get('CostRaw') or 0)
+            if col == 'FoodCostPct':
+                # Unpriced recipes sort after priced ones.
+                return row['FoodCostPct'] if row['FoodCostPct'] is not None else 1e9
+            if col == 'Calories':
+                return row['CaloriesPerServing']
+            if col == 'Components':
+                return int(row.get('Components') or 0)
+            return (row.get(col) or '').lower()
         if role == Qt.TextAlignmentRole and col in self.NUMERIC_COLUMNS:
             return int(Qt.AlignRight | Qt.AlignVCenter)
         return None
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         if role == Qt.DisplayRole and orientation == Qt.Horizontal:
-            return self.COLUMNS[section]
+            return self.HEADERS[self.COLUMNS[section]]
+        if role == Qt.TextAlignmentRole and orientation == Qt.Horizontal \
+                and self.COLUMNS[section] in self.NUMERIC_COLUMNS:
+            return int(Qt.AlignRight | Qt.AlignVCenter)
         return None
 
     def id_at_row(self, row):
@@ -58,3 +117,9 @@ class RecipesModel(QAbstractTableModel):
 
     def row_dict(self, row):
         return self._rows[row]
+
+    def row_for_id(self, recipe_id):
+        return self._by_id.get(recipe_id, -1)
+
+    def rows(self):
+        return self._rows

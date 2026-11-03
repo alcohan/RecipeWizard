@@ -1,136 +1,141 @@
-'''Left-side facet pane for the Recipes library view.
+'''Left filter pane for the Recipes Library, per the Framework canvas:
+Format, Diets, Contains category, Free from and Food cost.
 
-Two facets today: Format (checkboxes for Salad / Bowl / Wrap /
-Catering) and Free From (toggle chips for allergens from the DB).
-Each facet emits a signal with its current set; the proxy picks them
-up and reinvalidates.
+- Format ("include"): one row per recipe format, plus Sub-recipes
+  (recipes with no format, e.g. dressings), which start unchecked so
+  the Library opens on menu items.
+- Diets ("all"): checking Vegan and High protein shows recipes that
+  are both. Built-in rules (utilities/diets.py).
+- Contains category ("all"): recipes with every checked ingredient
+  category somewhere in their tree. Starts collapsed.
+- Free from ("exclude"): hides recipes containing any checked
+  allergen. Starts collapsed.
+- Food cost: "Up to N%" slider over recipes with a menu price; at the
+  top stop it's off. Disabled, with a note, until any recipe has one.
+
+Saved views and recipe tags come with the data-model slice.
 '''
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (
-    QCheckBox, QFrame, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
-)
+from PySide6.QtCore import QSettings, Qt
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
 
 import db
-from gui.widgets.flow_layout import FlowLayout as _FlowLayout
+from gui.widgets.facet_pane import KALE, MUTED, FacetPane, FacetSection
+from utilities.diets import DIETS
 
 
-_FORMATS = ('Salad', 'Bowl', 'Wrap', 'Catering')
+SUB_RECIPES = '__sub__'
+FOOD_COST_OFF = 50          # slider top stop = no food-cost filter
+_FOOD_COST_MIN = 15
+_FOOD_COST_TARGET = 28      # the canvas's target line
 
 
-class RecipesFacetPane(QWidget):
-    formatsChanged = Signal(set)   # empty set = no format filter
-    freeFromChanged = Signal(set)
+class RecipesFacetPane(FacetPane):
+    SECTIONS = (
+        ('format', 'Format', 'include', True),
+        ('diet', 'Diets', 'all', True),
+        ('category', 'Contains category', 'all', False),
+        ('allergen', 'Free from', 'exclude', False),
+    )
+    SETTINGS_PREFIX = 'recipes/facetOpen/'
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(200)
-        self.setStyleSheet('''
-            RecipesFacetPane {
-                background: #fffaf2;
-                border-right: 1px solid #ebe1cd;
-            }
-            QLabel[role="facet-header"] {
-                font-size: 11px;
-                font-weight: 600;
-                letter-spacing: 0.06em;
-                color: #55624c;
-                text-transform: uppercase;
-            }
-        ''')
+        self._formats = []        # [(name, color)] in format order
+        self._categories = []     # [(id, name, color)] in category order
+        self._build_food_cost()
 
-        format_header = QLabel('Format')
-        format_header.setProperty('role', 'facet-header')
-        self._format_checks = {}
-        format_box = QVBoxLayout()
-        format_box.setContentsMargins(0, 0, 0, 0)
-        format_box.setSpacing(4)
-        for name in _FORMATS:
-            cb = QCheckBox(name)
-            cb.setCursor(Qt.PointingHandCursor)
-            cb.toggled.connect(self._emit_formats)
-            self._format_checks[name] = cb
-            format_box.addWidget(cb)
+    def _default_checked(self, group, key):
+        if group == 'format':
+            return key != SUB_RECIPES
+        return super()._default_checked(group, key)
 
-        freefrom_header = QLabel('Free from')
-        freefrom_header.setProperty('role', 'facet-header')
-        self._freefrom_buttons = {}
-        self._freefrom_flow = _FlowLayout()
-        try:
-            allergens = db.get_all_allergens()
-        except Exception:
-            allergens = []
-        for name in allergens:
-            btn = QPushButton(name)
-            btn.setCheckable(True)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setStyleSheet('''
-                QPushButton {
-                    font-size: 12px;
-                    padding: 3px 10px;
-                    border-radius: 999px;
-                    border: 1px solid #ebe1cd;
-                    background: #ffffff;
-                    color: #55624c;
-                }
-                QPushButton:hover { border-color: #7d8771; }
-                QPushButton:checked {
-                    background: #e9f1d9;
-                    color: #082c00;
-                    border-color: #347200;
-                    font-weight: 600;
-                }
-            ''')
-            btn.toggled.connect(self._emit_free_from)
-            self._freefrom_buttons[name] = btn
-            self._freefrom_flow.addWidget(btn)
+    def _build_food_cost(self):
+        section = FacetSection('food_cost', 'Food cost', 'slider', True, self.SETTINGS_PREFIX)
+        self.food_cost = QSlider(Qt.Horizontal)
+        self.food_cost.setRange(_FOOD_COST_MIN, FOOD_COST_OFF)
+        self.food_cost.setValue(FOOD_COST_OFF)
+        self.food_cost.setPageStep(5)
+        self.food_cost.setTickPosition(QSlider.TicksBelow)
+        self.food_cost.setTickInterval(5)
+        self.food_cost.setToolTip(f'Target food cost: {_FOOD_COST_TARGET}%')
+        self.food_cost.valueChanged.connect(self._on_food_cost)
+        self.food_cost_label = QLabel('')
+        self.food_cost_label.setWordWrap(True)
+        self.food_cost_label.setStyleSheet(f'color: {MUTED}; font-size: 12px;')
+        section.body.addWidget(self.food_cost)
+        section.body.addWidget(self.food_cost_label)
+        self._food_section = section
+        # Above the stretch at the end of the base layout.
+        self._layout.insertWidget(self._layout.count() - 1, section)
+        self._sync_food_cost()
 
-        freefrom_container = QWidget()
-        freefrom_container.setLayout(self._freefrom_flow)
-        # Let the flow layout drive the container's height so chip rows
-        # don't get clipped by the vertical layout above/below.
-        sp = freefrom_container.sizePolicy()
-        sp.setHeightForWidth(True)
-        freefrom_container.setSizePolicy(sp)
+    # --- building ------------------------------------------------------
 
-        clear_btn = QPushButton('Clear filters')
-        clear_btn.setCursor(Qt.PointingHandCursor)
-        clear_btn.setStyleSheet('''
-            QPushButton {
-                background: transparent;
-                border: 0;
-                color: #347200;
-                font-weight: 600;
-                text-align: left;
-                padding: 6px 0;
-            }
-            QPushButton:hover { color: #285900; }
-        ''')
-        clear_btn.clicked.connect(self.clear_filters)
+    def set_library(self, rows):
+        # Re-read each time: formats and categories are edited in Configure.
+        self._formats = [(t['name'], t.get('color')) for t in db.get_tags('recipe')]
+        self._categories = [(t['id'], t['name'], t.get('color')) for t in db.get_tags('ingredient')]
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(10)
-        layout.addWidget(format_header)
-        layout.addLayout(format_box)
-        layout.addSpacing(6)
-        layout.addWidget(freefrom_header)
-        layout.addWidget(freefrom_container)
-        layout.addStretch()
-        layout.addWidget(clear_btn)
+        fmt_counts = {}
+        for r in rows:
+            key = r.get('TagName') or SUB_RECIPES
+            fmt_counts[key] = fmt_counts.get(key, 0) + 1
+        names = [n for n, _c in self._formats]
+        extra = sorted(k for k in fmt_counts if k not in names and k != SUB_RECIPES)
+        self._fill('format', [(name, name, color, fmt_counts.get(name, 0), None)
+                              for name, color in self._formats]
+                   + [(name, name, None, fmt_counts[name], None) for name in extra]
+                   + [(SUB_RECIPES, 'Sub-recipes', None, fmt_counts.get(SUB_RECIPES, 0), None,
+                       'Recipes with no format, like dressings and sauces')])
 
-    def clear_filters(self):
-        for cb in self._format_checks.values():
-            cb.blockSignals(True); cb.setChecked(False); cb.blockSignals(False)
-        for btn in self._freefrom_buttons.values():
-            btn.blockSignals(True); btn.setChecked(False); btn.blockSignals(False)
-        self._emit_formats()
-        self._emit_free_from()
+        self._fill('diet', [(key, name, None, sum(1 for r in rows if key in r['Diets']), None, tip)
+                            for key, name, tip, *_ in DIETS])
 
-    def _emit_formats(self):
-        picked = {name for name, cb in self._format_checks.items() if cb.isChecked()}
-        self.formatsChanged.emit(picked)
+        self._fill('category', [(cid, name, color, sum(1 for r in rows if cid in r['CategoryIds']), None)
+                                for cid, name, color in self._categories])
 
-    def _emit_free_from(self):
-        picked = {name for name, btn in self._freefrom_buttons.items() if btn.isChecked()}
-        self.freeFromChanged.emit(picked)
+        allergens = db.get_all_allergens()
+        self._fill('allergen', [(a, a, None, sum(1 for r in rows if a not in r['Allergens']), None,
+                                 f'Recipes without {a.lower()}')
+                                for a in allergens])
+
+        self._priced = sum(1 for r in rows if r.get('FoodCostPct') is not None)
+        self._sync_food_cost()
+
+    # --- food cost -----------------------------------------------------
+
+    def _on_food_cost(self, _value):
+        self._sync_food_cost()
+        self.changed.emit()
+
+    def _sync_food_cost(self):
+        priced = getattr(self, '_priced', 0)
+        self.food_cost.setEnabled(bool(priced))
+        value = self.food_cost.value()
+        if not priced:
+            self.food_cost_label.setText('Set menu prices on recipes to filter by food cost.')
+        elif value >= FOOD_COST_OFF:
+            self.food_cost_label.setText(f'Any · target {_FOOD_COST_TARGET}% · {priced} priced')
+        else:
+            self.food_cost_label.setText(f'Up to {value}% · target {_FOOD_COST_TARGET}%')
+        self._food_section.set_filtering(bool(priced) and value < FOOD_COST_OFF)
+
+    def max_food_cost(self):
+        '''Percent, or None for no food-cost filter.'''
+        v = self.food_cost.value()
+        return None if v >= FOOD_COST_OFF or not self.food_cost.isEnabled() else float(v)
+
+    # --- reading -------------------------------------------------------
+
+    def selection(self):
+        '''(formats, diets, categories, free_from, max_food_cost) for
+        RecipesFacetProxy.set_facets.'''
+        return (self.included('format'), self.checked('diet'), self.checked('category'),
+                self.checked('allergen'), self.max_food_cost())
+
+    def clear(self):
+        self.food_cost.blockSignals(True)
+        self.food_cost.setValue(FOOD_COST_OFF)
+        self.food_cost.blockSignals(False)
+        self._sync_food_cost()
+        super().clear()
