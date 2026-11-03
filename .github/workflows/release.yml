@@ -1,0 +1,64 @@
+# Build RecipeWizard.exe when a version tag (vX.Y.Z) is pushed and attach
+# it, with its SHA-256, to that tag's GitHub release. The app's update
+# check compares release tags against config.__version__, which is
+# stamped from the tag here so the two always agree.
+#
+# If the release doesn't exist yet it's created as a pre-release with
+# generated notes; edit it (notes, pre-release flag) on GitHub after.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Stamp the version from the tag
+        shell: pwsh
+        run: |
+          $version = '${{ github.ref_name }}' -replace '^v', ''
+          $text = Get-Content config.py -Raw
+          $pattern = "(?m)^__version__ = '[^']*'"
+          if ($text -notmatch $pattern) { throw "__version__ not found in config.py" }
+          $text = $text -replace $pattern, "__version__ = '$version'"
+          Set-Content config.py $text -NoNewline -Encoding utf8
+          Select-String -Path config.py -Pattern '^__version__'
+
+      - name: Build
+        run: pyinstaller --noconfirm RecipeWizard.spec
+
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash dist/RecipeWizard.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  RecipeWizard.exe" | Set-Content dist/RecipeWizard.exe.sha256 -Encoding ascii
+          Get-Content dist/RecipeWizard.exe.sha256
+
+      - name: Attach to the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:TAG --verify-tag --prerelease --generate-notes --title $env:TAG
+          }
+          gh release upload $env:TAG dist/RecipeWizard.exe dist/RecipeWizard.exe.sha256 --clobber

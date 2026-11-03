@@ -5,6 +5,9 @@ from dotenv import load_dotenv
 
 
 APPNAME = 'RecipeWizard'
+# The one version number. Release builds stamp it from the git tag
+# (vX.Y.Z); update checks compare GitHub release tags against it.
+__version__ = '0.0.2'
 ORGNAME = 'AdrianCohan'
 
 
