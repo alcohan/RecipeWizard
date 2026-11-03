@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, QSettings, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QDialog, QFileDialog, QMainWindow, QMessageBox,
-    QPushButton, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
+    QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 import api.usda
@@ -194,18 +194,19 @@ class MainWindow(QMainWindow):
     # --- place builders ------------------------------------------------
 
     def _recipes_place(self):
-        new_recipe_btn = QPushButton('+ New Recipe')
-        new_recipe_btn.clicked.connect(self._on_new_recipe)
         tab = RecipesTab(
             source_model=self.recipes_model,
             context_actions=[
-                ('Open', self._on_recipe_edit),
-                ('Add to Compare (Space)', self._on_toggle_tray_for_row),
-                ('Delete', self._on_recipe_delete),
+                ('Open in tab', self._on_recipe_edit),
+                ('Add to compare (Space)', self._on_toggle_tray_for_row),
+                ('Duplicate', lambda r: self._duplicate_recipe(self.recipes_model.id_at_row(r))),
+                (None, None),
+                ('Delete…', self._on_recipe_delete),
             ],
-            action_buttons=[new_recipe_btn],
             compare_tray=self.compare_tray,
         )
+        tab.newRecipeRequested.connect(self._on_new_recipe)
+        tab.duplicateRequested.connect(self._duplicate_recipe)
         # A recipe deleted or saved from its tab changes what the
         # library, gallery and counts show.
         tab.recipeDeletedFromTabs.connect(lambda _rid: self.refresh())
@@ -507,6 +508,7 @@ class MainWindow(QMainWindow):
         history_action = add(recipe_menu, '&Price History…',
                              lambda: self._with_editor('show_price_history'))
         recipe_menu.addSeparator()
+        add(recipe_menu, 'D&uplicate Recipe', self._on_duplicate_current, 'Ctrl+D')
         delete_action = add(recipe_menu, '&Delete Recipe…',
                             lambda: self._with_editor('delete_recipe'))
         self._recipe_actions = (
@@ -627,6 +629,23 @@ class MainWindow(QMainWindow):
         self.recipes_tab.handle_recipe_deleted(row['Id'])
         self.refresh()
         self._flash_status(f"Deleted '{row['Name']}'")
+
+    def _on_duplicate_current(self):
+        '''Ctrl+D: the recipe in the current tab, or the Library's
+        selection.'''
+        rid = self.recipes_tab.selected_recipe_id()
+        if rid is not None and self.stack.currentWidget() is self.recipes_tab:
+            self._duplicate_recipe(rid)
+
+    def _duplicate_recipe(self, recipe_id):
+        '''Copy the recipe and open the copy in a tab, so it can be
+        renamed straight away.'''
+        new_id = db.duplicate_recipe(recipe_id)
+        self.recipes_tab.select_recipe(new_id)
+        self.refresh()
+        self._on_recipe_edit_by_id(new_id)
+        name = (db.recipe_info(new_id) or {}).get('Name', 'recipe')
+        self._flash_status(f"Duplicated as '{name}'")
 
     def _on_new_recipe(self):
         create_dlg = RecipeCreateDialog(parent=self)

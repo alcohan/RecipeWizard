@@ -1018,6 +1018,71 @@ def get_all_recipe_allergens():
         out.setdefault(r['recipe_id'], []).append(r['name'])
     return out
 
+def get_recipe_library_extras():
+    '''{recipe_id: {...}} — what the Library adds to recipe_info, in
+    three queries for the whole library (no per-recipe lookups):
+    Calories / Protein / Fiber per serving (one unit of yield), Unit and
+    OutputQty, UpdatedAt, IsSubRecipe (used inside another recipe),
+    Allergens (canonical order) and CategoryIds (ingredient categories
+    anywhere in the tree).'''
+    out = {}
+    for r in query('''
+        SELECT r.Id, r.OutputQty, r.updated_at AS UpdatedAt,
+               n.Calories, n.ProteinGrams, n.FiberGrams,
+               EXISTS (SELECT 1 FROM Connections c WHERE c.ChildRecipe = r.Id) AS IsSubRecipe
+        FROM Recipes r LEFT JOIN RecipeTotalValues n ON n.Id = r.Id;''')['data']:
+        per = float(r['OutputQty'] or 1) or 1.0
+        out[r['Id']] = {
+            'CaloriesPerServing': (r['Calories'] or 0) / per,
+            'PerServing': {'Protein': (r['ProteinGrams'] or 0) / per,
+                           'Fiber': (r['FiberGrams'] or 0) / per},
+            'UpdatedAt': r['UpdatedAt'],
+            'IsSubRecipe': bool(r['IsSubRecipe']),
+            'Allergens': [],
+            'CategoryIds': set(),
+        }
+    for r in query('''
+        SELECT ra.recipe_id AS rid, a.name FROM RecipeAllergens ra
+        JOIN allergens a ON a.id = ra.allergen_id
+        ORDER BY ra.recipe_id, a.sortOrder, a.id;''')['data']:
+        if r['rid'] in out and r['name'] not in out[r['rid']]['Allergens']:
+            out[r['rid']]['Allergens'].append(r['name'])
+    for r in query('''
+        SELECT DISTINCT e.recipe_id AS rid, itm.tag_id
+        FROM recipe_ingredients_expanded e
+        JOIN ingredient_tags_mapping itm ON itm.ingredient_id = e.ingredient_id
+        JOIN tags t ON t.id = itm.tag_id AND t.kind = 'ingredient';''')['data']:
+        if r['rid'] in out:
+            out[r['rid']]['CategoryIds'].add(r['tag_id'])
+    return out
+
+
+def duplicate_recipe(recipe_id):
+    '''Copy a recipe — its yield, menu price, components (in order,
+    keeping template provenance) and tags — as "<name> (copy)".
+    Returns the new id.'''
+    connection = sqlite3.connect(config.DATABASE)
+    try:
+        cur = connection.cursor()
+        cur.execute('''
+            INSERT INTO Recipes (Name, Unit, OutputQty, menu_price, updated_at)
+            SELECT Name || ' (copy)', Unit, OutputQty, menu_price, datetime('now')
+            FROM Recipes WHERE Id = ?;''', (recipe_id,))
+        new_id = cur.lastrowid
+        cur.execute('''
+            INSERT INTO Connections (ParentRecipe, ChildRecipe, ChildIngredient, Quantity,
+                                     SortOrder, from_template_tag_id)
+            SELECT ?, ChildRecipe, ChildIngredient, Quantity, SortOrder, from_template_tag_id
+            FROM Connections WHERE ParentRecipe = ?;''', (new_id, recipe_id))
+        cur.execute('''
+            INSERT INTO recipe_tags_mapping (tag_id, recipe_id)
+            SELECT tag_id, ? FROM recipe_tags_mapping WHERE recipe_id = ?;''', (new_id, recipe_id))
+        connection.commit()
+        return new_id
+    finally:
+        connection.close()
+
+
 def update_tag(tag_id, name=None, color=None, shape=None):
     '''Patch a tag's name, color, and/or shape (any combination). Kind is
     intentionally NOT editable — moving a tag between kinds would orphan
