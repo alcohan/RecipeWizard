@@ -40,6 +40,7 @@ class ConfigureTab(QWidget):
         self.nav = QListWidget()
         self.nav.setFixedWidth(220)
         self.nav.setFrameShape(QFrame.NoFrame)
+        self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.nav.setStyleSheet(f'''
             QListWidget {{
                 background: #fffaf2;
