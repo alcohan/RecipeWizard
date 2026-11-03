@@ -50,7 +50,7 @@ from gui.dialogs.recipe_component_add import RecipeComponentAddDialog
 from gui.models.components_model import RecipeComponentsModel
 from gui.undo.recipe_commands import (
     AddComponentCommand, RemoveComponentCommand, ReorderComponentsCommand,
-    SetComponentQtyCommand, SetRecipeTagCommand, UpdateRecipeInfoCommand,
+    SetComponentQtyCommand, SetRecipeTagCommand, SetRecipeTagsCommand, UpdateRecipeInfoCommand,
 )
 from gui.widgets.component_delegates import (
     ChangedRowDelegate, NameDelegate, QuantityDelegate, ShareDelegate,
@@ -449,13 +449,22 @@ class RecipeEditWidget(QWidget):
         for col in (fields.itemAt(i).layout() for i in range(1, 4)):
             col.setAlignment(Qt.AlignBottom)
 
-        # Status chips: on the menu, used in N recipes, prices changed.
+        # Recipe tags (Core, Seasonal…): toggle pills, then the status
+        # chips: on the menu, used in N recipes, prices changed.
+        self._tag_pills = {}
+        self._tag_row = QHBoxLayout()
+        self._tag_row.setSpacing(6)
         self.menu_chip = _Chip()
         self.used_in_chip = _Chip()
         self.used_in_chip.clicked.connect(self._show_used_in_menu)
         self.prices_chip = _Chip()
         chips = QHBoxLayout()
         chips.setSpacing(8)
+        chips.addLayout(self._tag_row)
+        self._tag_divider = QFrame()
+        self._tag_divider.setFixedSize(1, 18)
+        self._tag_divider.setStyleSheet(f'background: {_BORDER};')
+        chips.addWidget(self._tag_divider)
         chips.addWidget(self.menu_chip)
         chips.addWidget(self.used_in_chip)
         chips.addWidget(self.prices_chip)
@@ -646,6 +655,7 @@ class RecipeEditWidget(QWidget):
             f'{crumb_mid} › <b style="color: {_KALE}">{_html_escape(recipe["Name"])}</b>'
         )
 
+        self._refresh_tag_pills()
         self._refresh_chips(recipe)
         self.results.update_results(
             recipe, self._baseline, db.get_recipe_allergen_sources(self.recipe_id))
@@ -670,6 +680,47 @@ class RecipeEditWidget(QWidget):
         if recipe['Name'] != self._title:
             self._title = recipe['Name']
             self.titleChanged.emit(self._title)
+
+    def _refresh_tag_pills(self):
+        '''One toggle pill per recipe tag, checked when this recipe has
+        it. Rebuilt only when the set of tags changes (Configure).'''
+        tags = db.get_tags('recipe_tag')
+        key = [(t['id'], t['name'], t.get('color')) for t in tags]
+        if key != getattr(self, '_tag_key', None):
+            self._tag_key = key
+            while self._tag_row.count():
+                item = self._tag_row.takeAt(0)
+                if item.widget() is not None:
+                    item.widget().deleteLater()
+            self._tag_pills = {}
+            for tid, name, color in key:
+                pill = QPushButton(name)
+                pill.setCheckable(True)
+                pill.setCursor(Qt.PointingHandCursor)
+                pill.setToolTip(f'Tag this recipe {name}. Manage tags in Configure › Recipe tags.')
+                dot = color or _MUTED
+                pill.setStyleSheet(
+                    f'QPushButton {{ border: 1px dashed {_FIELD_BORDER}; border-radius: 10px; padding: 1px 10px;'
+                    f' background: transparent; color: {_MUTED}; font-size: 12px; }}'
+                    f' QPushButton:hover {{ border-style: solid; }}'
+                    f' QPushButton:checked {{ border: 1px solid {dot}; background: #ffffff; color: {_KALE};'
+                    ' font-weight: 600; }')
+                pill.toggled.connect(lambda on, t=tid, n=name: self._on_recipe_tag_toggled(t, n, on))
+                self._tag_row.addWidget(pill)
+                self._tag_pills[tid] = pill
+            self._tag_divider.setVisible(bool(key))
+        have = db.get_recipe_tags(self.recipe_id)
+        for tid, pill in self._tag_pills.items():
+            pill.blockSignals(True)
+            pill.setChecked(tid in have)
+            pill.blockSignals(False)
+
+    def _on_recipe_tag_toggled(self, tag_id, name, on):
+        before = db.get_recipe_tags(self.recipe_id)
+        after = before | {tag_id} if on else before - {tag_id}
+        if after != before:
+            self.undo_stack.push(SetRecipeTagsCommand(
+                self.recipe_id, before, after, f"{'Tag' if on else 'Untag'} {name}"))
 
     def _refresh_chips(self, recipe):
         if _coerce_menu_price(recipe.get('MenuPrice')):

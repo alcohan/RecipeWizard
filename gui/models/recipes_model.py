@@ -1,6 +1,7 @@
 '''Recipes for the Library: db.recipe_info() plus the Library's extras
-(nutrition per serving, allergens, ingredient categories, diets, food
-cost %, sub-recipe flag), in four queries for the whole library.
+(nutrition per serving, allergens, ingredient categories, recipe tags,
+diets, food cost %, sub-recipe flag), in a handful of whole-library
+queries.
 
 Rows are dicts; the table shows COLUMNS, sorts on Qt.UserRole, and
 everything else (gallery, filter pane, inspector) reads rows().
@@ -50,16 +51,20 @@ class RecipesModel(QAbstractTableModel):
         self.beginResetModel()
         rows = db.recipe_info()
         extras = db.get_recipe_library_extras()
+        tag_order = [(t['id'], t['name']) for t in db.get_tags('recipe_tag')]
         for r in rows:
             r.update(extras.get(r['Id'], {}))
             r.setdefault('Allergens', [])
             r.setdefault('CategoryIds', set())
             r.setdefault('PerServing', {})
             r.setdefault('CaloriesPerServing', 0.0)
+            r.setdefault('TagIds', set())
+            r['TagNames'] = [name for tid, name in tag_order if tid in r['TagIds']]
             r['Diets'] = diets_for(r['Allergens'], r['PerServing'])
             r['FoodCostPct'] = food_cost_pct(r.get('CostRaw'), r.get('MenuPrice'))
             r['SearchText'] = ' '.join(
-                str(v) for v in (r['Name'], r.get('TagName'), r.get('Unit'), ' '.join(r['Allergens']))
+                str(v) for v in (r['Name'], r.get('TagName'), r.get('Unit'), ' '.join(r['Allergens']),
+                                 ' '.join(r['TagNames']))
                 if v).lower()
         self._rows = rows
         self._by_id = {r['Id']: i for i, r in enumerate(rows)}

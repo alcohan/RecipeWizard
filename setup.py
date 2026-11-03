@@ -317,8 +317,36 @@ def migrateDB():
         print(f'Migrating: removing {self_refs} self-referential Connections row(s)')
         cursor.execute('DELETE FROM Connections WHERE ParentRecipe = ChildRecipe;')
 
+    # One-time markers for seeds the user may later delete on purpose
+    # (seeding by name, like the canonical tags above, would bring them
+    # back on every launch).
+    cursor.execute('CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT);')
+
+    # Recipe tags (kind 'recipe_tag'): user-configurable labels such as
+    # Core / Seasonal / Archived, many per recipe, separate from the one
+    # format tag (kind 'recipe'). Seeded once.
+    cursor.execute("SELECT 1 FROM app_meta WHERE key = 'seeded_recipe_tags';")
+    if cursor.fetchone() is None:
+        cursor.execute("SELECT COUNT(*) FROM tags WHERE kind = 'recipe_tag';")
+        if cursor.fetchone()[0] == 0:
+            print('Migrating: adding default recipe tags')
+            for order, (name, color) in enumerate(_DEFAULT_RECIPE_TAGS, start=1):
+                cursor.execute(
+                    "INSERT INTO tags (name, kind, color, shape, sortOrder) VALUES (?, 'recipe_tag', ?, 'none', ?);",
+                    (name, color, order),
+                )
+        cursor.execute("INSERT INTO app_meta (key, value) VALUES ('seeded_recipe_tags', '1');")
+
     connection.commit()
     connection.close()
+
+
+# Recipe tags seeded once on first run of this version (see migrateDB).
+_DEFAULT_RECIPE_TAGS = (
+    ('Core', '#082c00'),
+    ('Seasonal', '#ff8c00'),
+    ('Archived', '#7d8771'),
+)
 
 
 # Default silhouette shape for each canonical recipe-kind tag. Used both by

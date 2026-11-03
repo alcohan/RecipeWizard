@@ -2,7 +2,7 @@
 and whose other tabs are open recipes, one RecipeEditWidget each.
 
 The Library, per the Framework canvas: a toolbar (title, filter,
-"N of M", Sort, Wedges/Table, New recipe), the filter pane on the
+"N of M", Group by, Sort, Gallery/Table, New recipe), the filter pane on the
 left, the gallery (grouped by format) or table in the middle, and the
 inspector on the right.
 
@@ -16,7 +16,7 @@ switching places and restarts.
 from PySide6.QtCore import QItemSelectionModel, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractItemView, QButtonGroup, QComboBox, QFrame, QHBoxLayout, QHeaderView,
+    QAbstractItemView, QFrame, QHBoxLayout, QHeaderView,
     QLabel, QLineEdit, QMenu, QPushButton, QStackedWidget, QTableView, QVBoxLayout,
     QWidget,
 )
@@ -24,13 +24,16 @@ from PySide6.QtWidgets import (
 from gui.models.recipes_facet_proxy import RecipesFacetProxy
 from gui.models.recipes_model import SORTS
 from gui.widgets.editor_tabs import EditorTabs
-from gui.widgets.recipe_gallery import RecipeGallery
+from gui.widgets.recipe_gallery import GROUP_BY, RecipeGallery
 from gui.widgets.recipe_inspector import RecipeInspector
 from gui.widgets.recipes_facet_pane import RecipesFacetPane
+from gui.widgets.toolbar_controls import SegmentedSwitch, ToolbarCombo
 
 
 _VIEW_KEY = 'recipes/view'
 _SORT_KEY = 'recipes/sort'
+_GROUP_KEY = 'recipes/groupBy'
+_DEFAULT_GROUP = 'format'
 _DEFAULT_VIEW = 'gallery'
 _DEFAULT_SORT = 'name'
 
@@ -125,6 +128,8 @@ class RecipesTab(QWidget):
         self.stack.addWidget(self.gallery)
         self.stack.addWidget(table_wrap)
 
+        saved_group = QSettings().value(_GROUP_KEY, _DEFAULT_GROUP, type=str)
+        self._set_group(saved_group if saved_group in dict(GROUP_BY) else _DEFAULT_GROUP, persist=False)
         saved_sort = QSettings().value(_SORT_KEY, _DEFAULT_SORT, type=str)
         self._set_sort(saved_sort if saved_sort in SORTS else _DEFAULT_SORT, persist=False)
         saved = QSettings().value(_VIEW_KEY, _DEFAULT_VIEW, type=str)
@@ -177,37 +182,23 @@ class RecipesTab(QWidget):
         self.count_label = QLabel('')
         self.count_label.setStyleSheet(f'color: {_MUTED};')
 
+        group_label = QLabel('Group by')
+        group_label.setStyleSheet(f'color: {_MUTED};')
+        self.group_combo = ToolbarCombo()
+        for key, label in GROUP_BY:
+            self.group_combo.addItem(label, key)
+        self.group_combo.setToolTip('Gallery groups. A recipe with several tags or diets shows in each.')
+        self.group_combo.activated.connect(lambda i: self._set_group(self.group_combo.itemData(i)))
+
         sort_label = QLabel('Sort')
         sort_label.setStyleSheet(f'color: {_MUTED};')
-        self.sort_combo = QComboBox()
+        self.sort_combo = ToolbarCombo()
         for key, (label, _fn) in SORTS.items():
             self.sort_combo.addItem(label, key)
-        self.sort_combo.setStyleSheet(f'QComboBox {{ min-height: 30px; padding: 0 8px; color: {_KALE};'
-                                      f' border: 1px solid {_FIELD_BORDER}; border-radius: 4px; background: #ffffff; }}')
         self.sort_combo.activated.connect(lambda i: self._set_sort(self.sort_combo.itemData(i)))
 
-        views = QFrame()
-        views.setObjectName('ViewSwitch')
-        views.setStyleSheet(f'''
-            QFrame#ViewSwitch {{ border: 1px solid {_FIELD_BORDER}; border-radius: 8px; }}
-            QFrame#ViewSwitch QPushButton {{ border: 0; padding: 0 12px; min-height: 32px;
-                background: #ffffff; color: {_KALE}; }}
-            QFrame#ViewSwitch QPushButton:checked {{ background: {_ROMAINE}; color: #ffffff;
-                font-weight: 600; }}
-        ''')
-        vl = QHBoxLayout(views)
-        vl.setContentsMargins(1, 1, 1, 1)
-        vl.setSpacing(0)
-        self._view_group = QButtonGroup(self)
-        self._view_buttons = {}
-        for key, label in (('gallery', 'Wedges'), ('table', 'Table')):
-            btn = QPushButton(label)
-            btn.setCheckable(True)
-            btn.setFocusPolicy(Qt.NoFocus)
-            btn.clicked.connect(lambda _c=False, k=key: self._set_view(k))
-            self._view_group.addButton(btn)
-            self._view_buttons[key] = btn
-            vl.addWidget(btn)
+        self.view_switch = SegmentedSwitch([('gallery', 'Gallery'), ('table', 'Table')])
+        self.view_switch.changed.connect(self._set_view)
 
         new_btn = QPushButton('New recipe   Ctrl+N')
         new_btn.setStyleSheet(
@@ -223,9 +214,12 @@ class RecipesTab(QWidget):
         row.addWidget(field, stretch=1)
         row.addWidget(self.count_label)
         row.addStretch()
+        row.addWidget(group_label)
+        row.addWidget(self.group_combo)
+        row.addSpacing(4)
         row.addWidget(sort_label)
         row.addWidget(self.sort_combo)
-        row.addWidget(views)
+        row.addWidget(self.view_switch)
         row.addWidget(new_btn)
         return bar
 
@@ -315,13 +309,22 @@ class RecipesTab(QWidget):
     # --- view, sort, filtering -----------------------------------------
 
     def _set_view(self, name, persist=True):
-        self._view_buttons[name].setChecked(True)
+        self.view_switch.set_current(name)
         self.stack.setCurrentIndex(0 if name == 'gallery' else 1)
+        # Grouping applies to the gallery only.
+        self.group_combo.setEnabled(name == 'gallery')
         if persist:
             QSettings().setValue(_VIEW_KEY, name)
         self._after_filter()
         if self._selected_id is not None:
             self._select_id(self._selected_id)
+
+    def _set_group(self, key, persist=True):
+        self.group_combo.setCurrentIndex(self.group_combo.findData(key))
+        self.gallery.set_group_by(key)
+        if persist:
+            QSettings().setValue(_GROUP_KEY, key)
+        self._after_filter()
 
     def _set_sort(self, key, persist=True):
         self.sort_combo.setCurrentIndex(self.sort_combo.findData(key))
@@ -347,8 +350,11 @@ class RecipesTab(QWidget):
             return
         self.gallery.set_row_filter(self.proxy.accepts_row)
         shown, total = self.proxy.rowCount(), self.source_model.rowCount()
-        if self.stack.currentWidget() is self.gallery:
-            how = 'grouped by format'
+        group = self.group_combo.currentData() or _DEFAULT_GROUP
+        if self.stack.currentWidget() is self.gallery and group != 'none':
+            how = f'grouped by {dict(GROUP_BY)[group].lower()}'
+        elif self.stack.currentWidget() is self.gallery:
+            how = 'sorted by ' + SORTS[self.sort_combo.currentData() or _DEFAULT_SORT][0].lower()
         else:
             col = self.table.horizontalHeader().sortIndicatorSection()
             label = (self.source_model.HEADERS[self.source_model.COLUMNS[col]] if col >= 0

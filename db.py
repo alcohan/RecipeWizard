@@ -1020,11 +1020,11 @@ def get_all_recipe_allergens():
 
 def get_recipe_library_extras():
     '''{recipe_id: {...}} — what the Library adds to recipe_info, in
-    three queries for the whole library (no per-recipe lookups):
+    four queries for the whole library (no per-recipe lookups):
     Calories / Protein / Fiber per serving (one unit of yield), Unit and
     OutputQty, UpdatedAt, IsSubRecipe (used inside another recipe),
-    Allergens (canonical order) and CategoryIds (ingredient categories
-    anywhere in the tree).'''
+    Allergens (canonical order), CategoryIds (ingredient categories
+    anywhere in the tree) and TagIds (recipe tags).'''
     out = {}
     for r in query('''
         SELECT r.Id, r.OutputQty, r.updated_at AS UpdatedAt,
@@ -1040,6 +1040,7 @@ def get_recipe_library_extras():
             'IsSubRecipe': bool(r['IsSubRecipe']),
             'Allergens': [],
             'CategoryIds': set(),
+            'TagIds': set(),
         }
     for r in query('''
         SELECT ra.recipe_id AS rid, a.name FROM RecipeAllergens ra
@@ -1054,7 +1055,29 @@ def get_recipe_library_extras():
         JOIN tags t ON t.id = itm.tag_id AND t.kind = 'ingredient';''')['data']:
         if r['rid'] in out:
             out[r['rid']]['CategoryIds'].add(r['tag_id'])
+    for r in query('''
+        SELECT m.recipe_id AS rid, m.tag_id FROM recipe_tags_mapping m
+        JOIN tags t ON t.id = m.tag_id AND t.kind = 'recipe_tag';''')['data']:
+        if r['rid'] in out:
+            out[r['rid']]['TagIds'].add(r['tag_id'])
     return out
+
+
+def get_recipe_tags(recipe_id):
+    '''Ids of the recipe tags (kind 'recipe_tag') on this recipe.'''
+    rows = query('''
+        SELECT m.tag_id FROM recipe_tags_mapping m
+        JOIN tags t ON t.id = m.tag_id AND t.kind = 'recipe_tag'
+        WHERE m.recipe_id = ?;''', (recipe_id,))['data']
+    return {r['tag_id'] for r in rows}
+
+
+def set_recipe_tags(recipe_id, tag_ids):
+    '''Replace this recipe's recipe tags (not its format) with tag_ids.'''
+    query('''DELETE FROM recipe_tags_mapping WHERE recipe_id = ?
+             AND tag_id IN (SELECT id FROM tags WHERE kind = 'recipe_tag');''', (recipe_id,))
+    for tag_id in tag_ids:
+        query('INSERT INTO recipe_tags_mapping (recipe_id, tag_id) VALUES (?, ?);', (recipe_id, tag_id))
 
 
 def duplicate_recipe(recipe_id):

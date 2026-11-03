@@ -1,9 +1,11 @@
 '''Left filter pane for the Recipes Library, per the Framework canvas:
-Format, Diets, Contains category, Free from and Food cost.
+Format, Tags, Diets, Contains category, Free from and Food cost.
 
 - Format ("include"): one row per recipe format, plus Sub-recipes
   (recipes with no format, e.g. dressings), which start unchecked so
   the Library opens on menu items.
+- Tags ("any"): recipe tags (Core, Seasonal…, set up in Configure)
+  plus Untagged; checking shows recipes with any checked tag.
 - Diets ("all"): checking Vegan and High protein shows recipes that
   are both. Built-in rules (utilities/diets.py).
 - Contains category ("all"): recipes with every checked ingredient
@@ -13,7 +15,7 @@ Format, Diets, Contains category, Free from and Food cost.
 - Food cost: "Up to N%" slider over recipes with a menu price; at the
   top stop it's off. Disabled, with a note, until any recipe has one.
 
-Saved views and recipe tags come with the data-model slice.
+Saved views come with the data-model slice.
 '''
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
@@ -32,6 +34,7 @@ _FOOD_COST_TARGET = 28      # the canvas's target line
 class RecipesFacetPane(FacetPane):
     SECTIONS = (
         ('format', 'Format', 'include', True),
+        ('tag', 'Tags', 'any', True),
         ('diet', 'Diets', 'all', True),
         ('category', 'Contains category', 'all', False),
         ('allergen', 'Free from', 'exclude', False),
@@ -88,6 +91,12 @@ class RecipesFacetPane(FacetPane):
                    + [(SUB_RECIPES, 'Sub-recipes', None, fmt_counts.get(SUB_RECIPES, 0), None,
                        'Recipes with no format, like dressings and sauces')])
 
+        tags = db.get_tags('recipe_tag')
+        self._fill('tag', [(t['id'], t['name'], t.get('color'), sum(1 for r in rows if t['id'] in r['TagIds']), None)
+                           for t in tags]
+                   + [(None, 'Untagged', None, sum(1 for r in rows if not r['TagIds']), None)])
+        self.section('tag').setVisible(bool(tags))
+
         self._fill('diet', [(key, name, None, sum(1 for r in rows if key in r['Diets']), None, tip)
                             for key, name, tip, *_ in DIETS])
 
@@ -128,9 +137,9 @@ class RecipesFacetPane(FacetPane):
     # --- reading -------------------------------------------------------
 
     def selection(self):
-        '''(formats, diets, categories, free_from, max_food_cost) for
-        RecipesFacetProxy.set_facets.'''
-        return (self.included('format'), self.checked('diet'), self.checked('category'),
+        '''(formats, tags, diets, categories, free_from, max_food_cost)
+        for RecipesFacetProxy.set_facets.'''
+        return (self.included('format'), self.checked('tag'), self.checked('diet'), self.checked('category'),
                 self.checked('allergen'), self.max_food_cost())
 
     def clear(self):

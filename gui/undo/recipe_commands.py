@@ -129,3 +129,20 @@ class SetRecipeTagCommand(QUndoCommand):
     def undo(self):
         db.restore_recipe_connections(self.recipe_id, self._before_snapshot)
         db.set_recipe_tag(self.recipe_id, self.before)
+
+
+class SetRecipeTagsCommand(QUndoCommand):
+    '''Replace a recipe's recipe tags (Core, Seasonal… — not its
+    format). `before` / `after` are sets of tag ids.'''
+
+    def __init__(self, recipe_id, before, after, label='Change tags'):
+        super().__init__(label)
+        self.recipe_id = recipe_id
+        self.before = set(before)
+        self.after = set(after)
+
+    def redo(self):
+        db.set_recipe_tags(self.recipe_id, self.after)
+
+    def undo(self):
+        db.set_recipe_tags(self.recipe_id, self.before)

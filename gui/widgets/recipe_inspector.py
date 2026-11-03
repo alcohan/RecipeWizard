@@ -2,7 +2,8 @@
 canvas: a quick look at the selected recipe without opening it.
 
 Wedge, name, format · yield · when it was last edited, Cost / Food
-cost / Calories, components counted by category, diets it fits,
+cost / Calories, components counted by category, its tags and the
+diets it fits,
 allergens with their sources (which also say why it misses a diet),
 and Open in tab / Duplicate.
 
@@ -20,7 +21,7 @@ from PySide6.QtWidgets import (
 import db
 from gui.widgets.elided_label import ElidedLabel
 from gui.widgets.flow_layout import FlowLayout
-from gui.widgets.recipe_gallery import FOOD_COST_TARGET, chip
+from gui.widgets.recipe_gallery import FOOD_COST_TARGET, diet_chip, tag_chip
 from gui.widgets.wedge_view import WedgeView
 from utilities.diets import DIET_NAMES
 
@@ -180,7 +181,7 @@ class RecipeInspector(QScrollArea):
         bl.addLayout(comp_col)
         diet_col = QVBoxLayout()
         diet_col.setSpacing(6)
-        diet_col.addWidget(_eyebrow('Diets'))
+        diet_col.addWidget(_eyebrow('Tags & diets'))
         diet_col.addWidget(diet_wrap)
         bl.addLayout(diet_col)
         allergen_col = QVBoxLayout()
@@ -281,9 +282,12 @@ class RecipeInspector(QScrollArea):
     def _fill_diets(self, row):
         _clear(self._diet_chips)
         diets = row.get('Diets') or []
+        tags = row.get('TagNames') or []
+        for name in tags:
+            self._diet_chips.addWidget(tag_chip(name))
         for key in diets:
-            self._diet_chips.addWidget(chip(DIET_NAMES[key], fg='#24502A', bg='#E6EFE3'))
-        if not diets:
-            none = QLabel('None of the built-in diets')
+            self._diet_chips.addWidget(diet_chip(DIET_NAMES[key]))
+        if not diets and not tags:
+            none = QLabel('No tags, and none of the built-in diets')
             none.setStyleSheet(f'color: {_MUTED};')
             self._diet_chips.addWidget(none)

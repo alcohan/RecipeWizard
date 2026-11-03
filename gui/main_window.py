@@ -20,7 +20,7 @@ from gui.dialogs.ingredient_new import IngredientNewDialog
 from gui.dialogs.ingredient_price_edit import IngredientPriceEditDialog
 from gui.dialogs.preferences import PreferencesDialog
 from gui.dialogs.recipe_create import RecipeCreateDialog
-from gui.dialogs.tags_manager import IngredientTagsDialog
+from gui.dialogs.tags_manager import IngredientTagsDialog, RecipeTagsDialog
 from gui.dialogs.template_editor import TemplatesManagerDialog
 from gui.models.ingredients_model import IngredientsModel
 from gui.models.recipes_model import RecipesModel
@@ -260,6 +260,12 @@ class MainWindow(QMainWindow):
             'items added to every recipe of that format, and portion '
             'multipliers per ingredient category.',
             [('Open formats & templates…', self._on_recipe_templates)],
+        ))
+        cfg.add_section('recipe_tags', 'Recipe tags', LauncherPage(
+            'Recipe tags',
+            'Labels such as Core, Seasonal or Archived. A recipe can have '
+            'several; the Library filters and groups by them.',
+            [('Open recipe tags…', self._on_recipe_tags)],
         ))
         cfg.add_section('categories', 'Ingredient categories', LauncherPage(
             'Ingredient categories',
@@ -509,6 +515,7 @@ class MainWindow(QMainWindow):
                              lambda: self._with_editor('show_price_history'))
         recipe_menu.addSeparator()
         add(recipe_menu, 'D&uplicate Recipe', self._on_duplicate_current, 'Ctrl+D')
+        add(recipe_menu, 'Recipe &Tags…', self._on_recipe_tags)
         delete_action = add(recipe_menu, '&Delete Recipe…',
                             lambda: self._with_editor('delete_recipe'))
         self._recipe_actions = (
@@ -777,6 +784,10 @@ class MainWindow(QMainWindow):
 
     def _on_ingredient_tags(self):
         IngredientTagsDialog(parent=self).exec()
+        self.refresh()
+
+    def _on_recipe_tags(self):
+        RecipeTagsDialog(parent=self).exec()
         self.refresh()
 
     def _on_recipe_templates(self):

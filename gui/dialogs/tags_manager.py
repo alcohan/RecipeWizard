@@ -1,7 +1,9 @@
-'''Ingredient-category tag manager.
+'''Tag managers for ingredient categories and recipe tags.
 
-Single dialog for ingredient-kind tags (the colored badges on the
-ingredients table and recipe components). Recipe-format templates live in
+IngredientTagsDialog edits ingredient-kind tags (the colored badges on
+the ingredients table and recipe components); RecipeTagsDialog edits
+recipe tags (kind 'recipe_tag': Core, Seasonal, Archived… — labels a
+recipe can carry several of, used to filter and group the Library). Recipe-format templates live in
 their own master/detail manager (`TemplatesManagerDialog` in
 template_editor.py) so the identity, items, and overrides for a template
 all live in one screen — they used to be split between this dialog and a
@@ -24,12 +26,13 @@ import db
 _DEFAULT_COLOR = '#64748b'
 
 
-class _IngredientTagSection(QWidget):
-    '''Table of ingredient-kind tags + New/Delete buttons. Inline edits to
+class _TagSection(QWidget):
+    '''Table of one kind's tags + New/Delete buttons. Inline edits to
     name and color save on commit.'''
 
-    def __init__(self, title, parent=None):
+    def __init__(self, title, kind, parent=None):
         super().__init__(parent)
+        self.kind = kind
 
         heading = QLabel(title)
         heading.setStyleSheet('font-weight: bold; padding: 2px 0;')
@@ -64,7 +67,7 @@ class _IngredientTagSection(QWidget):
     def refresh(self):
         self.table.blockSignals(True)
         try:
-            tags = db.get_tags(kind='ingredient')
+            tags = db.get_tags(kind=self.kind)
             self.table.setRowCount(len(tags))
             for r, tag in enumerate(tags):
                 color_btn = QPushButton()
@@ -115,7 +118,7 @@ class _IngredientTagSection(QWidget):
         text, ok = QInputDialog.getText(self, 'New Tag', 'Tag name:', text='Tag')
         if not ok or not text.strip():
             return
-        db.create_tag(text.strip(), kind='ingredient', color=_DEFAULT_COLOR)
+        db.create_tag(text.strip(), kind=self.kind, color=_DEFAULT_COLOR)
         self.refresh()
 
     def _on_delete(self):
@@ -150,7 +153,36 @@ class IngredientTagsDialog(QDialog):
         hint.setEnabled(False)
         hint.setWordWrap(True)
 
-        section = _IngredientTagSection('Ingredient Categories')
+        section = _TagSection('Ingredient Categories', 'ingredient')
+
+        close_btn = QPushButton('Close')
+        close_btn.clicked.connect(self.reject)
+        bottom_row = QHBoxLayout()
+        bottom_row.addStretch()
+        bottom_row.addWidget(close_btn)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(hint)
+        layout.addWidget(section, stretch=1)
+        layout.addLayout(bottom_row)
+
+
+class RecipeTagsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f'{config.APPNAME} | Recipe Tags')
+        self.resize(560, 460)
+
+        hint = QLabel(
+            'Recipe tags label recipes (a recipe can have several) and '
+            'filter or group the Library. Assign them in a recipe tab. '
+            'Double-click a name to rename, click the swatch to pick a '
+            'color. Changes save automatically.'
+        )
+        hint.setEnabled(False)
+        hint.setWordWrap(True)
+
+        section = _TagSection('Recipe Tags', 'recipe_tag')
 
         close_btn = QPushButton('Close')
         close_btn.clicked.connect(self.reject)

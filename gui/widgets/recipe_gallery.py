@@ -1,6 +1,12 @@
-'''Recipe gallery for the Library, per the Framework canvas: cards
-grouped by format ("Bowls 4", "Salads 4", … then Sub-recipes), each
-with its wedge, name and cost, calories and food cost, and diet chips.
+'''Recipe gallery for the Library, per the Framework canvas: cards in
+groups, each with its wedge, name and cost, calories and food cost, and
+tag and diet chips.
+
+Group by (the toolbar's menu): Format ("Bowls 4", … then Sub-recipes),
+Tags (one group per recipe tag, then Untagged), Diets (one per diet,
+then "No listed diet") or None (one ungrouped grid). A recipe with two
+tags or several diets shows in each of their groups; each extra card
+copies the first card's wedge instead of rendering it again.
 
 Single click selects (the Library's inspector follows), double-click
 opens the recipe in a tab, right-click asks for the context menu. The
@@ -8,8 +14,8 @@ compare checkbox on each card adds it to the tray.
 
 The gallery filters with the Library proxy's accepts_row and orders
 cards within each group by the Sort menu's key, so it always shows the
-same recipes as the table. Cards are kept per recipe across model
-refreshes; a refresh updates their text and re-renders the wedge in
+same recipes as the table. Cards are kept per (group, recipe) across
+model refreshes; a refresh updates their text and re-renders the wedge in
 the background, keeping the old one until the new one arrives.
 '''
 from PySide6.QtCore import QPoint, Qt, QThreadPool, QTimer, Signal
@@ -22,7 +28,7 @@ import db
 from gui.models.recipes_model import SORTS
 from gui.widgets.elided_label import ElidedLabel
 from gui.widgets.wedge_view import WedgeView
-from utilities.diets import DIET_NAMES
+from utilities.diets import DIET_NAMES, DIETS
 
 
 _KALE = '#082c00'
@@ -33,6 +39,9 @@ _WARN_FG, _WARN_BG = '#8a4a00', '#fff0dc'
 FOOD_COST_TARGET = 28.0
 _MAX_CHIPS = 3
 SUB_RECIPE_GROUP = 'Sub-recipes'
+UNTAGGED_GROUP = 'Untagged'
+NO_DIET_GROUP = 'No listed diet'
+GROUP_BY = (('format', 'Format'), ('tags', 'Tags'), ('diets', 'Diets'), ('none', 'None'))
 
 
 def _prices_drifted(cost_raw, cost_snapshot, min_delta=0.01):
@@ -71,6 +80,14 @@ def chip(text, fg=_KALE, bg='#f3ece0'):
     lbl.setStyleSheet(f'color: {fg}; background: {bg}; border-radius: 9px; padding: 1px 8px;'
                       ' font-size: 11px; font-weight: 600;')
     return lbl
+
+
+def tag_chip(text):
+    return chip(text, fg='#fff1da', bg=_KALE)
+
+
+def diet_chip(text):
+    return chip(text, fg='#24502A', bg='#E6EFE3')
 
 
 class RecipeCard(QFrame):
@@ -182,12 +199,14 @@ class RecipeCard(QFrame):
             item = self.chips.takeAt(0)
             if item.widget() is not None:
                 item.widget().deleteLater()
-        diets = row.get('Diets') or []
-        for key in diets[:_MAX_CHIPS]:
-            self.chips.addWidget(chip(DIET_NAMES[key], fg='#24502A', bg='#E6EFE3'))
-        if len(diets) > _MAX_CHIPS:
-            more = chip(f'+{len(diets) - _MAX_CHIPS}', fg=_MUTED)
-            more.setToolTip(', '.join(DIET_NAMES[k] for k in diets[_MAX_CHIPS:]))
+        # Tags first (dark), then diets (green), three at most.
+        labels = ([(n, 'tag') for n in row.get('TagNames') or []]
+                  + [(DIET_NAMES[k], 'diet') for k in row.get('Diets') or []])
+        for text, kind in labels[:_MAX_CHIPS]:
+            self.chips.addWidget(tag_chip(text) if kind == 'tag' else diet_chip(text))
+        if len(labels) > _MAX_CHIPS:
+            more = chip(f'+{len(labels) - _MAX_CHIPS}', fg=_MUTED)
+            more.setToolTip(', '.join(t for t, _k in labels[_MAX_CHIPS:]))
             self.chips.addWidget(more)
         self.chips.addStretch()
         self.drift_chip.setVisible(_prices_drifted(row.get('CostRaw'), row.get('CostSnapshot')))
@@ -200,6 +219,13 @@ class RecipeCard(QFrame):
 
     def start_render(self, pool):
         self.wedge.render_async(pool)
+
+    def mirror(self, source):
+        '''Show another card's wedge (a copy in a second group).'''
+        pix = source.wedge.pixmap()
+        if source._wedge_ready and pix is not None and not pix.isNull():
+            self.wedge.setPixmap(pix)
+            self._on_wedge_ready()
 
     def _on_wedge_ready(self):
         if not self._wedge_ready:
@@ -260,9 +286,10 @@ class _Group(QWidget):
         layout.addWidget(self.title)
         layout.addLayout(self.grid)
 
-    def set_title(self, name, n):
-        self.title.setText(f'{group_title(name)}'
+    def set_title(self, name, n, plural=True):
+        self.title.setText(f'{group_title(name) if plural else name}'
                            f' <span style="color: {_MUTED}; font-weight: 400">{n}</span>')
+        self.title.setVisible(bool(name))
 
 
 class RecipeGallery(QWidget):
@@ -277,14 +304,18 @@ class RecipeGallery(QWidget):
         super().__init__(parent)
         self._model = recipes_model
         self._compare_tray = compare_tray
-        self._cards = {}           # recipe id → RecipeCard
-        self._groups = {}          # format name → _Group
+        self._rows = {}            # recipe id → row
+        self._cards = {}           # (group, recipe id) → RecipeCard
+        self._primary = {}         # recipe id → the card that renders its wedge
+        self._groups = {}          # group name → _Group
         self._accepts = lambda _row: True
         self._sort = 'name'
+        self._group_by = 'format'
         self._selected_id = None
         self._current_columns = 4
         self._order = []           # recipe ids as laid out (for keyboard / tests)
         self._format_rank = {}
+        self._tag_rank = {}
 
         self.container = QWidget()
         self.container.setObjectName('GalleryHost')
@@ -319,13 +350,19 @@ class RecipeGallery(QWidget):
         self._sort = key
         self._relayout()
 
+    def set_group_by(self, key):
+        self._group_by = key
+        self._relayout()
+
     def set_selected_id(self, recipe_id):
         self._selected_id = recipe_id
-        for rid, card in self._cards.items():
+        first = None
+        for (_g, rid), card in self._cards.items():
             card.set_selected(rid == recipe_id)
-        card = self._cards.get(recipe_id)
-        if card is not None and card.isVisible():
-            self.scroll.ensureWidgetVisible(card, 0, 12)
+            if rid == recipe_id and card.isVisible() and first is None:
+                first = card
+        if first is not None:
+            self.scroll.ensureWidgetVisible(first, 0, 12)
 
     def visible_ids(self):
         return list(self._order)
@@ -352,22 +389,54 @@ class RecipeGallery(QWidget):
         usable = max(RecipeCard.WIDTH, width - self.SCROLLBAR_RESERVE)
         return max(1, (usable + self.CARD_SPACING) // (RecipeCard.WIDTH + self.CARD_SPACING))
 
-    def _group_order(self):
-        names = [t['name'] for t in db.get_tags('recipe')]
-        return {name: i for i, name in enumerate(names)}
+    def _groups_of(self, row):
+        '''The group names a recipe shows under for the current Group by.'''
+        if self._group_by == 'tags':
+            return list(row.get('TagNames') or []) or [UNTAGGED_GROUP]
+        if self._group_by == 'diets':
+            return [DIET_NAMES[k] for k in row.get('Diets') or []] or [NO_DIET_GROUP]
+        if self._group_by == 'none':
+            return ['']
+        return [row.get('TagName') or SUB_RECIPE_GROUP]
+
+    def _group_sort_key(self, name):
+        if self._group_by == 'tags':
+            return (name == UNTAGGED_GROUP, self._tag_rank.get(name, 999), name)
+        if self._group_by == 'diets':
+            rank = {n: i for i, (_k, n, *_r) in enumerate(DIETS)}
+            return (name == NO_DIET_GROUP, rank.get(name, 999), name)
+        return (name == SUB_RECIPE_GROUP, self._format_rank.get(name, 999), name)
+
+    def _card_for(self, group, rid):
+        card = self._cards.get((group, rid))
+        if card is None:
+            card = RecipeCard(self._rows[rid], compare_tray=self._compare_tray, parent=self.container)
+            card.clicked.connect(self.recipeClicked.emit)
+            card.activated.connect(self.recipeActivated.emit)
+            card.contextRequested.connect(self.contextMenuRequested.emit)
+            card.set_selected(rid == self._selected_id)
+            card.hide()
+            self._cards[(group, rid)] = card
+            primary = self._primary.get(rid)
+            if primary is None:
+                self._primary[rid] = card
+                card.start_render(QThreadPool.globalInstance())
+            else:
+                card.mirror(primary)
+                primary.wedge.renderComplete.connect(lambda c=card, p=primary: c.mirror(p))
+        return card
 
     def _relayout(self):
-        '''Place visible cards into their format groups, sorted, for the
-        current column count. No cards are destroyed.'''
+        '''Place visible cards into their groups, sorted, for the
+        current column count. Cards are created on first need and kept.'''
         key = SORTS.get(self._sort, SORTS['name'])[1]
         buckets = {}
-        for card in self._cards.values():
-            if self._accepts(card.row):
-                buckets.setdefault(card.row.get('TagName') or SUB_RECIPE_GROUP, []).append(card)
-            else:
-                card.hide()
-        rank = self._format_rank
-        names = sorted(buckets, key=lambda n: (n == SUB_RECIPE_GROUP, rank.get(n, 999), n))
+        for rid, row in self._rows.items():
+            if self._accepts(row):
+                for g in self._groups_of(row):
+                    buckets.setdefault(g, []).append(rid)
+        names = sorted(buckets, key=self._group_sort_key)
+        plural = self._group_by == 'format'
 
         self.container.setUpdatesEnabled(False)
         try:
@@ -375,54 +444,59 @@ class RecipeGallery(QWidget):
                 while group.grid.count():
                     group.grid.takeAt(0)
                 group.hide()
+            self._placed = set()
             self._order = []
             for gi, name in enumerate(names):
                 group = self._groups.get(name)
                 if group is None:
                     group = self._groups[name] = _Group(self.container)
-                # Keep groups in display order in the layout.
                 self._vbox.removeWidget(group)
                 self._vbox.insertWidget(gi, group)
-                cards = sorted(buckets[name], key=lambda c: (key(c.row), c.row['Name'].lower()))
-                group.set_title(name, len(cards))
-                for i, card in enumerate(cards):
+                rids = sorted(buckets[name], key=lambda r: (key(self._rows[r]), self._rows[r]['Name'].lower()))
+                group.set_title(name, len(rids), plural=plural)
+                for i, rid in enumerate(rids):
+                    card = self._card_for(name, rid)
                     group.grid.addWidget(card, i // self._current_columns, i % self._current_columns)
                     card.setVisible(card._wedge_ready)
-                    self._order.append(card.recipe_id)
+                    self._placed.add((name, rid))
+                    self._order.append(rid)
                 group.show()
+            for k, card in self._cards.items():
+                if k not in self._placed:
+                    card.hide()
             self._empty.setVisible(not names)
         finally:
             self.container.setUpdatesEnabled(True)
 
     def _reveal_if_ready(self, card):
-        if self._accepts(card.row):
-            card.setVisible(True)
+        '''A card's wedge arrived: show it if it's laid out right now.'''
+        for k, c in self._cards.items():
+            if c is card:
+                if k in getattr(self, '_placed', ()):
+                    card.setVisible(True)
+                return
 
     # --- model ---------------------------------------------------------
 
     def refresh(self):
-        '''Sync cards to the model: update kept cards, add new ones,
-        drop deleted ones, and re-render every wedge in the background.'''
-        self._format_rank = self._group_order()
-        rows = {r['Id']: r for r in self._model.rows()} if hasattr(self._model, 'rows') \
-            else {self._model.row_dict(i)['Id']: self._model.row_dict(i) for i in range(self._model.rowCount())}
-        for rid in list(self._cards):
-            if rid not in rows:
-                card = self._cards.pop(rid)
+        '''Sync cards to the model: update kept cards, drop deleted
+        recipes, and re-render each recipe's wedge once in the background
+        (its copies in other groups follow).'''
+        self._format_rank = {t['name']: i for i, t in enumerate(db.get_tags('recipe'))}
+        self._tag_rank = {t['name']: i for i, t in enumerate(db.get_tags('recipe_tag'))}
+        self._rows = {r['Id']: r for r in self._model.rows()}
+        for k in list(self._cards):
+            if k[1] not in self._rows:
+                card = self._cards.pop(k)
                 card.setParent(None)
                 card.deleteLater()
-        pool = QThreadPool.globalInstance()
-        for rid, row in rows.items():
-            card = self._cards.get(rid)
-            if card is None:
-                card = RecipeCard(row, compare_tray=self._compare_tray, parent=self.container)
-                card.clicked.connect(self.recipeClicked.emit)
-                card.activated.connect(self.recipeActivated.emit)
-                card.contextRequested.connect(self.contextMenuRequested.emit)
-                card.hide()
-                self._cards[rid] = card
-            else:
-                card.set_row(row)
+        for rid in list(self._primary):
+            if rid not in self._rows:
+                del self._primary[rid]
+        for (_g, rid), card in self._cards.items():
+            card.set_row(self._rows[rid])
             card.set_selected(rid == self._selected_id)
+        pool = QThreadPool.globalInstance()
+        for card in self._primary.values():
             card.start_render(pool)
         self._relayout()

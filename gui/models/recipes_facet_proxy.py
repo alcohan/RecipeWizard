@@ -3,13 +3,15 @@
 Facets, combined with AND across groups (see RecipesFacetPane):
 - formats: set of format names to show (SUB_RECIPES = no format);
   None means "no format filter".
+- tags: set of recipe-tag ids (None = untagged); a recipe passes with
+  any of them. Empty set = no tag filter.
 - diets: set of diet keys; a recipe must fit all of them.
 - categories: set of ingredient-category ids; a recipe must contain
   all of them somewhere in its tree.
 - free_from: set of allergen names; a recipe containing any is hidden.
 - max_food_cost: percent, or None. Recipes without a menu price are
   hidden while it's set (their food cost is unknown).
-- text: substring of name, format, unit or allergens.
+- text: substring of name, format, unit, allergens or tags.
 
 The gallery filters through accepts_row, so both views show the same
 recipes.
@@ -25,14 +27,16 @@ class RecipesFacetProxy(QSortFilterProxyModel):
         super().__init__(parent)
         self.setSortRole(Qt.UserRole)
         self._formats = None
+        self._tags = set()
         self._diets = set()
         self._categories = set()
         self._free_from = set()
         self._max_food_cost = None
         self._text = ''
 
-    def set_facets(self, formats, diets=(), categories=(), free_from=(), max_food_cost=None):
+    def set_facets(self, formats, tags=(), diets=(), categories=(), free_from=(), max_food_cost=None):
         self._formats = formats
+        self._tags = set(tags or ())
         self._diets = set(diets or ())
         self._categories = set(categories or ())
         self._free_from = set(free_from or ())
@@ -72,6 +76,9 @@ class RecipesFacetProxy(QSortFilterProxyModel):
 
     def accepts_row(self, row):
         if self._formats is not None and (row.get('TagName') or SUB_RECIPES) not in self._formats:
+            return False
+        if self._tags and not ((None in self._tags and not row['TagIds'])
+                               or self._tags.intersection(row['TagIds'])):
             return False
         if self._diets and not self._diets.issubset(row['Diets']):
             return False
