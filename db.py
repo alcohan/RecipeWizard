@@ -1228,6 +1228,37 @@ def delete_saved_view(view_id):
     query('DELETE FROM saved_views WHERE id = ?;', (view_id,))
 
 
+def get_saved_comparisons():
+    '''[{id, name, recipe_ids, settings}] in their order; recipe_ids is a
+    list and settings a dict.'''
+    rows = query('SELECT id, name, recipe_ids, settings FROM saved_comparisons'
+                 ' ORDER BY sortOrder, id;')['data']
+    for r in rows:
+        r['recipe_ids'] = json.loads(r['recipe_ids'])
+        r['settings'] = json.loads(r['settings'])
+    return rows
+
+
+def create_saved_comparison(name, recipe_ids, settings):
+    nxt = query('SELECT COALESCE(MAX(sortOrder), 0) + 1 AS n FROM saved_comparisons;', one=True)['n']
+    return query('INSERT INTO saved_comparisons (name, recipe_ids, settings, sortOrder) VALUES (?, ?, ?, ?);',
+                 (name, json.dumps(list(recipe_ids)), json.dumps(settings), nxt))['lastrowid']
+
+
+def update_saved_comparison(comparison_id, name=None, recipe_ids=None, settings=None):
+    if name is not None:
+        query('UPDATE saved_comparisons SET name = ? WHERE id = ?;', (name, comparison_id))
+    if recipe_ids is not None:
+        query('UPDATE saved_comparisons SET recipe_ids = ? WHERE id = ?;',
+              (json.dumps(list(recipe_ids)), comparison_id))
+    if settings is not None:
+        query('UPDATE saved_comparisons SET settings = ? WHERE id = ?;', (json.dumps(settings), comparison_id))
+
+
+def delete_saved_comparison(comparison_id):
+    query('DELETE FROM saved_comparisons WHERE id = ?;', (comparison_id,))
+
+
 def duplicate_recipe(recipe_id):
     '''Copy a recipe — its yield, menu price, components (in order,
     keeping template provenance) and tags — as "<name> (copy)". The
