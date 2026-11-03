@@ -1,93 +1,118 @@
-'''Multi-facet filter proxy for the Recipes place.
+'''Filter + sort proxy for the Recipes Library.
 
-Extends the plain text-filter idea with:
-  - formats     — set of allowed format names (None = all)
-  - free_from   — set of allergen names to EXCLUDE
+Filters come as one state dict (RecipesFacetPane.state(), which saved
+views store as JSON), combined with AND across keys:
+- formats: list of format names to show (SUB_RECIPES = no format);
+  None means "no format filter".
+- tags: recipe-tag ids (None = untagged); a recipe passes with any of
+  them. Empty = no tag filter.
+- diets: diet keys; a recipe must fit all of them.
+- categories: ingredient-category ids; a recipe must contain all of
+  them somewhere in its tree.
+- free_from: allergen names; a recipe containing any is hidden.
+- max_food_cost: percent, or None. Recipes without a menu price are
+  hidden while it's set (their food cost is unknown).
+- include_archived: archived recipes are hidden unless it's set.
+- needs_review: only recipes with ReviewReasons (the Needs review view).
 
-The allergen index is kept in self._allergens_by_id and rebuilt on
-every source-model reset so edits to recipes anywhere else in the app
-show up here on next refresh.
+Plus the toolbar's text filter: a substring of name, format, unit,
+allergens or tags (not part of the state; views don't save it).
+
+matches() is shared with the filter pane, which counts each saved view.
+The gallery filters through accepts_row, so both views show the same
+recipes.
 '''
 from PySide6.QtCore import QSortFilterProxyModel, Qt
 
-import db
+from gui.models.recipes_model import SORTS, SUB_RECIPES
+
+
+def matches(row, state):
+    if row.get('Archived') and not state.get('include_archived'):
+        return False
+    if state.get('needs_review') and not row.get('ReviewReasons'):
+        return False
+    formats = state.get('formats')
+    if formats is not None and (row.get('TagName') or SUB_RECIPES) not in formats:
+        return False
+    tags = state.get('tags') or ()
+    if tags and not ((None in tags and not row['TagIds']) or set(tags).intersection(row['TagIds'])):
+        return False
+    diets = state.get('diets') or ()
+    if diets and not set(diets).issubset(row['Diets']):
+        return False
+    categories = state.get('categories') or ()
+    if categories and not set(categories).issubset(row['CategoryIds']):
+        return False
+    free_from = state.get('free_from') or ()
+    if free_from and set(free_from).intersection(row['Allergens']):
+        return False
+    cap = state.get('max_food_cost')
+    if cap is not None:
+        pct = row.get('FoodCostPct')
+        if pct is None or pct > cap:
+            return False
+    return True
 
 
 class RecipesFacetProxy(QSortFilterProxyModel):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._needle = ''
-        self._formats = None            # None = no format filter
-        self._free_from = set()         # excluded allergens
-        self._allergens_by_id = {}      # populated by _refresh_allergens
         self.setSortRole(Qt.UserRole)
+        self._state = {}
+        self._text = ''
 
-    def setSourceModel(self, model):
-        super().setSourceModel(model)
-        self._refresh_allergens()
-        model.modelReset.connect(self._refresh_allergens)
+    def set_state(self, state):
+        self._state = dict(state)
+        self.invalidateFilter()
 
-    # --- facet setters -------------------------------------------------
+    def set_facets(self, formats, tags=(), diets=(), categories=(), free_from=(), max_food_cost=None,
+                   include_archived=False, needs_review=False):
+        self.set_state({'formats': formats, 'tags': list(tags or ()), 'diets': list(diets or ()),
+                        'categories': list(categories or ()), 'free_from': list(free_from or ()),
+                        'max_food_cost': max_food_cost, 'include_archived': include_archived,
+                        'needs_review': needs_review})
+
+    def includes_archived(self):
+        return bool(self._state.get('include_archived'))
 
     def setFilterText(self, text):
-        self._needle = (text or '').strip().lower()
+        self._text = (text or '').strip().lower()
         self.invalidateFilter()
 
-    def setFormats(self, formats):
-        '''Pass None (or empty set) to clear the format filter and show
-        every recipe regardless of format tag. Otherwise show only
-        recipes whose TagName is in the given set.'''
-        self._formats = set(formats) if formats else None
-        self.invalidateFilter()
-
-    def setFreeFrom(self, allergens):
-        self._free_from = set(allergens or ())
-        self.invalidateFilter()
-
-    # --- allergen index ------------------------------------------------
-
-    def _refresh_allergens(self):
+    def sort_by(self, key):
+        '''Sort by one of the Sort menu's keys (recipes_model.SORTS).
+        A header click afterwards goes back to sorting by that column.'''
+        self._sort_key = SORTS[key][1]
+        if self.sortColumn() == 0 and self.sortOrder() == Qt.AscendingOrder:
+            # Already "sorted by column 0": Qt won't re-sort for the same
+            # column, so force it with the new key.
+            self.invalidate()
+            return
+        self._custom_sort = True
         try:
-            raw = db.get_all_recipe_allergens()
-        except Exception:
-            raw = {}
-        self._allergens_by_id = {rid: set(names) for rid, names in raw.items()}
-        self.invalidateFilter()
+            self.sort(0, Qt.AscendingOrder)
+        finally:
+            self._custom_sort = False
 
-    # --- Qt filter -----------------------------------------------------
+    def sort(self, column, order=Qt.AscendingOrder):
+        if not getattr(self, '_custom_sort', False):
+            self._sort_key = None
+        super().sort(column, order)
+
+    def lessThan(self, left, right):
+        key = getattr(self, '_sort_key', None)
+        if key is None:
+            return super().lessThan(left, right)
+        model = self.sourceModel()
+        return key(model.row_dict(left.row())) < key(model.row_dict(right.row()))
+
+    def accepts_row(self, row):
+        if not matches(row, self._state):
+            return False
+        if self._text and self._text not in row['SearchText']:
+            return False
+        return True
 
     def filterAcceptsRow(self, source_row, source_parent):
-        model = self.sourceModel()
-        if model is None:
-            return True
-        try:
-            row = model.row_dict(source_row)
-        except (AttributeError, IndexError):
-            return True
-
-        # Text — match across the visible display columns.
-        if self._needle:
-            matched = False
-            for key in ('Name', 'Unit', 'Cost', 'TagName'):
-                v = row.get(key)
-                if v is not None and self._needle in str(v).lower():
-                    matched = True
-                    break
-            if not matched:
-                return False
-
-        # Format — recipes without a format tag never match a format filter
-        # (users who want "untagged" can clear the filter).
-        if self._formats is not None:
-            if (row.get('TagName') or '') not in self._formats:
-                return False
-
-        # Free-from allergens — reject if the recipe contains any of the
-        # excluded allergens. Recipes with no allergens are always clean.
-        if self._free_from:
-            rid = row.get('Id')
-            allergens = self._allergens_by_id.get(rid, set())
-            if allergens & self._free_from:
-                return False
-
-        return True
+        return self.accepts_row(self.sourceModel().row_dict(source_row))

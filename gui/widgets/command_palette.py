@@ -9,7 +9,7 @@ Index is built from whatever the caller hands in — the palette itself
 doesn't query the DB, so test setup and future "add another kind of
 thing to search" stay simple.
 '''
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QVBoxLayout,
@@ -104,6 +104,16 @@ class CommandPalette(QDialog):
 
         self.resize(540, 360)
         self._refresh_results('')
+
+    def showEvent(self, event):
+        '''A Qt.Popup doesn't take keyboard focus by itself: put the
+        cursor in the search box once the popup is up.'''
+        super().showEvent(event)
+        QTimer.singleShot(0, self._focus_search)
+
+    def _focus_search(self):
+        self.activateWindow()
+        self.search.setFocus(Qt.PopupFocusReason)
 
     # --- event filter --------------------------------------------------
 

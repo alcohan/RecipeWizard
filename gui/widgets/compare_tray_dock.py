@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 import db
+from gui.widgets.elided_label import ElidedLabel
 
 
 _KALE = '#082c00'
@@ -130,7 +131,7 @@ class _MiniCard(QFrame):
             }}
         ''')
 
-        name = QLabel(recipe['Name'])
+        name = ElidedLabel(recipe['Name'])
         name.setStyleSheet(f'color: {_KALE}; font-weight: 600;')
         remove = QToolButton()
         remove.setText('×')
