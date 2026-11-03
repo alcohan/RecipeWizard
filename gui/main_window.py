@@ -1,6 +1,5 @@
 import datetime
 import os
-import shutil
 
 from PySide6.QtCore import Qt, QSettings, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
@@ -13,6 +12,8 @@ import api.usda
 import config
 import db
 import setup
+from utilities import backup
+from gui.dialogs import backup_restore
 from gui.dialogs.about import AboutDialog
 from gui.dialogs.bulk_image_assign import BulkImageAssignDialog
 from gui.dialogs.ingredient_edit import IngredientEditDialog
@@ -740,66 +741,91 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl.fromLocalFile(config.user_data_dir()))
 
     def _on_backup_now(self):
-        '''Ctrl+Shift+B: timestamped copy into the data folder, no
-        dialog. The status bar's "Last backup" and Library health's
-        backups card both read this folder.'''
-        stamp = datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S')
-        path = os.path.join(config.user_data_dir(), f'RecipeWizard_backup_{stamp}.db')
-        try:
-            shutil.copy(config.DATABASE, path)
-        except OSError as exc:
-            QMessageBox.critical(self, 'Backup Failed', str(exc))
+        '''Ctrl+Shift+B: a timestamped .rwbackup in the data folder,
+        with or without photos as last chosen (asked the first time).
+        The status bar's "Last backup" and Library health's backups card
+        both read this folder.'''
+        include_images = backup_restore.remembered_include_images()
+        if include_images is None:
+            include_images = backup_restore.ask_backup_options(self)
+            if include_images is None:
+                return
+        path = os.path.join(backup.default_backup_dir(), backup.timestamped_name())
+        if backup_restore.run_backup(self, path, include_images) is None:
             return
         self.status_bar.refresh()
         self.library_health_tab.mark_stale()
 
     def _on_backup_database(self):
-        default_name = f'RecipeWizard_backup_{datetime.date.today().isoformat()}.db'
+        include_images = backup_restore.ask_backup_options(self)
+        if include_images is None:
+            return
+        default_name = f'RecipeWizard_backup_{datetime.date.today().isoformat()}{backup.EXTENSION}'
         path, _ = QFileDialog.getSaveFileName(
-            self, 'Backup Database', default_name, 'SQLite Database (*.db)',
+            self, 'Back Up Library', default_name, f'RecipeWizard backup (*{backup.EXTENSION})',
         )
         if not path:
             return
-        try:
-            shutil.copy(config.DATABASE, path)
-        except OSError as exc:
-            QMessageBox.critical(self, 'Backup Failed', str(exc))
+        if not path.lower().endswith(backup.EXTENSION):
+            path += backup.EXTENSION
+        if backup_restore.run_backup(self, path, include_images) is None:
             return
+        self.status_bar.refresh()
+        self.library_health_tab.mark_stale()
         self._flash_status(f'Backed up to {path}')
 
     def _on_restore_database(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, 'Restore Database', '', 'SQLite Database (*.db);;All Files (*)',
+            self, 'Restore Library', backup.default_backup_dir(),
+            f'RecipeWizard backups (*{backup.EXTENSION} *.db);;All Files (*)',
         )
         if not path:
             return
         if os.path.abspath(path) == os.path.abspath(config.DATABASE):
             QMessageBox.warning(
-                self, 'Restore Database',
-                "That's the current database — pick a different backup file.",
+                self, 'Restore Library',
+                "That's the current library — pick a backup file.",
             )
             return
-        confirm = QMessageBox.warning(
-            self, 'Restore Database',
-            f'This will REPLACE your current data with the contents of:'
-            f'\n\n{path}\n\nContinue?',
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-        )
-        if confirm != QMessageBox.Yes:
+        try:
+            info = backup.read_backup(path)
+        except (backup.BackupError, OSError) as exc:
+            QMessageBox.warning(self, 'Restore Library', str(exc))
             return
-        # The data is about to be replaced; open tabs would point at
-        # rows that no longer exist. Close them (with save prompts) first.
+        dlg = backup_restore.RestoreDialog(info, self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        mode = dlg.mode
+        if mode == 'overwrite' and QMessageBox.warning(
+            self, 'Overwrite Library',
+            'Replace your whole library with this backup? Your current library is '
+            'backed up to the data folder first.',
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+        # The data is about to change under them; open tabs would point
+        # at rows that may no longer exist. Close them (with save
+        # prompts) first.
         if not self.recipes_tab.close_all_tabs():
             return
-        try:
-            shutil.copy(path, config.DATABASE)
-            # Older backups may predate later schema migrations; bring them
-            # up to date before any query can hit a missing column.
-            setup.migrateDB()
-        except Exception as exc:
-            QMessageBox.critical(self, 'Restore Failed', str(exc))
+        # Both restores run setup.migrateDB(), so older backups come up
+        # to date before any query can hit a missing column.
+        result = backup_restore.run_restore(self, path, mode)
+        if result is None:
             return
         self.refresh()
+        self.status_bar.refresh()
+        self.library_health_tab.mark_stale()
+        if mode == 'merge':
+            backup_restore.show_merge_summary(self, result)
+        else:
+            images = f' and {result["images"]} photos' if result['images'] else ''
+            QMessageBox.information(
+                self, 'Restore finished',
+                f'Restored your library{images} from {os.path.basename(path)}.\n\n'
+                f'Your previous library was saved as {os.path.basename(result["safety"])} '
+                'in the data folder.',
+            )
         self._flash_status(f'Restored from {os.path.basename(path)}')
 
     def _on_reset_clean(self):
