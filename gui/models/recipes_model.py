@@ -1,12 +1,13 @@
 '''Recipes for the Library: db.recipe_info() plus the Library's extras
 (nutrition per serving, allergens, ingredient categories, recipe tags,
-diets, food cost %, sub-recipe flag), in a handful of whole-library
-queries.
+diets, food cost %, sub-recipe flag, Archived), in a handful of
+whole-library queries.
 
 Rows are dicts; the table shows COLUMNS, sorts on Qt.UserRole, and
 everything else (gallery, filter pane, inspector) reads rows().
 '''
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PySide6.QtGui import QColor
 
 import db
 from utilities.diets import diets_for
@@ -62,9 +63,10 @@ class RecipesModel(QAbstractTableModel):
             r['TagNames'] = [name for tid, name in tag_order if tid in r['TagIds']]
             r['Diets'] = diets_for(r['Allergens'], r['PerServing'])
             r['FoodCostPct'] = food_cost_pct(r.get('CostRaw'), r.get('MenuPrice'))
+            r['Archived'] = r.get('Status') == 'archived'
             r['SearchText'] = ' '.join(
                 str(v) for v in (r['Name'], r.get('TagName'), r.get('Unit'), ' '.join(r['Allergens']),
-                                 ' '.join(r['TagNames']))
+                                 ' '.join(r['TagNames']), 'archived' if r['Archived'] else '')
                 if v).lower()
         self._rows = rows
         self._by_id = {r['Id']: i for i, r in enumerate(rows)}
@@ -107,7 +109,14 @@ class RecipesModel(QAbstractTableModel):
             return (row.get(col) or '').lower()
         if role == Qt.TextAlignmentRole and col in self.NUMERIC_COLUMNS:
             return int(Qt.AlignRight | Qt.AlignVCenter)
+        if role == Qt.ForegroundRole and row['Archived']:
+            return QColor('#7d8771')
+        if role == Qt.ToolTipRole and row['Archived'] and col == 'Name':
+            return f"{row['Name']} · archived"
         return None
+
+    def archived_count(self):
+        return sum(1 for r in self._rows if r['Archived'])
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         if role == Qt.DisplayRole and orientation == Qt.Horizontal:

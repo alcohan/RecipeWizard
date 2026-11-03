@@ -45,6 +45,7 @@ CREATE TABLE Recipes (
 	, cost_snapshot NUMERIC         -- Last cost the user saw. Set on editor close.
 	, cost_snapshot_at TEXT         -- When that snapshot was taken (sqlite datetime).
 	, updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+	, status TEXT NOT NULL DEFAULT 'active'  -- 'active' (on the menu) or 'archived'
 );
 
 CREATE TABLE Connections (
