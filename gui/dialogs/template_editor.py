@@ -97,17 +97,27 @@ class _SilhouettePreview(QLabel):
 
 
 class TemplatesManagerDialog(QDialog):
-    '''Master-detail editor for every recipe-format template.
-
-    Open via Manage → Recipe Templates. Closing returns to the home gallery.
-    The Manage menu's wrapping refresh() picks up any silhouette / color
-    changes so the homepage cards reflect them.'''
+    '''TemplatesEditor in a dialog, for the New recipe dialog's "Edit
+    template" link (Configure › Formats & templates hosts it inline).'''
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f'{config.APPNAME} | Recipe Templates')
+        self.setWindowTitle(f'{config.APPNAME} | Formats & templates')
         self.resize(960, 620)
+        self.editor = TemplatesEditor()
+        button_box = QDialogButtonBox(QDialogButtonBox.Close)
+        button_box.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.editor, stretch=1)
+        layout.addWidget(button_box)
 
+
+class TemplatesEditor(QWidget):
+    '''Master-detail editor for every recipe-format template. Changes
+    save as you make them; the host refreshes the Library afterwards.'''
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
         self.current_tag_id = None
 
         self.splitter = QSplitter(Qt.Horizontal)
@@ -117,12 +127,9 @@ class TemplatesManagerDialog(QDialog):
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setSizes([240, 720])
 
-        button_box = QDialogButtonBox(QDialogButtonBox.Close)
-        button_box.rejected.connect(self.reject)
-
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.splitter, stretch=1)
-        layout.addWidget(button_box)
 
         self._refresh_list()
         # Select the first template so the right pane has something to show
