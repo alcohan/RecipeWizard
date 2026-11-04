@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import sqlite3
@@ -398,6 +399,66 @@ def migrateDB(path=None):
                                    ' SELECT ?, id FROM allergens WHERE lower(name) = lower(?);',
                                    (diet_id, allergen))
         cursor.execute("INSERT INTO app_meta (key, value) VALUES ('seeded_diets', '1');")
+
+    # Purchase imports (Ingredients › Import purchases…): import formats
+    # say which column is which; vendor items map an invoice line's item
+    # to an ingredient with a case yield; each import is a batch whose
+    # per-day totals are kept so it can be undone or re-priced.
+    cursor.execute('''CREATE TABLE IF NOT EXISTS import_formats (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        settings TEXT NOT NULL
+    );''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS vendor_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        vendor_key TEXT NOT NULL UNIQUE,
+        vendor_name TEXT,
+        item_code TEXT,
+        description TEXT,
+        pack_size TEXT,
+        inventory_item TEXT,
+        gl_code TEXT,
+        status TEXT NOT NULL DEFAULT 'new',
+        ingredient_id INTEGER,
+        case_qty REAL,
+        case_unit TEXT,
+        yield_pct REAL NOT NULL DEFAULT 100,
+        portions_per_each REAL,
+        notes TEXT,
+        last_case_price REAL,
+        last_seen TEXT,
+        updated_at TEXT
+    );''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS import_batches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        imported_at TEXT NOT NULL,
+        file_name TEXT,
+        format_id INTEGER,
+        date_from TEXT,
+        date_to TEXT,
+        settings TEXT
+    );''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS import_lines (
+        batch_id INTEGER NOT NULL,
+        vendor_item_id INTEGER NOT NULL,
+        purchase_date TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        amount REAL NOT NULL,
+        line_count INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (batch_id, vendor_item_id, purchase_date)
+    );''')
+    if not column_exists('ingredient_prices', 'import_batch_id'):
+        print('Migrating: adding ingredient_prices.import_batch_id')
+        cursor.execute('ALTER TABLE ingredient_prices ADD COLUMN import_batch_id INTEGER')
+    cursor.execute("SELECT 1 FROM app_meta WHERE key = 'seeded_import_format';")
+    if cursor.fetchone() is None:
+        from utilities.purchase_import import BUILTIN_FORMAT_NAME, builtin_format_settings
+        cursor.execute('SELECT COUNT(*) FROM import_formats;')
+        if cursor.fetchone()[0] == 0:
+            print('Migrating: adding the built-in purchase history import format')
+            cursor.execute('INSERT INTO import_formats (name, settings) VALUES (?, ?);',
+                           (BUILTIN_FORMAT_NAME, json.dumps(builtin_format_settings())))
+        cursor.execute("INSERT INTO app_meta (key, value) VALUES ('seeded_import_format', '1');")
 
     # Archived used to be a recipe tag; it's Recipes.status now. Once:
     # recipes tagged Archived become archived, and the tag goes away.

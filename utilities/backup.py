@@ -371,6 +371,8 @@ class MergeReport:
         ('recipes', 'Recipes'),
         ('saved_views', 'Saved views'),
         ('saved_comparisons', 'Saved comparisons'),
+        ('vendor_items', 'Vendor items'),
+        ('import_formats', 'Import formats'),
     )
 
     def __init__(self):
@@ -580,7 +582,8 @@ class _Merger:
             if have[key]:
                 have[key] -= 1
                 continue
-            self.insert('ingredient_prices', row, ingredient_id=ing, supplier_id=sup)
+            # Import history stays with the library it was made in.
+            self.insert('ingredient_prices', row, ingredient_id=ing, supplier_id=sup, import_batch_id=None)
             self.report.prices_added += 1
 
     def recipes(self):
@@ -709,9 +712,48 @@ class _Merger:
                 sortOrder=self.next_order('saved_comparisons') + 1)
             self.report.added['saved_comparisons'].append(row['name'])
 
+    def vendor_items(self):
+        '''Vendor item mappings, matched by their vendor key; the
+        ingredient follows the ingredient map. Import history (batches)
+        isn't merged.'''
+        if 'vendor_items' not in self.src_had['tables']:
+            return
+        ingredients = self.maps['ingredients']
+        have = {row[0] for row in self.con.execute('SELECT vendor_key FROM main.vendor_items;')}
+        for row in self.src_rows('vendor_items', 'id'):
+            label = ' '.join(filter(None, (row.get('description'), row.get('pack_size'))))
+            if row['vendor_key'] in have:
+                self.report.kept['vendor_items'].append(label)
+                continue
+            ing = ingredients.get(row['ingredient_id']) if row.get('ingredient_id') is not None else None
+            status = row.get('status') if ing is not None or row.get('status') == 'ignored' else 'new'
+            self.insert('vendor_items', row, ingredient_id=ing, status=status or 'new')
+            have.add(row['vendor_key'])
+            self.report.added['vendor_items'].append(label)
+
+    def import_formats(self):
+        if 'import_formats' not in self.src_had['tables']:
+            return
+        suppliers = self.maps['suppliers']
+        have = self.index('import_formats', 'name')
+        for row in self.src_rows('import_formats', 'id'):
+            if _norm(row['name']) in have:
+                self.report.kept['import_formats'].append(row['name'])
+                continue
+            try:
+                settings = json.loads(row['settings'])
+                aliases = settings.get('vendor_suppliers') or {}
+                settings['vendor_suppliers'] = {k: suppliers[v] for k, v in aliases.items() if v in suppliers}
+                text = json.dumps(settings)
+            except (TypeError, ValueError, AttributeError):
+                text = row['settings']
+            have[_norm(row['name'])] = self.insert('import_formats', row, settings=text)
+            self.report.added['import_formats'].append(row['name'])
+
     def run(self):
         for step in (self.suppliers, self.tags, self.allergens, self.ingredients, self.prices,
-                     self.recipes, self.templates, self.diets, self.saved_views, self.saved_comparisons):
+                     self.recipes, self.templates, self.diets, self.saved_views, self.saved_comparisons,
+                     self.vendor_items, self.import_formats):
             step()
 
 

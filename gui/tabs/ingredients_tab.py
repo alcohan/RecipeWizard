@@ -47,6 +47,7 @@ class IngredientsTab(QWidget):
     newIngredientRequested = Signal()
     newPriceRequested = Signal(int)   # ingredient id
     recipeRequested = Signal(int)     # recipe id
+    importRequested = Signal()        # Import purchases…
 
     def __init__(self, source_model, context_actions, parent=None):
         super().__init__(parent)
@@ -176,7 +177,16 @@ class IngredientsTab(QWidget):
         row.addWidget(field, stretch=1)
         row.addWidget(self.count_label)
         row.addStretch()
+        import_btn = QPushButton('Import purchases…')
+        import_btn.setToolTip('Update prices from a purchase history export (Ctrl+Shift+I)')
+        import_btn.setStyleSheet(
+            f'QPushButton {{ min-height: 34px; padding: 0 14px; border: 1px solid {_FIELD_BORDER};'
+            f' border-radius: 8px; background: #ffffff; color: {_KALE}; }}'
+            ' QPushButton:hover { background: #f3ece0; }')
+        import_btn.clicked.connect(self.importRequested.emit)
+
         row.addWidget(self.view_switch)
+        row.addWidget(import_btn)
         row.addWidget(new_btn)
         return bar
 
