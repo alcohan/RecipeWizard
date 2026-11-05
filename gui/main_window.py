@@ -19,6 +19,7 @@ from gui.dialogs.bulk_image_assign import BulkImageAssignDialog
 from gui.dialogs.ingredient_edit import IngredientEditDialog
 from gui.dialogs.ingredient_new import IngredientNewDialog
 from gui.dialogs.ingredient_price_edit import IngredientPriceEditDialog
+from gui.dialogs.import_purchases import run_import
 from gui.dialogs.preferences import PreferencesPage
 from gui.dialogs.recipe_create import RecipeCreateDialog
 from gui.dialogs.update import UpdateDialog, install_update
@@ -33,7 +34,9 @@ from gui.tabs.diets_page import DietsPage
 from gui.tabs.ingredients_tab import IngredientsTab
 from gui.tabs.library_health_tab import LibraryHealthTab
 from gui.tabs.recipes_tab import ARCHIVE_ACTION, RecipesTab
+from gui.tabs.import_formats_page import ImportFormatsPage
 from gui.tabs.suppliers_tab import SuppliersTab
+from gui.tabs.vendor_items_page import VendorItemsPage
 from gui.services.compare_tray import CompareTray
 from gui.services.updates import UpdateService
 from gui.widgets.app_header import AppHeader
@@ -249,6 +252,7 @@ class MainWindow(QMainWindow):
         tab.rowActivated.connect(self._on_ingredient_edit)
         tab.newIngredientRequested.connect(self._on_new_ingredient_search)
         tab.newPriceRequested.connect(self._on_ingredient_new_price)
+        tab.importRequested.connect(self._on_import_purchases)
         tab.recipeRequested.connect(self._on_recipe_edit_by_id)
         self.ingredients_tab = tab
         return tab
@@ -256,6 +260,18 @@ class MainWindow(QMainWindow):
     def _on_ingredient_new_price(self, ingredient_id):
         if IngredientPriceEditDialog(ingredient_id, parent=self).exec() == QDialog.Accepted:
             self.refresh()
+
+    def _on_import_purchases(self):
+        '''Ingredients › Import purchases…: the wizard, then everything
+        that shows prices catches up (it may also have been undone).'''
+        run_import(self)
+        self._on_prices_imported()
+
+    def _on_prices_imported(self):
+        self.refresh()
+        self.vendor_items_page.refresh()
+        self.import_formats_page.refresh()
+        self._refresh_configure_counts()
 
     def _analytics_place(self):
         tab = AnalyticsTab(self.recipes_model, compare_tray=self.compare_tray,
@@ -299,6 +315,14 @@ class MainWindow(QMainWindow):
         cfg.sectionChanged.connect(self._on_config_section_changed)
         cfg.add_group('Purchasing')
         cfg.add_section('suppliers', 'Suppliers', SuppliersTab())
+        self.vendor_items_page = VendorItemsPage()
+        self.vendor_items_page.changed.connect(self._on_prices_imported)
+        self.vendor_items_page.importRequested.connect(self._on_import_purchases)
+        cfg.add_section('vendor_items', 'Vendor items', self.vendor_items_page)
+        self.import_formats_page = ImportFormatsPage()
+        self.import_formats_page.changed.connect(self._on_prices_imported)
+        self.import_formats_page.importRequested.connect(self._on_import_purchases)
+        cfg.add_section('import_formats', 'Import formats & history', self.import_formats_page)
         cfg.add_group('Upkeep')
         self.library_health_tab = LibraryHealthTab()
         cfg.add_section('health', 'Library health', self.library_health_tab)
@@ -326,6 +350,7 @@ class MainWindow(QMainWindow):
         cfg.add_group('App')
         self.preferences_page = PreferencesPage()
         self.preferences_page.changed.connect(self._refresh_configure_counts)
+        self.preferences_page.foodCostChanged.connect(self._on_food_cost_target_changed)
         cfg.add_section('preferences', 'Preferences', self.preferences_page)
         self.configure_tab = cfg
         return cfg
@@ -336,7 +361,9 @@ class MainWindow(QMainWindow):
         if left in ('formats', 'categories', 'recipe_tags', 'suppliers'):
             self.refresh()
         page = {'formats': None, 'categories': self.categories_page, 'recipe_tags': self.recipe_tags_page,
-                'allergens': self.allergens_page, 'diets': self.diets_page}.get(key)
+                'allergens': self.allergens_page, 'diets': self.diets_page,
+                'vendor_items': getattr(self, 'vendor_items_page', None),
+                'import_formats': getattr(self, 'import_formats_page', None)}.get(key)
         if page is not None:
             page.refresh()
         if key == 'formats':
@@ -400,6 +427,8 @@ class MainWindow(QMainWindow):
                        ('allergens', len(db.get_all_allergen_rows())), ('recipe_tags', len(db.get_tags('recipe_tag'))),
                        ('diets', len(db.get_diets())), ('suppliers', len(db.get_suppliers()))):
             cfg.set_section_count(key, n)
+        flagged = self.vendor_items_page.flagged_count()
+        cfg.set_section_count('vendor_items', f'{flagged} flagged' if flagged else '')
         # The nav hints at what Preferences holds, as the canvas does.
         cfg.set_section_count('preferences', 'USDA key' if self.preferences_page.has_key() else 'demo key')
 
@@ -451,6 +480,8 @@ class MainWindow(QMainWindow):
             ('place-configure', 'Go to Configure'),
             ('formats', 'Formats & Templates'),
             ('suppliers', 'Suppliers'),
+            ('import-purchases', 'Import Purchases…'),
+            ('vendor-items', 'Vendor Items'),
             ('health', 'Library Health'),
             ('compare-tray', 'Show / Hide Compare Tray'),
             ('check-updates', 'Check for Updates…'),
@@ -473,6 +504,8 @@ class MainWindow(QMainWindow):
             'place-configure': lambda: self._go_to_place('configure'),
             'formats': lambda: self._show_configure('formats'),
             'suppliers': lambda: self._show_configure('suppliers'),
+            'import-purchases': self._on_import_purchases,
+            'vendor-items': lambda: self._show_configure('vendor_items'),
             'health': lambda: self._show_configure('health'),
             'compare-tray': self._toggle_tray_docked,
             'check-updates': self._on_check_updates,
@@ -584,6 +617,9 @@ class MainWindow(QMainWindow):
         add(ingredient_menu, 'New Ingredient (&USDA Search)…', self._on_new_ingredient_search)
         add(ingredient_menu, 'New Ingredient (&Blank)…', self._on_new_ingredient_blank)
         ingredient_menu.addSeparator()
+        add(ingredient_menu, '&Import Purchases…', self._on_import_purchases, 'Ctrl+Shift+I')
+        add(ingredient_menu, '&Vendor Items', lambda: self._show_configure('vendor_items'))
+        ingredient_menu.addSeparator()
         add(ingredient_menu, 'Ingredient &Categories…', self._on_ingredient_tags)
 
         tools_menu = bar.addMenu('&Tools')
@@ -614,6 +650,11 @@ class MainWindow(QMainWindow):
         self._sync_recipe_state()
 
     # --- refresh ---
+
+    def show_portion_review_if_new(self):
+        from gui.dialogs.portion_review import maybe_show_after_upgrade
+        if maybe_show_after_upgrade(self):
+            self.refresh()
 
     def refresh(self):
         '''Reset both source models — model-reset signals propagate to
@@ -937,6 +978,14 @@ class MainWindow(QMainWindow):
                 'is the newest version.')
         else:
             QMessageBox.warning(self, title, f"Couldn't check for updates.\n\n{value}")
+
+    def _on_food_cost_target_changed(self):
+        '''The target moved or was switched off: everything that marks
+        recipes over it redraws — Library, inspector, Needs review, open
+        recipe tabs.'''
+        self.refresh()
+        for editor in self.recipes_tab.editor_tabs.editors():
+            editor._refresh()
 
     def _on_preferences(self):
         self._show_configure('preferences')

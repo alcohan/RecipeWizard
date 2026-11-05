@@ -1,7 +1,8 @@
 '''Delegates for the recipe editor's components grid.
 
-- NameDelegate: category dot, name, and a small pill for sub-recipes
-  and template-added rows. Rows changed since the last save get the
+- NameDelegate: category dot, name, and a small pill for sub-recipes,
+  template-added rows and how portion rules size the row ("base 50%",
+  "fixed", "by hand"). Rows changed since the last save get the
   canvas's selected treatment: parmesan wash plus a romaine bar on the
   left edge (painted here, since it spans the row's first cell).
 - QuantityDelegate: numeric-only inline editor; paints the quantity
@@ -13,8 +14,9 @@ from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QDoubleValidator, QFont, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import QLineEdit, QStyle, QStyledItemDelegate
 
-from gui.models.components_model import ChangedRole, KindRole, ShareRole, WasRole
+from gui.models.components_model import ChangedRole, KindRole, PortionRole, ShareRole, WasRole
 from gui.widgets.tag_badge import TagColorRole
+from gui.widgets.undo_keys import pass_undo_keys
 
 
 _KALE = '#082c00'
@@ -24,6 +26,21 @@ _CHANGED_BG = '#fff1da'
 _SUBRECIPE_BG = '#e9f1d9'
 _SUBRECIPE_FG = '#285900'
 _TEMPLATE_BG = '#efe9de'
+_RULE_BG, _RULE_FG = '#e6efe3', '#24502A'
+_HAND_BG, _HAND_FG = '#fff0dc', '#8a4a00'
+
+
+def _portion_pill(portion):
+    '''(text, background, foreground) for a row portion rules size.'''
+    if not portion:
+        return None
+    if portion['state'] == 'hand':
+        return 'by hand', _HAND_BG, _HAND_FG
+    if portion['state'] == 'fixed':
+        return 'fixed', _RULE_BG, _RULE_FG
+    if portion['siblings'] >= 2 and portion['pct'] is not None:
+        return f'base {portion["pct"]:.0%}', _RULE_BG, _RULE_FG
+    return 'base', _RULE_BG, _RULE_FG
 
 
 def _paint_background(painter, option, index):
@@ -85,6 +102,12 @@ class NameDelegate(QStyledItemDelegate):
 
         kind = index.data(KindRole)
         pill = {'recipe': 'sub-recipe', 'template': 'template'}.get(kind)
+        pill_bg = QColor(_SUBRECIPE_BG if kind == 'recipe' else _TEMPLATE_BG)
+        pill_fg = QColor(_SUBRECIPE_FG if kind == 'recipe' else _MUTED)
+        portion_pill = None if pill else _portion_pill(index.data(PortionRole))
+        if portion_pill:
+            pill, bg, fg = portion_pill
+            pill_bg, pill_fg = QColor(bg), QColor(fg)
         fm = painter.fontMetrics()
         pill_w = 0
         if pill:
@@ -99,10 +122,10 @@ class NameDelegate(QStyledItemDelegate):
             px = x + fm.horizontalAdvance(name) + 8
             pill_rect = QRectF(px, cy - 9, pill_w, 18)
             painter.setPen(Qt.NoPen)
-            painter.setBrush(QColor(_SUBRECIPE_BG if kind == 'recipe' else _TEMPLATE_BG))
+            painter.setBrush(pill_bg)
             painter.drawRoundedRect(pill_rect, 4, 4)
             painter.setFont(pill_font)
-            painter.setPen(QColor(_SUBRECIPE_FG if kind == 'recipe' else _MUTED))
+            painter.setPen(pill_fg)
             painter.drawText(pill_rect, Qt.AlignCenter, pill)
         painter.restore()
 
@@ -118,6 +141,8 @@ class QuantityDelegate(QStyledItemDelegate):
         editor.setAlignment(Qt.AlignRight)
         editor.setStyleSheet(f'border: 2px solid {_ROMAINE}; border-radius: 5px;'
                              ' padding: 0 4px; background: #ffffff;')
+        # Ctrl+Z in an untouched quantity editor undoes the last recipe edit.
+        pass_undo_keys(editor, lambda e: e.isModified())
         return editor
 
     def paint(self, painter, option, index):

@@ -371,6 +371,8 @@ class MergeReport:
         ('recipes', 'Recipes'),
         ('saved_views', 'Saved views'),
         ('saved_comparisons', 'Saved comparisons'),
+        ('vendor_items', 'Vendor items'),
+        ('import_formats', 'Import formats'),
     )
 
     def __init__(self):
@@ -509,12 +511,12 @@ class _Merger:
         self._new_formats = new_formats
 
     def _empty_template(self, tag_id):
-        '''A format here that auto-adds nothing and scales nothing (the
+        '''A format here that auto-adds nothing and sizes nothing (the
         seeded Bowl, Wrap… in a new library) takes the backup's
         template; one the user has set up keeps its own.'''
         return not self.con.execute(
             'SELECT 1 FROM main.tag_components WHERE tag_id = ?1'
-            ' UNION ALL SELECT 1 FROM main.tag_category_multipliers WHERE tag_id = ?1;',
+            ' UNION ALL SELECT 1 FROM main.tag_portion_rules WHERE tag_id = ?1;',
             (tag_id,)).fetchone()
 
     def allergens(self):
@@ -580,7 +582,8 @@ class _Merger:
             if have[key]:
                 have[key] -= 1
                 continue
-            self.insert('ingredient_prices', row, ingredient_id=ing, supplier_id=sup)
+            # Import history stays with the library it was made in.
+            self.insert('ingredient_prices', row, ingredient_id=ing, supplier_id=sup, import_batch_id=None)
             self.report.prices_added += 1
 
     def recipes(self):
@@ -631,9 +634,10 @@ class _Merger:
                                  (row['updated_at'], new_id))
 
     def templates(self):
-        '''What a new format auto-adds and its portion multipliers come
-        along with it. A format already here keeps its own, unless it
-        has none (see _empty_template).'''
+        '''What a new format auto-adds and its portion rules come along
+        with it. A format already here keeps its own, unless it has none
+        (see _empty_template). An older backup's multipliers were dropped
+        when it was migrated; their effect is in its recipes' quantities.'''
         tags, ingredients = self.maps['tags'], self.maps['ingredients']
         for src_tag in self._new_formats:
             tag_id = tags[src_tag]
@@ -642,12 +646,13 @@ class _Merger:
                     continue
                 self.insert('tag_components', row, tag_id=tag_id, child_recipe=None,
                             child_ingredient=ingredients[row['child_ingredient']])
-            for row in self.src_rows('tag_category_multipliers', 'id'):
+            for row in self.src_rows('tag_portion_rules', 'id'):
                 if row['tag_id'] != src_tag or row['category_tag_id'] not in tags:
                     continue
-                self.con.execute('INSERT OR IGNORE INTO main.tag_category_multipliers'
-                                 ' (tag_id, category_tag_id, multiplier) VALUES (?, ?, ?);',
-                                 (tag_id, tags[row['category_tag_id']], row['multiplier']))
+                self.con.execute('INSERT OR IGNORE INTO main.tag_portion_rules'
+                                 ' (tag_id, category_tag_id, mode, amount, measure) VALUES (?, ?, ?, ?, ?);',
+                                 (tag_id, tags[row['category_tag_id']], row['mode'], row['amount'],
+                                  row['measure']))
 
     def diets(self):
         if 'diets' not in self.src_had['tables']:
@@ -709,9 +714,48 @@ class _Merger:
                 sortOrder=self.next_order('saved_comparisons') + 1)
             self.report.added['saved_comparisons'].append(row['name'])
 
+    def vendor_items(self):
+        '''Vendor item mappings, matched by their vendor key; the
+        ingredient follows the ingredient map. Import history (batches)
+        isn't merged.'''
+        if 'vendor_items' not in self.src_had['tables']:
+            return
+        ingredients = self.maps['ingredients']
+        have = {row[0] for row in self.con.execute('SELECT vendor_key FROM main.vendor_items;')}
+        for row in self.src_rows('vendor_items', 'id'):
+            label = ' '.join(filter(None, (row.get('description'), row.get('pack_size'))))
+            if row['vendor_key'] in have:
+                self.report.kept['vendor_items'].append(label)
+                continue
+            ing = ingredients.get(row['ingredient_id']) if row.get('ingredient_id') is not None else None
+            status = row.get('status') if ing is not None or row.get('status') == 'ignored' else 'new'
+            self.insert('vendor_items', row, ingredient_id=ing, status=status or 'new')
+            have.add(row['vendor_key'])
+            self.report.added['vendor_items'].append(label)
+
+    def import_formats(self):
+        if 'import_formats' not in self.src_had['tables']:
+            return
+        suppliers = self.maps['suppliers']
+        have = self.index('import_formats', 'name')
+        for row in self.src_rows('import_formats', 'id'):
+            if _norm(row['name']) in have:
+                self.report.kept['import_formats'].append(row['name'])
+                continue
+            try:
+                settings = json.loads(row['settings'])
+                aliases = settings.get('vendor_suppliers') or {}
+                settings['vendor_suppliers'] = {k: suppliers[v] for k, v in aliases.items() if v in suppliers}
+                text = json.dumps(settings)
+            except (TypeError, ValueError, AttributeError):
+                text = row['settings']
+            have[_norm(row['name'])] = self.insert('import_formats', row, settings=text)
+            self.report.added['import_formats'].append(row['name'])
+
     def run(self):
         for step in (self.suppliers, self.tags, self.allergens, self.ingredients, self.prices,
-                     self.recipes, self.templates, self.diets, self.saved_views, self.saved_comparisons):
+                     self.recipes, self.templates, self.diets, self.saved_views, self.saved_comparisons,
+                     self.vendor_items, self.import_formats):
             step()
 
 

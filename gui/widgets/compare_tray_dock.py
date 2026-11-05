@@ -7,20 +7,20 @@ the status-bar chip flip collapsed ↔ docked; "Expand to Analytics"
 goes to the full view. The main window hides the strip while
 Analytics is showing, since that place IS the expanded tray.
 '''
-from PySide6.QtCore import QSettings, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QToolButton,
     QVBoxLayout, QWidget,
 )
 
 import db
+from gui.services import food_cost
 from gui.widgets.elided_label import ElidedLabel
 
 
 _KALE = '#082c00'
 _MUTED = '#55624c'
 _BORDER = '#ebe1cd'
-_DEFAULT_FOOD_COST_TARGET = 0.28
 
 
 class CompareTrayDock(QFrame):
@@ -171,8 +171,8 @@ def _stats_text(recipe):
         price = 0.0
     if price > 0 and cost > 0:
         pct = cost / price
-        target = QSettings().value('food_cost/target_pct', _DEFAULT_FOOD_COST_TARGET, type=float)
-        style = ' style="color: #8a4a00; font-weight: 600"' if pct > target else ''
+        target = food_cost.target_fraction()
+        style = ' style="color: #8a4a00; font-weight: 600"' if target is not None and pct > target else ''
         parts.append(f'<span{style}>{pct * 100:.1f}%</span>')
     kcal = recipe.get('Calories')
     if kcal not in (None, ''):

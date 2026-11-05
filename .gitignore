@@ -96,3 +96,7 @@ GitHub.sublime-settings
 
 # Claude Code internal worktrees
 .claude/
+
+# Local library data: backups, CSV exports (proprietary; never commit)
+backups/
+export/

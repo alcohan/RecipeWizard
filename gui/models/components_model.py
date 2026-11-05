@@ -12,6 +12,7 @@ ShareRole = Qt.UserRole + 10        # float 0..1: this row's share of recipe cos
 WasRole = Qt.UserRole + 11          # str: saved quantity when it differs, else None
 ChangedRole = Qt.UserRole + 12      # bool: added or re-quantified since the last save
 KindRole = Qt.UserRole + 13         # 'ingredient' | 'recipe' | 'template'
+PortionRole = Qt.UserRole + 14      # dict from db._annotate_portions, or None
 
 
 # Neutral fallback used when an ingredient has no category tag set, or for
@@ -100,6 +101,8 @@ class RecipeComponentsModel(QAbstractTableModel):
     def refresh(self):
         self.beginResetModel()
         self._rows = db.recipe_components(self.recipe_id)
+        tag = db.get_recipe_tag(self.recipe_id)
+        self._format_name = tag['name'] if tag else ''
         self.endResetModel()
 
     def rowCount(self, parent=QModelIndex()):
@@ -122,9 +125,38 @@ class RecipeComponentsModel(QAbstractTableModel):
             # right-clicked for the context menu.
             return base
         f = base | Qt.ItemIsDragEnabled
-        if self.COLUMNS[index.column()] == 'Quantity':
+        if self.COLUMNS[index.column()] == 'Quantity' and self.qty_editable(index.row()):
             f |= Qt.ItemIsEditable
         return f
+
+    def qty_editable(self, row):
+        '''A quantity can be typed unless the format's rule sets it: a
+        fixed rule, or a base this row has to itself. (Typing on a shared
+        base re-splits it; see db.set_base_quantity.)'''
+        portion = self._rows[row].get('Portion')
+        if not portion:
+            return True
+        if portion['state'] == 'fixed':
+            return False
+        return not (portion['state'] == 'base' and portion['siblings'] < 2)
+
+    def portion_tooltip(self, row):
+        portion = row.get('Portion')
+        if not portion:
+            return None
+        fmt = self._format_name or 'This format'
+        if portion['state'] == 'hand':
+            if not portion['sizable']:
+                return (f'{fmt}: {portion["rule"]} This one is sized by hand: its unit'
+                        ' isn’t a volume, so the rule can’t size it.')
+            return (f'{fmt}: {portion["rule"]} This one is sized by hand.'
+                    ' Right-click › Follow format rule to size it by the rule.')
+        if portion['state'] == 'fixed':
+            return f'{fmt}: {portion["rule"]} Right-click › Size by hand to type your own.'
+        if portion['siblings'] < 2:
+            return f'{fmt}: {portion["rule"]} It’s the only one, so it takes the whole base.'
+        return (f'{fmt}: {portion["rule"]} This one has {portion["pct"]:.0%} of it;'
+                ' type a quantity to change its share.')
 
     # --- drag-drop -----------------------------------------------------
 
@@ -191,6 +223,10 @@ class RecipeComponentsModel(QAbstractTableModel):
 
         if role == KindRole:
             return 'template' if is_template else row.get('Type')
+        if role == PortionRole:
+            return row.get('Portion')
+        if role == Qt.ToolTipRole and not is_template and col in ('Name', 'Quantity'):
+            return self.portion_tooltip(row)
         if role == ChangedRole:
             return self._changed(row)
         if role == Qt.ToolTipRole and is_template:

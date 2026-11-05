@@ -39,7 +39,7 @@ from PySide6.QtGui import QDoubleValidator, QFont, QKeySequence, QShortcut, QUnd
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QFrame, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy,
-    QSplitter, QTableView, QVBoxLayout, QWidget,
+    QSplitter, QTableView, QToolTip, QVBoxLayout, QWidget,
 )
 
 import config
@@ -50,7 +50,7 @@ from gui.dialogs.price_history import PriceHistoryDialog
 from gui.dialogs.recipe_component_add import RecipeComponentAddDialog
 from gui.models.components_model import RecipeComponentsModel
 from gui.undo.recipe_commands import (
-    AddComponentCommand, RemoveComponentCommand, ReorderComponentsCommand,
+    AddComponentCommand, PortionCommand, RemoveComponentCommand, ReorderComponentsCommand,
     SetComponentQtyCommand, SetRecipeStatusCommand, SetRecipeTagCommand, SetRecipeTagsCommand,
     UpdateRecipeInfoCommand,
 )
@@ -58,6 +58,7 @@ from gui.widgets.component_delegates import (
     ChangedRowDelegate, NameDelegate, QuantityDelegate, ShareDelegate,
 )
 from gui.widgets.editor_results import EditorResults
+from gui.widgets.undo_keys import pass_undo_keys
 from gui.widgets.format_segments import FormatSegments
 from gui.widgets.template_summary import TemplateSummaryLine
 from gui.widgets.wedge_view import WedgeView
@@ -222,14 +223,16 @@ class RecipeEditWidget(QWidget):
         self.splitter.setSizes([900, 380])
 
         # Undo/Redo actions — keyboard shortcuts only, no toolbar buttons.
-        # Scoped to the widget so a container with multiple tabs still
-        # only sees the active tab's undo stack.
+        # Window-wide, so they work wherever focus is (the header, the tab
+        # bar); Qt skips shortcuts on hidden widgets, so with several
+        # recipe tabs open only the visible one's stack answers. The text
+        # fields pass the keys on unless an edit is being typed there.
         undo_action = self.undo_stack.createUndoAction(self, 'Undo')
         undo_action.setShortcut(QKeySequence.Undo)
-        undo_action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
+        undo_action.setShortcutContext(Qt.WindowShortcut)
         redo_action = self.undo_stack.createRedoAction(self, 'Redo')
         redo_action.setShortcut(QKeySequence.Redo)
-        redo_action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
+        redo_action.setShortcutContext(Qt.WindowShortcut)
         self.addAction(undo_action)
         self.addAction(redo_action)
 
@@ -443,6 +446,13 @@ class RecipeEditWidget(QWidget):
         self.menu_price_edit.setPlaceholderText('Not on menu')
         self.menu_price_edit.setFixedWidth(110)
         self.menu_price_edit.editingFinished.connect(self._maybe_commit_info)
+
+        # Each field's last committed text: Ctrl+Z goes to the recipe's
+        # undo stack unless the field holds an uncommitted edit.
+        self._committed_text = {e: e.text() for e in (self.name_edit, self.yield_edit, self.unit_edit,
+                                                       self.menu_price_edit)}
+        for edit in self._committed_text:
+            pass_undo_keys(edit, self._field_has_pending_edit)
 
         name_col = _labelled('Recipe', self.name_edit)
         fields = QHBoxLayout()
@@ -667,21 +677,25 @@ class RecipeEditWidget(QWidget):
             recipe, self._baseline, db.get_recipe_allergen_sources(self.recipe_id))
         self.wedge.refresh()
 
-        # Sync editable fields. The widget the user is currently editing
-        # is left alone — otherwise typing in one field while another
-        # commits would clobber the in-progress edit.
+        # Sync editable fields. A field holding an edit the user hasn't
+        # committed yet is left alone — otherwise typing in one field while
+        # another commits would clobber it. A focused field with nothing
+        # pending does update, so an undo shows in the field you're in.
         for edit, value in (
             (self.name_edit, recipe['Name']),
             (self.unit_edit, recipe['Unit']),
             (self.yield_edit, _format_qty(recipe['OutputQty'])),
             (self.menu_price_edit, _format_menu_price(recipe.get('MenuPrice'))),
         ):
-            if edit.hasFocus():
+            if edit.text() == value:
+                self._committed_text[edit] = value   # e.g. the edit just committed
+                continue
+            if edit.hasFocus() and self._field_has_pending_edit(edit):
                 continue
             edit.blockSignals(True)
-            if edit.text() != value:
-                edit.setText(value)
+            edit.setText(value)
             edit.blockSignals(False)
+            self._committed_text[edit] = value
 
         if recipe['Name'] != self._title:
             self._title = recipe['Name']
@@ -829,6 +843,10 @@ class RecipeEditWidget(QWidget):
             action.triggered.connect(lambda _c=False, rid=p['Id']: self.openRecipeRequested.emit(rid))
         menu.exec(self.used_in_chip.mapToGlobal(self.used_in_chip.rect().bottomLeft()))
 
+    def _field_has_pending_edit(self, edit):
+        committed = getattr(self, '_committed_text', {})
+        return edit in committed and edit.text() != committed[edit]
+
     def _maybe_commit_info(self):
         '''Apply the recipe fields. Wired to each input's editingFinished
         signal and called explicitly from save() / close_requested() so
@@ -858,6 +876,10 @@ class RecipeEditWidget(QWidget):
             return
         after = (name, unit, yield_qty, menu_price)
         if after == self._recipe_snapshot:
+            # Same values, maybe typed differently ("1.0" for "1"): the
+            # field's text is what's committed now.
+            for edit in self._committed_text:
+                self._committed_text[edit] = edit.text()
             return
         self.undo_stack.push(UpdateRecipeInfoCommand(self.recipe_id, self._recipe_snapshot, after))
 
@@ -886,6 +908,13 @@ class RecipeEditWidget(QWidget):
         qty_col = self.components_model.COLUMNS.index('Quantity')
         qty_index = self.components_model.index(view_index.row(), qty_col)
         self.components_table.setCurrentIndex(qty_index)
+        row_dict = self.components_model.row_dict(view_index.row())
+        if row_dict.get('FromTemplateTagId') is None and not self.components_model.qty_editable(view_index.row()):
+            # The format's rule sets this quantity; say how to change it.
+            rect = self.components_table.visualRect(qty_index)
+            QToolTip.showText(self.components_table.viewport().mapToGlobal(rect.bottomLeft()),
+                              self.components_model.portion_tooltip(row_dict), self.components_table)
+            return
         self.components_table.edit(qty_index)
 
     def _on_qty_edited(self, row, new_qty):
@@ -898,6 +927,19 @@ class RecipeEditWidget(QWidget):
         except (TypeError, ValueError):
             old_qty = 0.0
         if new_qty == old_qty:
+            return
+        portion = row_dict.get('Portion')
+        if portion and portion['state'] == 'base' and portion['siblings'] >= 2:
+            # A shared base keeps its total: the typed amount becomes this
+            # row's share and the others split the rest.
+            problem = db.base_quantity_problem(self.recipe_id, row_dict['Id'], new_qty)
+            if problem:
+                QMessageBox.information(self, 'Shared base', f'{problem} Use Size by hand to set it freely.')
+                self.components_model.refresh()
+                return
+            self.undo_stack.push(PortionCommand(
+                self.recipe_id, f"Change {row_dict['Name']} share",
+                lambda rid=self.recipe_id, iid=row_dict['Id'], q=new_qty: db.set_base_quantity(rid, iid, q)))
             return
         self.undo_stack.push(SetComponentQtyCommand(
             self.recipe_id, row_dict['Type'], row_dict['Id'],
@@ -913,6 +955,20 @@ class RecipeEditWidget(QWidget):
         menu = QMenu(self.components_table)
         edit_action = menu.addAction('Edit Quantity')
         remove_action = menu.addAction('Remove')
+        portion = None if is_template else row_dict.get('Portion')
+        follow_action = pin_action = even_action = None
+        if portion:
+            menu.addSeparator()
+            if portion['state'] == 'hand':
+                follow_action = menu.addAction('Follow format rule')
+                follow_action.setEnabled(portion['sizable'])
+                if not portion['sizable']:
+                    follow_action.setToolTip('Its unit isn’t a volume, so the rule can’t size it.')
+            else:
+                pin_action = menu.addAction('Size by hand')
+                if portion['state'] == 'base' and portion['siblings'] >= 2:
+                    even_action = menu.addAction('Split base evenly')
+            edit_action.setEnabled(self.components_model.qty_editable(index.row()))
         open_action = None
         if row_dict['Type'] == 'recipe':
             menu.addSeparator()
@@ -930,6 +986,18 @@ class RecipeEditWidget(QWidget):
             self._remove_component(index.row())
         elif open_action is not None and chosen is open_action:
             self.openRecipeRequested.emit(row_dict['Id'])
+        elif chosen is not None and chosen in (follow_action, pin_action, even_action):
+            self._portion_action(chosen, follow_action, pin_action, row_dict)
+
+    def _portion_action(self, chosen, follow_action, pin_action, row_dict):
+        rid, iid, name = self.recipe_id, row_dict['Id'], row_dict['Name']
+        if chosen is follow_action:
+            self.undo_stack.push(PortionCommand(rid, f'{name}: follow format rule',
+                                                lambda: db.follow_portion(rid, iid)))
+        elif chosen is pin_action:
+            self.undo_stack.push(PortionCommand(rid, f'{name}: size by hand', lambda: db.pin_portion(rid, iid)))
+        else:
+            self.undo_stack.push(PortionCommand(rid, 'Split base evenly', lambda: db.split_base_evenly(rid, iid)))
 
     def _remove_component(self, row):
         row_dict = self.components_model.row_dict(row)
