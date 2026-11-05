@@ -9,7 +9,7 @@ import os
 from PySide6.QtCore import QPointF, QSettings, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (
-    QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout,
+    QAbstractItemView, QButtonGroup, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout,
     QHBoxLayout, QHeaderView, QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QRadioButton,
     QScrollArea, QSplitter, QStackedWidget, QStyledItemDelegate, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
 
 import config
 from gui.widgets import config_kit as kit
-from gui.widgets.flow_layout import FlowLayout
 from gui.widgets.vendor_item_editor import VendorItemEditor
 from utilities import purchase_import as pi
 
@@ -87,30 +86,81 @@ def _item_label(item):
 
 
 class SparklineDelegate(QStyledItemDelegate):
-    '''Draws the list of floats in Qt.UserRole as a small line.'''
+    '''The new weekly prices (floats in Qt.UserRole) as a small line, with
+    the current price (Qt.UserRole + 1, or None) as a dashed line on the
+    same scale, so a drop below today's price reads as one.'''
 
     def paint(self, painter, option, index):
         super().paint(painter, option, index)
         values = index.data(Qt.UserRole) or []
         if len(values) < 1:
             return
-        color = QColor(index.data(Qt.UserRole + 1) or kit.ROMAINE)
+        current = index.data(Qt.UserRole + 1)
         r = option.rect.adjusted(8, 10, -8, -10)
-        lo, hi = min(values), max(values)
+        scale = list(values) + ([current] if current else [])
+        lo, hi = min(scale), max(scale)
         span = (hi - lo) or 1.0
+
+        def y_of(v):
+            return r.center().y() if hi == lo else r.bottom() - (v - lo) / span * r.height()
+
         n = len(values)
-        pts = []
-        for i, v in enumerate(values):
-            x = r.left() + (r.width() * i / (n - 1) if n > 1 else r.width() / 2)
-            y = r.center().y() if hi == lo else r.bottom() - (v - lo) / span * r.height()
-            pts.append(QPointF(x, y))
+        pts = [QPointF(r.left() + (r.width() * i / (n - 1) if n > 1 else r.width() / 2), y_of(v))
+               for i, v in enumerate(values)]
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing)
+        if current:
+            pen = QPen(QColor('#a7ad9c'), 1, Qt.DashLine)
+            painter.setPen(pen)
+            painter.drawLine(QPointF(r.left(), y_of(current)), QPointF(r.right(), y_of(current)))
+        color = QColor(kit.KALE)
         painter.setPen(QPen(color, 2))
         if len(pts) > 1:
             painter.drawPolyline(QPolygonF(pts))
         painter.setBrush(QBrush(color))
         painter.drawEllipse(pts[-1], 2.5, 2.5)
+        painter.restore()
+
+
+class QueueCardDelegate(QStyledItemDelegate):
+    '''A new vendor item in the Map step: name, then pack · case price ·
+    cases bought, and a mark once it's handled. Fixed height, elided, so
+    cards never change size.'''
+
+    HEIGHT = 58
+
+    def sizeHint(self, option, index):
+        from PySide6.QtCore import QSize
+        return QSize(option.rect.width(), self.HEIGHT)
+
+    def paint(self, painter, option, index):
+        from PySide6.QtWidgets import QStyle
+        d = index.data(Qt.UserRole) or {}
+        rect = option.rect.adjusted(0, 3, -2, -3)
+        selected = bool(option.state & QStyle.State_Selected)
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QPen(QColor(kit.ROMAINE if selected else kit.BORDER), 2 if selected else 1))
+        painter.setBrush(QColor(kit.SELECTED if selected else '#ffffff'))
+        painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 8, 8)
+        inner = rect.adjusted(12, 7, -12, -7)
+        mark = d.get('mark') or ''
+        fm = painter.fontMetrics()
+        mark_w = fm.horizontalAdvance(mark) + 10 if mark else 0
+        font = painter.font()
+        bold = painter.font()
+        bold.setBold(True)
+        painter.setFont(bold)
+        painter.setPen(QColor(kit.MUTED if d.get('done') else kit.KALE))
+        name = painter.fontMetrics().elidedText(d.get('name', ''), Qt.ElideRight, inner.width() - mark_w)
+        painter.drawText(inner.adjusted(0, 0, -mark_w, 0), Qt.AlignLeft | Qt.AlignTop, name)
+        painter.setFont(font)
+        painter.setPen(QColor(kit.MUTED))
+        detail = painter.fontMetrics().elidedText(d.get('detail', ''), Qt.ElideRight, inner.width())
+        painter.drawText(inner, Qt.AlignLeft | Qt.AlignBottom, detail)
+        if mark:
+            painter.setPen(QColor(_GREEN if d.get('mark_kind') == 'mapped' else kit.MUTED))
+            painter.drawText(inner, Qt.AlignRight | Qt.AlignTop, mark)
         painter.restore()
 
 
@@ -376,7 +426,10 @@ class ImportPurchasesDialog(QDialog):
 
     def _build_file_page(self):
         page = QWidget()
-        page.setStyleSheet('background: #ffffff;')
+        # Scoped to the page: an unscoped rule reaches the radio buttons
+        # and Qt then draws them without their checked indicator.
+        page.setObjectName('ImpFilePage')
+        page.setStyleSheet('QWidget#ImpFilePage { background: #ffffff; }')
         layout = QVBoxLayout(page)
         layout.setContentsMargins(28, 22, 28, 22)
         layout.setSpacing(16)
@@ -438,15 +491,6 @@ class ImportPurchasesDialog(QDialog):
                               ' locations that bought it that day.'))
         layout.addWidget(basis_card)
 
-        gl_card, gc = kit.card()
-        head = QHBoxLayout()
-        head.addWidget(kit.subheading('GL codes'))
-        head.addWidget(kit.note('Saved with the format. Lines outside these never appear in mapping.'), stretch=1)
-        gc.addLayout(head)
-        self.gl_box = QWidget()
-        self.gl_flow = FlowLayout(self.gl_box, spacing=8)
-        gc.addWidget(self.gl_box)
-        layout.addWidget(gl_card)
         layout.addStretch()
         return page
 
@@ -474,10 +518,6 @@ class ImportPurchasesDialog(QDialog):
         s = self.session
         while self.stats_grid.count():
             w = self.stats_grid.takeAt(0).widget()
-            if w:
-                w.deleteLater()
-        while self.gl_flow.count():
-            w = self.gl_flow.takeAt(0).widget()
             if w:
                 w.deleteLater()
         if s.fmt is None:
@@ -518,11 +558,6 @@ class ImportPurchasesDialog(QDialog):
             f'One price per ingredient per week (Mon–Sun): total spend ÷ total portions. This file gives up to'
             f' {len(weeks)} price points, dated {week_text}.')
         (self.basis_latest if s.basis == 'latest' else self.basis_weekly).setChecked(True)
-        for code, n, sample in s.gl_codes():
-            box = QCheckBox(f'{code or "(none)"} · {sample[:28]} ({n})')
-            box.setChecked(code not in s.excluded_gl)
-            box.toggled.connect(lambda on, c=code: self._on_gl(c, on))
-            self.gl_flow.addWidget(box)
         if hasattr(self, 'next_btn'):
             self._sync_chrome()
 
@@ -573,11 +608,6 @@ class ImportPurchasesDialog(QDialog):
     def _on_basis(self, *_):
         self.session.basis = 'weekly' if self.basis_weekly.isChecked() else 'latest'
 
-    def _on_gl(self, code, on):
-        (self.session.excluded_gl.discard if on else self.session.excluded_gl.add)(code)
-        self._queue = []
-        self._sync_chrome()
-
     # --- 2 · locations -------------------------------------------------
 
     def _build_locations_page(self):
@@ -613,6 +643,11 @@ class ImportPurchasesDialog(QDialog):
         self._style_table(self.swing_table)
         self.swing_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         rl.addWidget(self.swing_table, stretch=1)
+        self.swing_empty = QLabel('')
+        self.swing_empty.setWordWrap(True)
+        self.swing_empty.setAlignment(Qt.AlignCenter)
+        self.swing_empty.setStyleSheet(f'color: {kit.MUTED}; font-size: 13px; padding: 40px 20px;')
+        rl.addWidget(self.swing_empty, stretch=1)
         self.swing_note = kit.note('')
         rl.addWidget(self.swing_note)
 
@@ -662,14 +697,18 @@ class ImportPurchasesDialog(QDialog):
         total = len(s.locations())
         ex = set(s.excluded_locations)
         self.loc_count.setText(f'{total - len(ex)} of {total} included')
-        rows = s.location_swings(ex, limit=12)
-        if ex:
-            self.swing_title.setText('Biggest swings from leaving locations out')
-            self.swing_hint.setText(f'Blended case price with your checked locations, against all {total}.'
-                                    ' Ingredients move by the same % per portion.')
-        else:
-            self.swing_title.setText('Where locations disagree most')
-            self.swing_hint.setText(f'All {total} locations are checked. Uncheck one to see which items it moves.')
+        rows = s.location_swings(ex)
+        cutoff = f'{pi.SWING_MIN * 100:.0f}%'
+        self.swing_title.setText(f'Items that move {cutoff} or more')
+        self.swing_hint.setText(f'Blended case price with your checked locations, against all {total}.'
+                                ' Ingredients move by the same % per portion.')
+        if not ex:
+            self.swing_empty.setText(f'All {total} locations are checked, so every price is blended across all of'
+                                     f' them.\n\nUncheck a location to see which items it moves by {cutoff} or more.')
+        elif not rows:
+            self.swing_empty.setText(f'Leaving these out moves no item’s price by {cutoff} or more.')
+        self.swing_table.setVisible(bool(rows))
+        self.swing_empty.setVisible(not rows)
         self.swing_table.setHorizontalHeaderLabels(
             ['Ingredient', 'Vendor item', 'Low – high case', f'All {total}', 'Checked', 'Swing'])
         self.swing_table.setRowCount(len(rows))
@@ -690,10 +729,7 @@ class ImportPurchasesDialog(QDialog):
                 self.swing_table.setItem(r, c, cell)
         self.swing_table.resizeColumnsToContents()
         self.swing_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        share = s.same_price_share()
-        self.swing_note.setText('' if share is None else
-                                f'{share * 100:.0f}% of the items bought at more than one location cost the same'
-                                ' at every one of them in this file.')
+        self.swing_note.setText('')
 
     # --- 3 · map new items ---------------------------------------------
 
@@ -717,8 +753,10 @@ class ImportPurchasesDialog(QDialog):
         ll.addWidget(kit.note('Only items never mapped or ignored land here. Each is mapped once; later imports'
                               ' price it automatically.'))
         self.queue_list = QListWidget()
-        self.queue_list.setStyleSheet(kit.LIST_STYLE)
-        self.queue_list.setWordWrap(True)
+        self.queue_list.setStyleSheet('QListWidget { border: 0; background: transparent; outline: 0; }')
+        self.queue_list.setItemDelegate(QueueCardDelegate(self.queue_list))
+        self.queue_list.setUniformItemSizes(True)
+        self.queue_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.queue_list.currentRowChanged.connect(self._show_queue_item)
         ll.addWidget(self.queue_list, stretch=1)
         ignore_rest = kit.button('Ignore all left…')
@@ -798,7 +836,9 @@ class ImportPurchasesDialog(QDialog):
         self.queue_list.blockSignals(True)
         self.queue_list.clear()
         for item in self._queue:
-            li = QListWidgetItem(self._queue_text(item))
+            li = QListWidgetItem()
+            li.setData(Qt.UserRole, self._queue_card(item))
+            li.setToolTip(f'{item.get("vendor_name")} · {item.get("description")}')
             self.queue_list.addItem(li)
         self.queue_list.blockSignals(False)
         has = bool(self._queue)
@@ -808,6 +848,23 @@ class ImportPurchasesDialog(QDialog):
             self.queue_list.setCurrentRow(min(self._queue_index, len(self._queue) - 1))
             self._show_queue_item(self.queue_list.currentRow())
         self._update_queue_count()
+
+    def _queue_card(self, item):
+        '''What a queue card shows: name; pack · avg case price · cases bought;
+        a mark once handled in this import.'''
+        p = self.session.pending.get(item['vendor_key'])
+        mark, kind = '', ''
+        if p and p.get('status') == 'mapped':
+            mark, kind = '✓', 'mapped'
+        elif p and p.get('status') == 'ignored':
+            mark, kind = 'Ignored', 'ignored'
+        elif p:
+            mark, kind = 'Skipped', 'skipped'
+        qty = item.get('_qty') or 0
+        detail = ' · '.join(filter(None, (item.get('pack_size'), f'{pi.money(item.get("_avg_case"))} a case',
+                                          f'{qty:,.4g} bought')))
+        return {'name': item.get('description') or '', 'detail': detail, 'mark': mark, 'mark_kind': kind,
+                'done': bool(p)}
 
     def _queue_text(self, item):
         p = self.session.pending.get(item['vendor_key'])
@@ -848,8 +905,7 @@ class ImportPurchasesDialog(QDialog):
         code = item.get('item_code') or 'no item code'
         self.map_vendor.setText(f'{item.get("vendor_name")} · {code}')
         self.map_desc.setText(item.get('description') or '')
-        self.map_meta.setText(f'Pack {item.get("pack_size") or "—"} · inventory item “{item.get("inventory_item") or "—"}”'
-                              f' · GL {item.get("gl_code") or "—"}')
+        self.map_meta.setText(f'Pack {item.get("pack_size") or "—"} · inventory item “{item.get("inventory_item") or "—"}”')
         self.map_price.setText(f'Avg case <b>{pi.money(item.get("_avg_case"))}</b><br>'
                                f'Bought {item.get("_qty", 0):g} · {item.get("_locations", 0)} locations')
         self.map_why.setText(why)
@@ -909,7 +965,7 @@ class ImportPurchasesDialog(QDialog):
             item.update(values)
         item['status'] = status
         self.session.set_item(item)
-        self.queue_list.item(self._queue_index).setText(self._queue_text(item))
+        self.queue_list.item(self._queue_index).setData(Qt.UserRole, self._queue_card(item))
         self._update_queue_count()
         nxt = next((i for i in list(range(self._queue_index + 1, len(self._queue))) + list(range(self._queue_index))
                     if self._queue[i]['vendor_key'] not in self.session.pending), None)
@@ -941,7 +997,7 @@ class ImportPurchasesDialog(QDialog):
         bar = QHBoxLayout()
         self.filter_buttons = {}
         group = QButtonGroup(self)
-        for key, label in (('all', 'All'), ('changed', 'Changed'), ('flagged', 'Flagged'), ('first', 'First price')):
+        for key, label in (('all', 'All'), ('changed', 'Changed'), ('flagged', 'Flagged'), ('first', 'No current price')):
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setAutoDefault(False)
@@ -956,13 +1012,22 @@ class ImportPurchasesDialog(QDialog):
             self.filter_buttons[key] = btn
             bar.addWidget(btn)
         bar.addStretch()
+        self.review_help = kit.note('Checked ingredients get the new prices when you apply; unchecked ones keep their'
+                                    ' current price. In the chart, the dashed line is the current price.')
         self.review_summary = QLabel('')
         self.review_summary.setStyleSheet(f'color: {kit.MUTED}; font-size: 12px;')
         bar.addWidget(self.review_summary)
         layout.addLayout(bar)
+        layout.addWidget(self.review_help)
         self.review_table = QTableWidget(0, 8)
         self.review_table.setHorizontalHeaderLabels(
-            ['', 'Ingredient', 'From', 'Current', 'Weekly', 'Latest', 'Change', 'Check'])
+            ['Apply', 'Ingredient', 'From', 'Current', 'New, by week', 'Latest week', 'vs current', 'Check'])
+        tips = {0: 'Checked: the new prices are written when you apply. Unchecked: the ingredient keeps its'
+                   ' current price.',
+                4: 'Solid line: the new weekly prices. Dashed line: the current price.',
+                6: 'Latest week against the current price.'}
+        for col, tip in tips.items():
+            self.review_table.horizontalHeaderItem(col).setToolTip(tip)
         self._style_table(self.review_table)
         self.review_table.setItemDelegateForColumn(4, SparklineDelegate(self.review_table))
         self.review_table.itemChanged.connect(self._on_review_check)
@@ -990,7 +1055,8 @@ class ImportPurchasesDialog(QDialog):
         self.filter_buttons[self._review_filter].setChecked(True)
         for key, btn in self.filter_buttons.items():
             n = sum(1 for r in rows if self._matches(r, key))
-            btn.setText({'all': 'All', 'changed': 'Changed', 'flagged': 'Flagged', 'first': 'First price'}[key] + f'  {n}')
+            btn.setText({'all': 'All', 'changed': 'Changed', 'flagged': 'Flagged', 'first': 'No current price'}[key]
+                        + f'  {n}')
         unpriced = self.session.unpriced()
         if unpriced:
             names = '; '.join(f'{_item_label(i)} ({why})' for i, why in unpriced[:6])
@@ -1022,7 +1088,8 @@ class ImportPurchasesDialog(QDialog):
         t.blockSignals(True)
         t.setRowCount(len(rows))
         basis = self.session.basis
-        t.setHorizontalHeaderItem(4, QTableWidgetItem('Weekly' if basis == 'weekly' else 'Latest day'))
+        self.review_table.horizontalHeaderItem(4).setText('New, by week' if basis == 'weekly' else 'New')
+        self.review_table.horizontalHeaderItem(5).setText('Latest week' if basis == 'weekly' else 'New price')
         for r, row in enumerate(rows):
             ing = row['ingredient']
             check = QTableWidgetItem()
@@ -1037,12 +1104,12 @@ class ImportPurchasesDialog(QDialog):
             src_text = (f'{src[0].get("vendor_name", "").split(" ")[0]} · {_item_label(src[0])}' if len(src) == 1
                         else f'{len(src)} vendor items')
             t.setItem(r, 2, QTableWidgetItem(src_text))
-            cur = QTableWidgetItem('none' if row['first'] else pi.money(row['current'], 3))
+            cur = QTableWidgetItem('—' if row['first'] else pi.money(row['current'], 3))
             cur.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             t.setItem(r, 3, cur)
             spark = QTableWidgetItem('')
             spark.setData(Qt.UserRole, [p['per_portion'] for p in row['points']])
-            spark.setData(Qt.UserRole + 1, _RED if row['flags'] else kit.ROMAINE)
+            spark.setData(Qt.UserRole + 1, None if row['first'] else row['current'])
             spark.setToolTip('\n'.join(f'{p["label"]}: {pi.money(p["per_portion"], 3)}' for p in row['points']))
             t.setItem(r, 4, spark)
             latest = QTableWidgetItem(pi.money(row['latest'], 3))
@@ -1051,22 +1118,22 @@ class ImportPurchasesDialog(QDialog):
             f.setBold(True)
             latest.setFont(f)
             t.setItem(r, 5, latest)
-            change = QTableWidgetItem('first price' if row['first'] else _pct(row['change']))
-            change.setTextAlignment(Qt.AlignCenter)
-            if row['flags']:
-                change.setForeground(QColor(_RED))
-                change.setBackground(QColor(_RED_BG))
-            elif row['first']:
-                change.setForeground(QColor(_GREEN))
-                change.setBackground(QColor(_GREEN_BG))
-            elif row['change'] is not None and abs(row['change']) >= pi.UNCHANGED_BELOW:
-                up = row['change'] > 0
-                change.setForeground(QColor(kit.WARN if up else _DOWN))
-                change.setBackground(QColor(_UP_BG if up else _DOWN_BG))
+            if row['first']:
+                change = QTableWidgetItem('new')
+                change.setToolTip('This ingredient has no price yet; the import gives it its first one.')
+                change.setForeground(QColor(kit.MUTED))
+            else:
+                c = row['change'] or 0
+                arrow = '▲' if c > 0 else ('▼' if c < 0 else '')
+                change = QTableWidgetItem(f'{arrow} {abs(c) * 100:.1f}%'.strip() if abs(c) >= 0.0005 else '0%')
+                change.setForeground(QColor(kit.KALE if abs(c) >= pi.UNCHANGED_BELOW else kit.MUTED))
+            change.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             t.setItem(r, 6, change)
             flag = QTableWidgetItem('\n'.join(f'{a}: {b}' for a, b in row['flags']))
+            if row['flags']:
+                flag.setBackground(QColor(_UP_BG))
             flag.setToolTip(flag.text())
-            flag.setForeground(QColor(_RED))
+            flag.setForeground(QColor(kit.WARN))
             t.setItem(r, 7, flag)
         t.blockSignals(False)
         t.resizeColumnsToContents()
@@ -1134,8 +1201,11 @@ class ImportPurchasesDialog(QDialog):
         self.done_body = QLabel('')
         self.done_body.setWordWrap(True)
         self.done_body.setAlignment(Qt.AlignCenter)
-        self.done_body.setMaximumWidth(620)
         self.done_body.setStyleSheet(f'color: {kit.MUTED}; font-size: 13px;')
+        self.done_hint = QLabel('You can also undo it later in Configure › Import formats & history.')
+        self.done_hint.setWordWrap(True)
+        self.done_hint.setAlignment(Qt.AlignCenter)
+        self.done_hint.setStyleSheet(f'color: {kit.MUTED}; font-size: 12px;')
         undo = kit.button('Undo this import')
         undo.clicked.connect(self._undo)
         self.undo_btn = undo
@@ -1143,11 +1213,20 @@ class ImportPurchasesDialog(QDialog):
         row.addStretch()
         row.addWidget(undo)
         row.addStretch()
-        layout.addWidget(self.done_title)
-        layout.addWidget(self.done_body, alignment=Qt.AlignHCenter)
-        layout.addLayout(row)
-        layout.addWidget(kit.note('Undo stays available in Configure › Import formats & history.'),
-                         alignment=Qt.AlignHCenter)
+        column = QWidget()
+        column.setMaximumWidth(640)
+        cl = QVBoxLayout(column)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.setSpacing(14)
+        cl.addWidget(self.done_title)
+        cl.addWidget(self.done_body)
+        centre = QHBoxLayout()
+        centre.addStretch()
+        centre.addWidget(column, stretch=1)
+        centre.addStretch()
+        layout.addLayout(centre)
+        cl.addLayout(row)
+        cl.addWidget(self.done_hint)
         return page
 
     def _load_done_page(self):

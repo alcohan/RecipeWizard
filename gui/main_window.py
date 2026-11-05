@@ -350,6 +350,7 @@ class MainWindow(QMainWindow):
         cfg.add_group('App')
         self.preferences_page = PreferencesPage()
         self.preferences_page.changed.connect(self._refresh_configure_counts)
+        self.preferences_page.foodCostChanged.connect(self._on_food_cost_target_changed)
         cfg.add_section('preferences', 'Preferences', self.preferences_page)
         self.configure_tab = cfg
         return cfg
@@ -977,6 +978,14 @@ class MainWindow(QMainWindow):
                 'is the newest version.')
         else:
             QMessageBox.warning(self, title, f"Couldn't check for updates.\n\n{value}")
+
+    def _on_food_cost_target_changed(self):
+        '''The target moved or was switched off: everything that marks
+        recipes over it redraws — Library, inspector, Needs review, open
+        recipe tabs.'''
+        self.refresh()
+        for editor in self.recipes_tab.editor_tabs.editors():
+            editor._refresh()
 
     def _on_preferences(self):
         self._show_configure('preferences')

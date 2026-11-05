@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 import db
-from gui.models.recipes_model import FOOD_COST_TARGET
+from gui.services import food_cost
 from gui.services.compare_tray import CompareTray
 from gui.widgets import config_kit as kit
 from gui.widgets.compare_chart import CompareChart
@@ -483,7 +483,7 @@ class AnalyticsTab(QWidget):
         s = self._settings
         self.data = compare.build(self._details, self._model.rows(), ids, self._categories, self._colors,
                                   metric=s['metric'], basis=s['basis'], values=s['values'])
-        self.data['target'] = FOOD_COST_TARGET
+        self.data['target'] = food_cost.target_percent()
         for link in self._saved_links():
             link.set_active(link.comparison_id == self.active_saved())
         if not has:
@@ -569,7 +569,7 @@ class AnalyticsTab(QWidget):
                     item.setForeground(QColor(kit.WARN))
                     item.setBackground(QColor(_WARN_BG))
                     item.setFont(bold)
-                    item.setToolTip(f'Food cost over the {FOOD_COST_TARGET:.0f}% target')
+                    item.setToolTip(f'Food cost over the {food_cost.target_percent():.0f}% target')
                 if kind == 'category' and value is not None:
                     item.setToolTip(self._cell_tip(recipes[c - 1], row['label']))
                 if kind in ('total', 'price'):

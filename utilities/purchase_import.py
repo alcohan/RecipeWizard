@@ -40,6 +40,7 @@ import config
 JUMP_LIMIT = 0.30         # flag a price that moved more than ±30%
 DISAGREE_LIMIT = 1.5      # flag vendor items for one ingredient > 1.5× apart
 UNCHANGED_BELOW = 0.01    # under 1% counts as unchanged in the review
+SWING_MIN = 0.03          # location preview shows items moving 3% or more
 
 BUILTIN_FORMAT_NAME = 'Purchase history (inventory system)'
 
@@ -55,7 +56,6 @@ FIELDS = (
     ('unit_price', 'Unit price', False, 'Used when Amount is missing'),
     ('location', 'Location', False, 'Lets you choose which stores to blend'),
     ('inventory_item', 'Inventory item', False, 'Suggests the ingredient for new items'),
-    ('gl_code', 'GL code', False, 'Filters food and packaging from supplies'),
     ('invoice', 'Invoice number', False, 'Shown on the import'),
 )
 FIELD_LABELS = {key: label for key, label, _, _ in FIELDS}
@@ -97,7 +97,6 @@ def builtin_format_settings():
             'unit_price': 'AvgPrice',
             'location': 'LocationName',
             'inventory_item': 'InventoryItemName',
-            'gl_code': 'GLCode',
             'invoice': 'InvoiceNumber',
         },
         'date_format': 'MM/DD/YYYY',
@@ -106,7 +105,6 @@ def builtin_format_settings():
         'catch_weight': True,          # "LB WEIGHT" pack: quantity is pounds
         'basis': 'weekly',             # 'weekly' or 'latest'
         'excluded_locations': [],
-        'excluded_gl': ['6240', '6260', '6270'],
         'vendor_suppliers': {},        # name in file → supplier id
     }
 
@@ -114,7 +112,6 @@ def builtin_format_settings():
 def default_settings():
     s = builtin_format_settings()
     s['columns'] = {}
-    s['excluded_gl'] = []
     return s
 
 
@@ -354,7 +351,6 @@ def guess_columns(headers):
         'unit_price': ('avgprice', 'unitprice', 'price', 'caseprice'),
         'location': ('locationname', 'location', 'store', 'site'),
         'inventory_item': ('inventoryitemname', 'inventoryitem'),
-        'gl_code': ('glcode', 'gl', 'glaccount', 'category'),
         'invoice': ('invoicenumber', 'invoice', 'invoiceno'),
     }
     squashed = {re.sub(r'[^a-z0-9]', '', h.lower()): h for h in headers}
@@ -371,7 +367,7 @@ def guess_columns(headers):
 
 class Line:
     __slots__ = ('date', 'vendor', 'item_code', 'description', 'pack_size', 'quantity', 'amount',
-                 'location', 'inventory_item', 'gl_code', 'invoice', 'key')
+                 'location', 'inventory_item', 'invoice', 'key')
 
     def __init__(self, **kw):
         for k in self.__slots__:
@@ -428,7 +424,6 @@ def parse_lines(rows, settings):
             amount=amount,
             location=_clean(get('location')) or 'All locations',
             inventory_item=_clean(get('inventory_item')),
-            gl_code=_clean(get('gl_code')),
             invoice=_clean(get('invoice')),
         )
         line.key = vendor_key(line.vendor, line.item_code, line.description, line.pack_size)
@@ -783,7 +778,6 @@ class ImportSession:
         self.stats = collections.Counter()
         self.basis = 'weekly'
         self.excluded_locations = set()
-        self.excluded_gl = set()
         self.ingredients = []
         self.ingredients_by_id = {}
         self.known = {}             # vendor_key → saved vendor item
@@ -811,9 +805,7 @@ class ImportSession:
         self.basis = self.settings.get('basis', 'weekly')
         self.lines, self.stats = parse_lines(self.rows, self.settings)
         present_locs = {l.location for l in self.lines}
-        present_gl = {l.gl_code for l in self.lines}
         self.excluded_locations = set(self.settings.get('excluded_locations') or []) & present_locs
-        self.excluded_gl = set(self.settings.get('excluded_gl') or []) & present_gl
 
     # --- what's in the file ---
 
@@ -832,26 +824,14 @@ class ImportSession:
         c = collections.Counter(l.location for l in self.lines)
         return sorted(c.items(), key=lambda kv: kv[0].casefold())
 
-    def gl_codes(self):
-        '''[(code, line count, a sample inventory item)], by code.'''
-        c = collections.Counter(l.gl_code for l in self.lines)
-        sample = {}
-        for l in self.lines:
-            sample.setdefault(l.gl_code, l.inventory_item or l.description)
-        return [(code, n, sample[code]) for code, n in sorted(c.items())]
-
-    def gl_lines(self):
-        '''Lines after the GL filter (locations not applied).'''
-        return [l for l in self.lines if l.gl_code not in self.excluded_gl]
-
     def included_lines(self, excluded_locations=None):
         ex = self.excluded_locations if excluded_locations is None else excluded_locations
-        return [l for l in self.lines if l.gl_code not in self.excluded_gl and l.location not in ex]
+        return [l for l in self.lines if l.location not in ex]
 
     def avg_case_prices(self):
-        '''{vendor_key: average case price} over the GL-filtered lines.'''
+        '''{vendor_key: average case price} over every line in the file.'''
         totals = collections.defaultdict(lambda: [0.0, 0.0])
-        for l in self.gl_lines():
+        for l in self.lines:
             totals[l.key][0] += l.quantity
             totals[l.key][1] += l.amount
         return {k: a / q for k, (q, a) in totals.items() if q}
@@ -860,11 +840,11 @@ class ImportSession:
         return self.pending.get(key) or self.known.get(key)
 
     def file_items(self):
-        '''One dict per vendor item in the GL-filtered lines, with
+        '''One dict per vendor item in the file, with
         purchase totals; saved fields come from the library or from edits
         in this import.'''
         groups = collections.OrderedDict()
-        for l in self.gl_lines():
+        for l in self.lines:
             g = groups.get(l.key)
             if g is None:
                 g = groups[l.key] = {'key': l.key, 'line': l, 'qty': 0.0, 'amount': 0.0, 'lines': 0,
@@ -881,7 +861,7 @@ class ImportSession:
             item = dict(saved) if saved else {
                 'vendor_key': key, 'vendor_name': l.vendor, 'item_code': l.item_code,
                 'description': l.description, 'pack_size': l.pack_size,
-                'inventory_item': l.inventory_item, 'gl_code': l.gl_code, 'status': 'new',
+                'inventory_item': l.inventory_item, 'status': 'new',
                 'yield_pct': 100,
             }
             item.update({'_qty': g['qty'], '_amount': g['amount'], '_lines': g['lines'],
@@ -924,13 +904,16 @@ class ImportSession:
 
     # --- locations ---
 
-    def location_swings(self, excluded, limit=8):
-        '''How leaving locations out moves blended case prices. Rows per
-        vendor item bought at more than one location:
+    def location_swings(self, excluded, limit=None):
+        '''How leaving locations out moves blended case prices: rows for
+        vendor items whose price moves by SWING_MIN or more, or that only
+        the left-out locations bought —
         {'ingredient', 'item', 'low', 'high', 'all', 'selected', 'change'},
-        sorted by |change| when something is left out, else by spread.'''
+        biggest move first. Empty when nothing is left out.'''
+        if not excluded:
+            return []
         per = collections.defaultdict(lambda: collections.defaultdict(lambda: [0.0, 0.0]))
-        for l in self.gl_lines():
+        for l in self.lines:
             t = per[l.key][l.location]
             t[0] += l.quantity
             t[1] += l.amount
@@ -949,6 +932,8 @@ class ImportSession:
             all_avg = all_a / all_q
             sel_avg = sel_a / sel_q if sel_q else None
             item = self.item_for(key)
+            if item and item.get('status') == 'ignored':
+                continue   # never priced, so its swing doesn't matter
             line = next(l for l in self.lines if l.key == key)
             ing = None
             if item and item.get('status') == 'mapped' and item.get('ingredient_id'):
@@ -961,17 +946,15 @@ class ImportSession:
                 'spread': max(avgs) / min(avgs) - 1 if min(avgs) > 0 else 0,
                 'mapped': ing is not None,
             })
-        if excluded:
-            rows.sort(key=lambda r: (-(abs(r['change']) if r['change'] is not None else 1e9), not r['mapped']))
-        else:
-            rows.sort(key=lambda r: (-r['spread'], not r['mapped']))
-        return rows[:limit]
+        rows = [r for r in rows if r['change'] is None or abs(r['change']) >= SWING_MIN]
+        rows.sort(key=lambda r: (r['change'] is None, -abs(r['change'] or 0), not r['mapped']))
+        return rows[:limit] if limit else rows
 
     def same_price_share(self):
         '''Share of vendor items bought at 2+ locations whose price was
         the same everywhere (within half a percent).'''
         per = collections.defaultdict(lambda: collections.defaultdict(lambda: [0.0, 0.0]))
-        for l in self.gl_lines():
+        for l in self.lines:
             t = per[l.key][l.location]
             t[0] += l.quantity
             t[1] += l.amount
@@ -1094,7 +1077,7 @@ class ImportSession:
                 item = self.item_for(key) or {
                     'vendor_key': key, 'vendor_name': l.vendor, 'item_code': l.item_code,
                     'description': l.description, 'pack_size': l.pack_size,
-                    'inventory_item': l.inventory_item, 'gl_code': l.gl_code, 'status': 'new',
+                    'inventory_item': l.inventory_item, 'status': 'new',
                 }
                 item = dict(item)
                 price, day = last_price.get(key, (None, None))
@@ -1106,7 +1089,7 @@ class ImportSession:
                 if key not in ids:
                     ids[key] = _save_item(con, item)
             settings = {'basis': self.basis, 'excluded_locations': sorted(self.excluded_locations),
-                        'excluded_gl': sorted(self.excluded_gl), 'format': self.fmt and self.fmt.get('name')}
+                    'format': self.fmt and self.fmt.get('name')}
             batch_id = con.execute(
                 "INSERT INTO import_batches (imported_at, file_name, format_id, date_from, date_to, settings)"
                 " VALUES (datetime('now', 'localtime'), ?, ?, ?, ?, ?);",
@@ -1123,9 +1106,11 @@ class ImportSession:
             _write_prices(con, batch_id, self.basis, ingredient_ids)
             if remember and self.fmt and self.fmt.get('id'):
                 saved = dict(self.settings)
+                saved.pop('excluded_gl', None)
+                saved['columns'] = {k: v for k, v in saved.get('columns', {}).items() if k != 'gl_code'}
                 saved.update({'basis': self.basis,
                               'excluded_locations': sorted(self.excluded_locations),
-                              'excluded_gl': sorted(self.excluded_gl), 'vendor_suppliers': aliases,
+                              'vendor_suppliers': aliases,
                               'headers': self.headers,
                               'sample': {h: (self.rows[0].get(h) or '') for h in self.headers} if self.rows else {}})
                 con.execute('UPDATE import_formats SET settings = ? WHERE id = ?;',

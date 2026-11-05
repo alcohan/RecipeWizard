@@ -21,7 +21,8 @@ from PySide6.QtWidgets import (
 import db
 from gui.widgets.elided_label import ElidedLabel
 from gui.widgets.flow_layout import FlowLayout
-from gui.widgets.recipe_gallery import FOOD_COST_TARGET, diet_chip, tag_chip
+from gui.services import food_cost
+from gui.widgets.recipe_gallery import diet_chip, tag_chip
 from gui.widgets.wedge_view import WedgeView
 from utilities import diets
 
@@ -268,8 +269,10 @@ class RecipeInspector(QScrollArea):
             food.setStyleSheet(f'color: {_MUTED}; font-size: 20px; font-weight: 650;')
         else:
             food.setText(f'{pct:.1f}%')
-            food.setToolTip(f'of ${float(row["MenuPrice"]):.2f} · target {FOOD_COST_TARGET:.0f}%')
-            color = _WARN if pct > FOOD_COST_TARGET else _KALE
+            target = food_cost.target_percent()
+            food.setToolTip(f'of ${float(row["MenuPrice"]):.2f}'
+                            + (f' · target {target:.0f}%' if target is not None else ''))
+            color = _WARN if food_cost.over_percent(pct) else _KALE
             food.setStyleSheet(f'color: {color}; font-size: 20px; font-weight: 650;')
         self._stats['kcal'].setText(f'{row.get("CaloriesPerServing", 0):.0f}')
 

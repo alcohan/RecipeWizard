@@ -283,7 +283,7 @@ class VendorItemsPage(QWidget):
             return
         self._selected_id = v['id']
         code = v.get('item_code') or 'no item code'
-        self.d_meta.setText(f'{v["vendor_name"]} · {code} · GL {v.get("gl_code") or "—"}')
+        self.d_meta.setText(f'{v["vendor_name"]} · {code}')
         self.d_title.setText(f'{v["description"]}  ·  {v.get("pack_size") or ""}')
         self.d_inv.setText(f'Inventory item “{v.get("inventory_item") or "—"}” · last bought {v.get("last_seen") or "—"}'
                            f' at {pi.money(v.get("last_case_price"))} a case')

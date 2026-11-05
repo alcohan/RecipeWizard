@@ -13,12 +13,19 @@ the public DEMO_KEY (30 req/hour per IP) until the user provides one.
 Updates: whether to check GitHub once a day at startup, and whether
 pre-releases count (on by default while every release is one). Both
 are read by gui.services.updates at check time.
+
+Food cost target: the percent recipes are flagged over, or off
+(gui.services.food_cost). `foodCostChanged` tells the main window to
+redraw what shows it.
 '''
 from PySide6.QtCore import Qt, QSettings, Signal
-from PySide6.QtWidgets import QApplication, QCheckBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QApplication, QCheckBox, QDoubleSpinBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget,
+)
 
 import api.usda
 import config
+from gui.services import food_cost
 from gui.services import updates as update_prefs
 from gui.widgets import config_kit as kit
 
@@ -29,6 +36,7 @@ _OK = '#24502A'
 
 class PreferencesPage(QWidget):
     changed = Signal()
+    foodCostChanged = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -71,10 +79,47 @@ class PreferencesPage(QWidget):
         layout.setSpacing(12)
         layout.addWidget(kit.heading('Preferences'))
         layout.addWidget(kit.note('Settings for this computer. Changes save as you make them.'))
+        layout.addWidget(self._food_cost_card())
         layout.addWidget(card)
         layout.addWidget(self._updates_card())
         layout.addStretch()
         self._show_saved()
+
+    def _food_cost_card(self):
+        card, cl = kit.card()
+        card.setMaximumWidth(720)
+        cl.addWidget(kit.subheading('Food cost target'))
+        cl.addWidget(kit.note('Recipes over the target are marked ▲ in amber on Library cards, in the inspector,'
+                              ' Analytics and the recipe editor, and land in Needs review. Turn it off to show'
+                              ' food cost without judging it.'))
+        self.fc_enabled = QCheckBox('Flag recipes over a food-cost target')
+        self.fc_enabled.setStyleSheet(f'color: {kit.KALE};')
+        self.fc_enabled.setChecked(food_cost.enabled())
+        self.fc_target = QDoubleSpinBox()
+        self.fc_target.setRange(5.0, 80.0)
+        self.fc_target.setDecimals(1)
+        self.fc_target.setSingleStep(0.5)
+        self.fc_target.setSuffix(' %')
+        self.fc_target.setKeyboardTracking(False)
+        self.fc_target.setMinimumHeight(30)
+        self.fc_target.setValue(food_cost.stored_fraction() * 100)
+        self.fc_target.setEnabled(self.fc_enabled.isChecked())
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.addWidget(self.fc_enabled)
+        row.addSpacing(12)
+        row.addWidget(kit.eyebrow('Target'))
+        row.addWidget(self.fc_target)
+        row.addStretch()
+        cl.addLayout(row)
+        self.fc_enabled.toggled.connect(self._save_food_cost)
+        self.fc_target.valueChanged.connect(self._save_food_cost)
+        return card
+
+    def _save_food_cost(self, *_):
+        self.fc_target.setEnabled(self.fc_enabled.isChecked())
+        food_cost.save(self.fc_enabled.isChecked(), self.fc_target.value() / 100)
+        self.foodCostChanged.emit()
 
     def _updates_card(self):
         card, cl = kit.card()

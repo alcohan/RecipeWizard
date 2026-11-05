@@ -5,7 +5,7 @@ Everything compares against the baseline — the recipe as it was at
 the last save — so the user sees what their unsaved edits do
 ("+$0.19 vs saved", "Calories 640 +21").
 '''
-from PySide6.QtCore import QRectF, QSettings, Qt, Signal
+from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget,
@@ -19,7 +19,6 @@ _RULE = '#f3ece0'
 _TRACK = '#efe9de'
 _OVER = '#8a4a00'
 _OVER_BG = '#fff0dc'
-_DEFAULT_FOOD_COST_TARGET = 0.28
 _BAR_MAX = 0.5   # the food-cost bar spans 0–50%
 
 # (key in recipe_info, label, unit suffix)
@@ -35,7 +34,9 @@ _NUTRITION = (
 
 
 def food_cost_target():
-    return QSettings().value('food_cost/target_pct', _DEFAULT_FOOD_COST_TARGET, type=float)
+    '''A fraction (0.28), or None when the target is switched off.'''
+    from gui.services import food_cost
+    return food_cost.target_fraction()
 
 
 def _eyebrow(text):
@@ -179,7 +180,7 @@ class EditorResults(QWidget):
         target = food_cost_target()
         if price > 0:
             pct = cost / price
-            over = pct > target
+            over = target is not None and pct > target
             pct_html = (f'<b style="color: {_OVER}; background: {_OVER_BG}">{pct * 100:.1f}%</b>'
                         if over else f'<b style="color: {_KALE}">{pct * 100:.1f}%</b>')
             self.food_cost_label.setText(f'Food cost {pct_html} of ${price:.2f}')
@@ -187,9 +188,9 @@ class EditorResults(QWidget):
             self.margin_label.show()
             self.food_cost_bar.set_values(pct, target)
             self.food_cost_bar.show()
-            self._scale_target.setText(f'target {target * 100:.0f}%')
+            self._scale_target.setText(f'target {target * 100:.0f}%' if target is not None else '')
             # Stretch the gaps so the label lands near the tick.
-            left = max(1, int(target / _BAR_MAX * 100))
+            left = max(1, int((target if target is not None else _BAR_MAX / 2) / _BAR_MAX * 100))
             while self._scale_layout.count() > 3:
                 self._scale_layout.takeAt(1)
                 self._scale_layout.takeAt(2)
@@ -247,11 +248,12 @@ class _FoodCostBar(QWidget):
         self.setFixedHeight(18)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._pct = 0.0
-        self._target = _DEFAULT_FOOD_COST_TARGET
+        self._target = None
 
     def set_values(self, pct, target):
         self._pct, self._target = pct, target
-        self.setToolTip(f'Food cost {pct * 100:.1f}%, target {target * 100:.0f}%')
+        self.setToolTip(f'Food cost {pct * 100:.1f}%'
+                        + (f', target {target * 100:.0f}%' if target is not None else ''))
         self.update()
 
     def paintEvent(self, _event):
@@ -264,7 +266,9 @@ class _FoodCostBar(QWidget):
         p.drawRoundedRect(track, 5, 5)
         fill_w = w * max(0.0, min(1.0, self._pct / _BAR_MAX))
         if fill_w > 0:
-            p.setBrush(QColor(_OVER if self._pct > self._target else _ROMAINE))
+            over = self._target is not None and self._pct > self._target
+            p.setBrush(QColor(_OVER if over else _ROMAINE))
             p.drawRoundedRect(QRectF(0, 4, fill_w, 10), 5, 5)
-        tx = w * max(0.0, min(1.0, self._target / _BAR_MAX))
-        p.fillRect(QRectF(tx - 1, 0, 2, 18), QColor(_KALE))
+        if self._target is not None:
+            tx = w * max(0.0, min(1.0, self._target / _BAR_MAX))
+            p.fillRect(QRectF(tx - 1, 0, 2, 18), QColor(_KALE))

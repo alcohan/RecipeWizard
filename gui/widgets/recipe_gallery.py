@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 import db
+from gui.services import food_cost
 from gui.models.recipes_model import SORTS, prices_drifted as _prices_drifted
 from gui.widgets.elided_label import ElidedLabel
 from gui.widgets.wedge_view import WedgeView
@@ -36,7 +37,6 @@ _ROMAINE = '#347200'
 _MUTED = '#55624c'
 _BORDER = '#ebe1cd'
 _WARN_FG, _WARN_BG = '#8a4a00', '#fff0dc'
-FOOD_COST_TARGET = 28.0
 _MAX_CHIPS = 3
 SUB_RECIPE_GROUP = 'Sub-recipes'
 UNTAGGED_GROUP = 'Untagged'
@@ -45,13 +45,12 @@ GROUP_BY = (('format', 'Format'), ('tags', 'Tags'), ('diets', 'Diets'), ('none',
 
 
 def food_cost_text(row):
-    '''("24.5% of $13.95", over_target) or ("No menu price", False).'''
+    '''("24.5% of $13.95", over_target) or ("No menu price", False).
+    Over the target the text stays the same; the card adds ▲ and amber.'''
     pct = row.get('FoodCostPct')
     if pct is None:
         return 'No menu price', False
-    if pct > FOOD_COST_TARGET:
-        return f'{pct:.1f}% · over target', True
-    return f'{pct:.1f}% of ${float(row["MenuPrice"]):.2f}', False
+    return f'{pct:.1f}% of ${float(row["MenuPrice"]):.2f}', food_cost.over_percent(pct)
 
 
 def group_title(name):

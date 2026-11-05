@@ -10,6 +10,7 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtGui import QColor
 
 import db
+from gui.services import food_cost
 from utilities import diets
 
 
@@ -23,7 +24,6 @@ SORTS = {
 }
 
 
-FOOD_COST_TARGET = 28.0
 SUB_RECIPES = '__sub__'     # the format filter's key for recipes with no format
 
 
@@ -56,8 +56,8 @@ def review_reasons(row, prices_in_use=True):
         if pct is None:
             if prices_in_use:
                 reasons.append('No menu price')
-        elif pct > FOOD_COST_TARGET:
-            reasons.append(f'Food cost over {FOOD_COST_TARGET:.0f}%')
+        elif food_cost.over_percent(pct):
+            reasons.append(f'Food cost over {food_cost.target_percent():.0f}%')
     if not row.get('CaloriesPerServing'):
         reasons.append('Missing nutrition')
     return reasons

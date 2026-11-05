@@ -118,7 +118,7 @@ class FormatEditor(QWidget):
         vc.addWidget(self.vendor_empty)
         self.remembered = kit.note('')
         vc.addWidget(self.remembered)
-        self.clear_remembered = kit.button('Include all locations and GL codes next time')
+        self.clear_remembered = kit.button('Include all locations next time')
         self.clear_remembered.clicked.connect(self._clear_remembered)
         vc.addWidget(self.clear_remembered, alignment=Qt.AlignLeft)
 
@@ -205,19 +205,12 @@ class FormatEditor(QWidget):
 
     def _load_remembered(self):
         locs = self._settings.get('excluded_locations') or []
-        gl = self._settings.get('excluded_gl') or []
-        parts = []
-        if locs:
-            parts.append(f'locations {", ".join(locs)}')
-        if gl:
-            parts.append(f'GL codes {", ".join(gl)}')
-        self.remembered.setText(('Left out of imports: ' + '; '.join(parts) + '.') if parts else
-                                'Every location and GL code is included.')
-        self.clear_remembered.setVisible(bool(parts))
+        self.remembered.setText(f'Locations left out of imports: {", ".join(locs)}.' if locs else
+                                'Every location is included.')
+        self.clear_remembered.setVisible(bool(locs))
 
     def _clear_remembered(self):
         self._settings['excluded_locations'] = []
-        self._settings['excluded_gl'] = []
         self._load_remembered()
 
     def settings(self):

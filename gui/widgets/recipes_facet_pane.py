@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 import db
+from gui.services import food_cost
 from gui.models.recipes_facet_proxy import matches
 from gui.models.recipes_model import SUB_RECIPES
 from gui.widgets.elided_label import ElidedLabel
@@ -47,7 +48,11 @@ from utilities import diets
 
 FOOD_COST_OFF = 50          # slider top stop = no food-cost filter
 _FOOD_COST_MIN = 15
-_FOOD_COST_TARGET = 28      # the canvas's target line
+
+
+def _target_text():
+    t = food_cost.target_percent()
+    return f' · target {t:.0f}%' if t is not None else ''
 
 
 class RecipesFacetPane(FacetPane):
@@ -110,7 +115,6 @@ class RecipesFacetPane(FacetPane):
         self.food_cost.setPageStep(5)
         self.food_cost.setTickPosition(QSlider.TicksBelow)
         self.food_cost.setTickInterval(5)
-        self.food_cost.setToolTip(f'Target food cost: {_FOOD_COST_TARGET}%')
         self.food_cost.valueChanged.connect(self._on_food_cost)
         self.food_cost_label = QLabel('')
         self.food_cost_label.setWordWrap(True)
@@ -368,9 +372,9 @@ class RecipesFacetPane(FacetPane):
         if not priced:
             self.food_cost_label.setText('Set menu prices on recipes to filter by food cost.')
         elif value >= FOOD_COST_OFF:
-            self.food_cost_label.setText(f'Any · target {_FOOD_COST_TARGET}% · {priced} priced')
+            self.food_cost_label.setText(f'Any{_target_text()} · {priced} priced')
         else:
-            self.food_cost_label.setText(f'Up to {value}% · target {_FOOD_COST_TARGET}%')
+            self.food_cost_label.setText(f'Up to {value}%{_target_text()}')
         self._food_section.set_filtering(bool(priced) and value < FOOD_COST_OFF)
 
     def max_food_cost(self):
