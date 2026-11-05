@@ -793,16 +793,11 @@ class MainWindow(QMainWindow):
 
     def _on_backup_now(self):
         '''Ctrl+Shift+B: a timestamped .rwbackup in the data folder,
-        with or without photos as last chosen (asked the first time).
-        The status bar's "Last backup" and Library health's backups card
+        without photos (Back up... asks, for a backup with them). The
+        status bar's "Last backup" and Library health's backups card
         both read this folder.'''
-        include_images = backup_restore.remembered_include_images()
-        if include_images is None:
-            include_images = backup_restore.ask_backup_options(self)
-            if include_images is None:
-                return False
         path = os.path.join(backup.default_backup_dir(), backup.timestamped_name())
-        if backup_restore.run_backup(self, path, include_images) is None:
+        if backup_restore.run_backup(self, path, False) is None:
             return False
         self.status_bar.refresh()
         self.library_health_tab.mark_stale()
@@ -847,11 +842,12 @@ class MainWindow(QMainWindow):
         dlg = backup_restore.RestoreDialog(info, self)
         if dlg.exec() != QDialog.Accepted:
             return
-        mode = dlg.mode
+        mode, safety = dlg.mode, dlg.safety
         if mode == 'overwrite' and QMessageBox.warning(
             self, 'Overwrite Library',
-            'Replace your whole library with this backup? Your current library is '
-            'backed up to the data folder first.',
+            'Replace your whole library with this backup? '
+            + ('Your current library is backed up to the data folder first.' if safety
+               else 'Your current library will not be backed up.'),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         ) != QMessageBox.Yes:
             return
@@ -862,7 +858,7 @@ class MainWindow(QMainWindow):
             return
         # Both restores run setup.migrateDB(), so older backups come up
         # to date before any query can hit a missing column.
-        result = backup_restore.run_restore(self, path, mode)
+        result = backup_restore.run_restore(self, path, mode, safety)
         if result is None:
             return
         self.refresh()
@@ -872,11 +868,11 @@ class MainWindow(QMainWindow):
             backup_restore.show_merge_summary(self, result)
         else:
             images = f' and {result["images"]} photos' if result['images'] else ''
+            saved = (f'\n\nYour previous library was saved as {os.path.basename(result["safety"])} '
+                     'in the data folder.' if result['safety'] else '')
             QMessageBox.information(
                 self, 'Restore finished',
-                f'Restored your library{images} from {os.path.basename(path)}.\n\n'
-                f'Your previous library was saved as {os.path.basename(result["safety"])} '
-                'in the data folder.',
+                f'Restored your library{images} from {os.path.basename(path)}.{saved}',
             )
         self._flash_status(f'Restored from {os.path.basename(path)}')
 

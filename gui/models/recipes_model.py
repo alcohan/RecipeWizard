@@ -93,7 +93,7 @@ class RecipesModel(QAbstractTableModel):
         rows = db.recipe_info()
         extras = db.get_recipe_library_extras()
         diets.set_rules(db.get_diets())
-        tag_order = [(t['id'], t['name']) for t in db.get_tags('recipe_tag')]
+        tag_order = [(t['id'], t['name'], t.get('color')) for t in db.get_tags('recipe_tag')]
         for r in rows:
             r.update(extras.get(r['Id'], {}))
             r.setdefault('Allergens', [])
@@ -101,7 +101,8 @@ class RecipesModel(QAbstractTableModel):
             r.setdefault('PerServing', {})
             r.setdefault('CaloriesPerServing', 0.0)
             r.setdefault('TagIds', set())
-            r['TagNames'] = [name for tid, name in tag_order if tid in r['TagIds']]
+            r['TagNames'] = [name for tid, name, _c in tag_order if tid in r['TagIds']]
+            r['TagColors'] = {name: color for tid, name, color in tag_order if tid in r['TagIds']}
             r['Diets'] = diets.diets_for(r['Allergens'], r['PerServing'])
             r['FoodCostPct'] = food_cost_pct(r.get('CostRaw'), r.get('MenuPrice'))
             r['Archived'] = r.get('Status') == 'archived'

@@ -333,11 +333,11 @@ def _safety_backup(db_path, images_dir, include_images, progress):
 
 # --- overwrite ------------------------------------------------------------
 
-def restore_overwrite(path, db_path=None, images_dir=None, progress=None):
+def restore_overwrite(path, db_path=None, images_dir=None, progress=None, safety=True):
     '''Replace the library with the backup's, and the photos too when
     the backup has them (photos with the same name are replaced; other
-    photos here stay). A safety backup of the current library comes
-    first, with photos when they'll be replaced.'''
+    photos here stay). Unless safety is False, a safety backup of the
+    current library comes first, with photos when they'll be replaced.'''
     db_path = db_path or config.DATABASE
     images_dir = images_dir or config.INGREDIENTS_PATH
     info = read_backup(path)
@@ -346,7 +346,7 @@ def restore_overwrite(path, db_path=None, images_dir=None, progress=None):
         # Upgrade the copy first, so a backup that can't be migrated
         # fails here, before anything of the user's has changed.
         setup.migrateDB(incoming)
-        safety = _safety_backup(db_path, images_dir, info.has_images, progress)
+        safety = _safety_backup(db_path, images_dir, info.has_images, progress) if safety else None
         # Restoring through the backup API rewrites the library in
         # place, so the file the app has open stays the one in use.
         _snapshot(incoming, db_path)
@@ -767,13 +767,14 @@ def _num(value):
         return value
 
 
-def restore_merge(path, db_path=None, images_dir=None, progress=None):
+def restore_merge(path, db_path=None, images_dir=None, progress=None, safety=True):
     '''Add what's in the backup to the library without changing or
     deleting anything here. Matched by name (tags by kind and name,
     diets by key or name); on a match the current one stays and the
     backup's is listed as kept. Photos are copied only where no file of
     that name exists. All or nothing: on any error the library is as it
-    was. Returns a MergeReport.'''
+    was. Unless safety is False, the current library is backed up
+    first. Returns a MergeReport.'''
     db_path = db_path or config.DATABASE
     images_dir = images_dir or config.INGREDIENTS_PATH
     info = read_backup(path)
@@ -784,8 +785,9 @@ def restore_merge(path, db_path=None, images_dir=None, progress=None):
         src_had = {'tables': set(src_had['tables']), 'markers': set(src_had['migrations'])}
         setup.migrateDB(incoming)
         setup.migrateDB(db_path)
-        _report(progress, 0, 1, 'Backing up your library first')
-        report.safety = _safety_backup(db_path, images_dir, False, None)
+        if safety:
+            _report(progress, 0, 1, 'Backing up your library first')
+            report.safety = _safety_backup(db_path, images_dir, False, None)
         _report(progress, 0, 1, 'Merging')
         con = sqlite3.connect(db_path, isolation_level=None)
         try:

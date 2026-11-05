@@ -28,6 +28,7 @@ import db
 from gui.services import food_cost
 from gui.models.recipes_model import SORTS, prices_drifted as _prices_drifted
 from gui.widgets.elided_label import ElidedLabel
+from gui.widgets.pills import Pill, PillRow, pill_colors
 from gui.widgets.wedge_view import WedgeView
 from utilities import diets
 
@@ -37,7 +38,6 @@ _ROMAINE = '#347200'
 _MUTED = '#55624c'
 _BORDER = '#ebe1cd'
 _WARN_FG, _WARN_BG = '#8a4a00', '#fff0dc'
-_MAX_CHIPS = 3
 SUB_RECIPE_GROUP = 'Sub-recipes'
 UNTAGGED_GROUP = 'Untagged'
 NO_DIET_GROUP = 'No listed diet'
@@ -60,25 +60,33 @@ def group_title(name):
     return name
 
 
-def chip(text, fg=_KALE, bg='#f3ece0'):
-    lbl = QLabel(text)
-    lbl.setStyleSheet(f'color: {fg}; background: {bg}; border-radius: 9px; padding: 1px 8px;'
-                      ' font-size: 11px; font-weight: 600;')
-    return lbl
+ARCHIVED_PILL = (_MUTED, '#ffffff', '#c9c2b2')
+DIET_PILL = ('#24502A', '#E6EFE3', None)
 
 
-def archived_chip():
-    lbl = chip('Archived', fg=_MUTED, bg='#ffffff')
-    lbl.setStyleSheet(lbl.styleSheet() + ' border: 1px solid #c9c2b2;')
-    return lbl
+def tag_pill_spec(name, color):
+    fg, bg = pill_colors(color)
+    return (name, fg, bg, None)
 
 
-def tag_chip(text):
-    return chip(text, fg='#fff1da', bg=_KALE)
+def diet_pill_spec(name):
+    return (name,) + DIET_PILL
 
 
-def diet_chip(text):
-    return chip(text, fg='#24502A', bg='#E6EFE3')
+def chip_specs(row):
+    '''Archived first, then the recipe's tags (in their own colors),
+    then the diets it fits (green), as PillRow specs.'''
+    colors = row.get('TagColors') or {}
+    specs = [('Archived',) + ARCHIVED_PILL] if row.get('Archived') else []
+    specs += [tag_pill_spec(n, colors.get(n)) for n in row.get('TagNames') or []]
+    specs += [diet_pill_spec(diets.names().get(k, k)) for k in row.get('Diets') or []]
+    return specs
+
+
+def pill(spec):
+    '''A standalone Pill widget from a spec.'''
+    text, fg, bg, border = tuple(spec) + (None,) * (4 - len(spec))
+    return Pill(text, fg, bg, border)
 
 
 class RecipeCard(QFrame):
@@ -119,10 +127,8 @@ class RecipeCard(QFrame):
         self.kcal_label.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
         self.food_label = ElidedLabel()
         self.food_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.chips = QHBoxLayout()
-        self.chips.setContentsMargins(0, 0, 0, 0)
-        self.chips.setSpacing(4)
-        for w in (self.name_label, self.cost_label, self.kcal_label, self.food_label):
+        self.chips = PillRow()
+        for w in (self.name_label, self.cost_label, self.kcal_label, self.food_label, self.chips):
             w.setAttribute(Qt.WA_TransparentForMouseEvents)
 
         top = QHBoxLayout()
@@ -134,10 +140,6 @@ class RecipeCard(QFrame):
         mid.addWidget(self.kcal_label)
         mid.addStretch()
         mid.addWidget(self.food_label)
-        chips_wrap = QWidget()
-        chips_wrap.setAttribute(Qt.WA_TransparentForMouseEvents)
-        chips_wrap.setLayout(self.chips)
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(6)
@@ -145,7 +147,7 @@ class RecipeCard(QFrame):
         layout.addSpacing(4)
         layout.addLayout(top)
         layout.addLayout(mid)
-        layout.addWidget(chips_wrap)
+        layout.addWidget(self.chips)
         layout.addStretch()
 
         if self._compare_tray is not None:
@@ -178,7 +180,6 @@ class RecipeCard(QFrame):
         self.row = row
         name = row['Name'] or ''
         self.name_label.setText(name)
-        self.setToolTip(name)
         self.cost_label.setText(f'${float(row.get("CostRaw") or 0):.2f}')
         self.kcal_label.setText(f'{row.get("CaloriesPerServing", 0):.0f} kcal')
         text, over = food_cost_text(row)
@@ -186,23 +187,9 @@ class RecipeCard(QFrame):
         self.food_label.setStyleSheet(
             f'color: {_WARN_FG}; font-size: 12px; font-weight: 600;' if over
             else f'color: {_MUTED}; font-size: 12px;')
-        while self.chips.count():
-            item = self.chips.takeAt(0)
-            if item.widget() is not None:
-                item.widget().deleteLater()
-        # Archived first, then tags (dark), then diets (green), three at most.
         archived = bool(row.get('Archived'))
-        labels = ([('Archived', 'archived')] if archived else []) \
-            + [(n, 'tag') for n in row.get('TagNames') or []] \
-            + [(diets.names().get(k, k), 'diet') for k in row.get('Diets') or []]
-        make = {'archived': lambda _t: archived_chip(), 'tag': tag_chip, 'diet': diet_chip}
-        for text, kind in labels[:_MAX_CHIPS]:
-            self.chips.addWidget(make[kind](text))
-        if len(labels) > _MAX_CHIPS:
-            more = chip(f'+{len(labels) - _MAX_CHIPS}', fg=_MUTED)
-            more.setToolTip(', '.join(t for t, _k in labels[_MAX_CHIPS:]))
-            self.chips.addWidget(more)
-        self.chips.addStretch()
+        self.chips.set_pills(chip_specs(row))
+        self._update_tooltip()
         # Archived: dimmed, and no price-drift flag (you're not selling it).
         if archived and self.graphicsEffect() is None:
             effect = QGraphicsOpacityEffect(self)
@@ -211,6 +198,15 @@ class RecipeCard(QFrame):
         elif not archived and self.graphicsEffect() is not None:
             self.setGraphicsEffect(None)
         self.drift_chip.setVisible(not archived and _prices_drifted(row.get('CostRaw'), row.get('CostSnapshot')))
+
+    def _update_tooltip(self):
+        '''The name, plus any pills folded into "+N" (the row itself
+        doesn't take the mouse).'''
+        name = self.row['Name'] or ''
+        # The card is fixed-size, so the row is always its inner width
+        # (known before the card is first laid out).
+        hidden = self.chips.hidden_texts(self.WIDTH - 24)
+        self.setToolTip(name + ('\n' + ', '.join(hidden) if hidden else ''))
 
     def set_selected(self, selected):
         if self.property('selected') != selected:

@@ -2,18 +2,17 @@
 
     ask_backup_options(parent)        -> include photos? (None = cancelled)
     run_backup(parent, dest, images)  -> manifest, or None after an error box
-    RestoreDialog(info)               -> .mode: 'overwrite' | 'merge'
-    run_restore(parent, path, mode)   -> result, or None after an error box
+    RestoreDialog(info)               -> .mode: 'overwrite' | 'merge', .safety: bool
+    run_restore(parent, path, mode, safety)  -> result, or None after an error box
     show_merge_summary(parent, report)
 
-Whether to include photos is remembered in QSettings
-('backup/includeImages'); Back up now uses it without asking once it's
-been chosen.
+Backups leave the photos out unless the user ticks them in, each time;
+Back up now never includes them.
 '''
 import datetime
 import os
 
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QDialog, QDialogButtonBox, QLabel, QMessageBox,
     QProgressDialog, QRadioButton, QVBoxLayout,
@@ -22,16 +21,7 @@ from PySide6.QtWidgets import (
 import config
 from utilities import backup
 
-_INCLUDE_IMAGES = 'backup/includeImages'
 _MUTED = '#5B625C'
-
-
-def remembered_include_images():
-    '''The last choice, or None if the user has never been asked.'''
-    value = QSettings().value(_INCLUDE_IMAGES, None)
-    if value is None:
-        return None
-    return str(value).lower() in ('true', '1')
 
 
 def _megabytes(n):
@@ -39,7 +29,7 @@ def _megabytes(n):
 
 
 class BackupOptionsDialog(QDialog):
-    '''Include the ingredient photos or not; the choice is remembered.'''
+    '''Include the ingredient photos or not. Starts unticked every time.'''
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -53,8 +43,7 @@ class BackupOptionsDialog(QDialog):
         self.images = QCheckBox(f'Include ingredient photos ({len(photos)} photos, '
                                 f'{_megabytes(backup.images_size())})')
         self.images.setEnabled(bool(photos))
-        remembered = remembered_include_images()
-        self.images.setChecked(bool(photos) and bool(remembered))
+        self.images.setChecked(False)
         note = QLabel('Photos make the file much larger. Without them, a restore keeps the photos '
                       'already on that computer.')
         note.setWordWrap(True)
@@ -75,10 +64,6 @@ class BackupOptionsDialog(QDialog):
         layout.addSpacing(6)
         layout.addWidget(buttons)
         self.setMinimumWidth(420)
-
-    def accept(self):
-        QSettings().setValue(_INCLUDE_IMAGES, self.images.isChecked())
-        super().accept()
 
 
 def ask_backup_options(parent):
@@ -174,9 +159,12 @@ class RestoreDialog(QDialog):
         group.addButton(self.merge)
         self.merge.setChecked(True)
 
-        safety = QLabel('Either way, a backup of your current library is saved to the data folder first.')
+        self.safety_box = QCheckBox('Back up my current library first')
+        self.safety_box.setChecked(True)
+        safety = QLabel("Saved to the data folder. Untick this on a new install, where there's "
+                        'only the sample data to lose.')
         safety.setWordWrap(True)
-        safety.setStyleSheet(f'color: {_MUTED};')
+        safety.setStyleSheet(f'color: {_MUTED}; margin-left: 22px;')
 
         buttons = QDialogButtonBox()
         self.restore_btn = buttons.addButton('Merge', QDialogButtonBox.AcceptRole)
@@ -197,7 +185,9 @@ class RestoreDialog(QDialog):
         layout.addWidget(self.overwrite)
         layout.addWidget(overwrite_note)
         layout.addSpacing(8)
+        layout.addWidget(self.safety_box)
         layout.addWidget(safety)
+        layout.addSpacing(4)
         layout.addWidget(buttons)
         self.setMinimumWidth(480)
 
@@ -205,13 +195,17 @@ class RestoreDialog(QDialog):
     def mode(self):
         return 'overwrite' if self.overwrite.isChecked() else 'merge'
 
+    @property
+    def safety(self):
+        return self.safety_box.isChecked()
 
-def run_restore(parent, path, mode):
+
+def run_restore(parent, path, mode, safety=True):
     progress = _Progress(parent, 'Restoring' if mode == 'overwrite' else 'Merging')
     try:
         if mode == 'overwrite':
-            return backup.restore_overwrite(path, progress=progress)
-        return backup.restore_merge(path, progress=progress)
+            return backup.restore_overwrite(path, progress=progress, safety=safety)
+        return backup.restore_merge(path, progress=progress, safety=safety)
     except Exception as exc:
         QMessageBox.critical(parent, 'Restore failed',
                              f'{exc or exc.__class__.__name__}\n\nYour library was not changed.')
@@ -228,8 +222,9 @@ def merge_details(report):
             if names:
                 lines.append(f'{label} — {verb.lower()} ({len(names)}):')
                 lines.extend(f'    {n}' for n in names)
-    lines.append('')
-    lines.append(f'Safety backup: {report.safety}')
+    if report.safety:
+        lines.append('')
+        lines.append(f'Safety backup: {report.safety}')
     return '\n'.join(lines)
 
 

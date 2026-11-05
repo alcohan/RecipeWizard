@@ -701,6 +701,14 @@ class RecipeEditWidget(QWidget):
             self._title = recipe['Name']
             self.titleChanged.emit(self._title)
 
+    def showEvent(self, event):
+        '''Coming back to this tab (from Configure, say): pick up recipe
+        tags and formats added or renamed while it was hidden.'''
+        super().showEvent(event)
+        if not self._being_deleted and hasattr(self, '_tag_row'):
+            self.format_segments.reload()
+            self._refresh_tag_pills()
+
     def _refresh_tag_pills(self):
         '''One toggle pill per recipe tag, checked when this recipe has
         it. Rebuilt only when the set of tags changes (Configure).'''

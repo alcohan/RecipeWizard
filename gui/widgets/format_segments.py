@@ -3,7 +3,8 @@ tag plus "None", as a single connected control.
 
 Emits selectionChanged(new_tag_id, prev_tag_id) — the same contract
 as TagSelector — so the editor can route the change through its undo
-stack. `set_selected` updates the control without emitting.
+stack. `set_selected` updates the control without emitting; `reload`
+picks up formats added, renamed or removed in Configure.
 '''
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QButtonGroup, QFrame, QHBoxLayout, QPushButton
@@ -46,11 +47,23 @@ class FormatSegments(QFrame):
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
         self._current = None
+        self._options = None
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(1, 1, 1, 1)
-        layout.setSpacing(0)
+        self._layout = QHBoxLayout(self)
+        self._layout.setContentsMargins(1, 1, 1, 1)
+        self._layout.setSpacing(0)
+        self.reload()
+
+    def reload(self):
+        '''Rebuild the segments if the formats changed since last time.'''
         options = [(t['id'], t['name']) for t in db.get_tags('recipe')] + [(None, 'None')]
+        if options == self._options:
+            return
+        self._options = options
+        for btn in self._group.buttons():
+            self._group.removeButton(btn)
+            self._layout.removeWidget(btn)
+            btn.deleteLater()
         for tag_id, name in options:
             btn = QPushButton(name)
             btn.setCheckable(True)
@@ -59,7 +72,8 @@ class FormatSegments(QFrame):
                            f'{name}: applies the {name} template')
             btn.clicked.connect(lambda _c=False, t=tag_id: self._on_clicked(t))
             self._group.addButton(btn)
-            layout.addWidget(btn)
+            self._layout.addWidget(btn)
+        self.set_selected(self._current)
 
     def selected(self):
         return self._current

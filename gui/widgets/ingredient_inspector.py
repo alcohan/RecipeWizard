@@ -110,6 +110,11 @@ class IngredientInspector(QScrollArea):
         cl.addWidget(self.cost_detail)
 
         self.usage_title = _eyebrow('Used in')
+        # Headings and the meta line wrap rather than widen the panel
+        # ("USED IN 7 RECIPES · 5 ARCHIVED · IMPACT OF THE CHANGE").
+        for lbl in (self.name, self.meta, self.cost_title, self.usage_title):
+            lbl.setWordWrap(True)
+            lbl.setMinimumWidth(1)
         self._usage_rows = QVBoxLayout()
         self._usage_rows.setSpacing(6)
         self.usage_more = QLabel('')

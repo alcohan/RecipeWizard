@@ -2,7 +2,7 @@
 canvas: a quick look at the selected recipe without opening it.
 
 Wedge, name, format · yield · when it was last edited, Cost / Food
-cost / Calories, components counted by category, its tags and the
+cost / Calories, its components listed by name, its tags and the
 diets it fits,
 allergens with their sources (which also say why it misses a diet),
 and Open in tab / Duplicate.
@@ -19,10 +19,9 @@ from PySide6.QtWidgets import (
 )
 
 import db
-from gui.widgets.elided_label import ElidedLabel
 from gui.widgets.flow_layout import FlowLayout
 from gui.services import food_cost
-from gui.widgets.recipe_gallery import diet_chip, tag_chip
+from gui.widgets.recipe_gallery import diet_pill_spec, pill, tag_pill_spec
 from gui.widgets.wedge_view import WedgeView
 from utilities import diets
 
@@ -70,6 +69,7 @@ def _clear(layout):
     while layout.count():
         item = layout.takeAt(0)
         if item.widget() is not None:
+            item.widget().hide()
             item.widget().deleteLater()
 
 
@@ -142,8 +142,9 @@ class RecipeInspector(QScrollArea):
             self._stats[key] = value
 
         self.components_title = _eyebrow('Components')
-        self._component_rows = QVBoxLayout()
-        self._component_rows.setSpacing(4)
+        self.component_list = QLabel('')
+        self.component_list.setWordWrap(True)
+        self.component_list.setMinimumWidth(1)
 
         self._diet_chips = FlowLayout()
         diet_wrap = QWidget()
@@ -198,7 +199,7 @@ class RecipeInspector(QScrollArea):
         comp_col = QVBoxLayout()
         comp_col.setSpacing(6)
         comp_col.addWidget(self.components_title)
-        comp_col.addLayout(self._component_rows)
+        comp_col.addWidget(self.component_list)
         bl.addLayout(comp_col)
         diet_col = QVBoxLayout()
         diet_col.setSpacing(6)
@@ -286,42 +287,26 @@ class RecipeInspector(QScrollArea):
             self.allergens.setText(f'<span style="color: {_MUTED}">None</span>')
 
     def _fill_components(self, rid):
-        _clear(self._component_rows)
-        counts = {}
+        # "Romaine • Kale • Jalapenos • ...", in the recipe's order. The
+        # bullet sticks to the name before it, so lines break between
+        # components (or inside a long name), never before a bullet.
         comps = db.recipe_components(rid)
-        for c in comps:
-            if c.get('Type') == 'recipe':
-                name, color = 'Sub-recipes', '#a7ad9c'
-            else:
-                name, color = c.get('TagName') or 'Uncategorized', c.get('TagColor') or '#a7ad9c'
-            entry = counts.setdefault(name, [color, 0])
-            entry[1] += 1
         n = len(comps)
         self.components_title.setText(f"{n} COMPONENT{'S' if n != 1 else ''}" if n else 'NO COMPONENTS YET')
-        for name, (color, count) in counts.items():
-            row = QWidget()
-            hl = QHBoxLayout(row)
-            hl.setContentsMargins(0, 0, 0, 0)
-            hl.setSpacing(8)
-            dot = QLabel()
-            dot.setFixedSize(10, 10)
-            dot.setStyleSheet(f'background: {color}; border-radius: 5px;')
-            hl.addWidget(dot)
-            hl.addWidget(ElidedLabel(name), stretch=1)
-            num = QLabel(str(count))
-            num.setStyleSheet(f'color: {_MUTED};')
-            hl.addWidget(num)
-            self._component_rows.addWidget(row)
+        names = [(c.get('Name') or '').strip() for c in comps]
+        self.component_list.setText('\u00a0\u2022 '.join(n for n in names if n))
+        self.component_list.setVisible(bool(n))
 
     def _fill_diets(self, row):
         _clear(self._diet_chips)
         keys = row.get('Diets') or []
         tags = row.get('TagNames') or []
+        colors = row.get('TagColors') or {}
         names = diets.names()
         for name in tags:
-            self._diet_chips.addWidget(tag_chip(name))
+            self._diet_chips.addWidget(pill(tag_pill_spec(name, colors.get(name))))
         for key in keys:
-            self._diet_chips.addWidget(diet_chip(names.get(key, key)))
+            self._diet_chips.addWidget(pill(diet_pill_spec(names.get(key, key))))
         if not keys and not tags:
             none = QLabel('No tags, and no diets fit')
             none.setStyleSheet(f'color: {_MUTED};')
