@@ -58,6 +58,7 @@ from gui.widgets.component_delegates import (
     ChangedRowDelegate, NameDelegate, QuantityDelegate, ShareDelegate,
 )
 from gui.widgets.editor_results import EditorResults
+from gui.widgets.undo_keys import pass_undo_keys
 from gui.widgets.format_segments import FormatSegments
 from gui.widgets.template_summary import TemplateSummaryLine
 from gui.widgets.wedge_view import WedgeView
@@ -222,14 +223,16 @@ class RecipeEditWidget(QWidget):
         self.splitter.setSizes([900, 380])
 
         # Undo/Redo actions — keyboard shortcuts only, no toolbar buttons.
-        # Scoped to the widget so a container with multiple tabs still
-        # only sees the active tab's undo stack.
+        # Window-wide, so they work wherever focus is (the header, the tab
+        # bar); Qt skips shortcuts on hidden widgets, so with several
+        # recipe tabs open only the visible one's stack answers. The text
+        # fields pass the keys on unless an edit is being typed there.
         undo_action = self.undo_stack.createUndoAction(self, 'Undo')
         undo_action.setShortcut(QKeySequence.Undo)
-        undo_action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
+        undo_action.setShortcutContext(Qt.WindowShortcut)
         redo_action = self.undo_stack.createRedoAction(self, 'Redo')
         redo_action.setShortcut(QKeySequence.Redo)
-        redo_action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
+        redo_action.setShortcutContext(Qt.WindowShortcut)
         self.addAction(undo_action)
         self.addAction(redo_action)
 
@@ -443,6 +446,13 @@ class RecipeEditWidget(QWidget):
         self.menu_price_edit.setPlaceholderText('Not on menu')
         self.menu_price_edit.setFixedWidth(110)
         self.menu_price_edit.editingFinished.connect(self._maybe_commit_info)
+
+        # Each field's last committed text: Ctrl+Z goes to the recipe's
+        # undo stack unless the field holds an uncommitted edit.
+        self._committed_text = {e: e.text() for e in (self.name_edit, self.yield_edit, self.unit_edit,
+                                                       self.menu_price_edit)}
+        for edit in self._committed_text:
+            pass_undo_keys(edit, self._field_has_pending_edit)
 
         name_col = _labelled('Recipe', self.name_edit)
         fields = QHBoxLayout()
@@ -667,21 +677,25 @@ class RecipeEditWidget(QWidget):
             recipe, self._baseline, db.get_recipe_allergen_sources(self.recipe_id))
         self.wedge.refresh()
 
-        # Sync editable fields. The widget the user is currently editing
-        # is left alone — otherwise typing in one field while another
-        # commits would clobber the in-progress edit.
+        # Sync editable fields. A field holding an edit the user hasn't
+        # committed yet is left alone — otherwise typing in one field while
+        # another commits would clobber it. A focused field with nothing
+        # pending does update, so an undo shows in the field you're in.
         for edit, value in (
             (self.name_edit, recipe['Name']),
             (self.unit_edit, recipe['Unit']),
             (self.yield_edit, _format_qty(recipe['OutputQty'])),
             (self.menu_price_edit, _format_menu_price(recipe.get('MenuPrice'))),
         ):
-            if edit.hasFocus():
+            if edit.text() == value:
+                self._committed_text[edit] = value   # e.g. the edit just committed
+                continue
+            if edit.hasFocus() and self._field_has_pending_edit(edit):
                 continue
             edit.blockSignals(True)
-            if edit.text() != value:
-                edit.setText(value)
+            edit.setText(value)
             edit.blockSignals(False)
+            self._committed_text[edit] = value
 
         if recipe['Name'] != self._title:
             self._title = recipe['Name']
@@ -829,6 +843,10 @@ class RecipeEditWidget(QWidget):
             action.triggered.connect(lambda _c=False, rid=p['Id']: self.openRecipeRequested.emit(rid))
         menu.exec(self.used_in_chip.mapToGlobal(self.used_in_chip.rect().bottomLeft()))
 
+    def _field_has_pending_edit(self, edit):
+        committed = getattr(self, '_committed_text', {})
+        return edit in committed and edit.text() != committed[edit]
+
     def _maybe_commit_info(self):
         '''Apply the recipe fields. Wired to each input's editingFinished
         signal and called explicitly from save() / close_requested() so
@@ -858,6 +876,10 @@ class RecipeEditWidget(QWidget):
             return
         after = (name, unit, yield_qty, menu_price)
         if after == self._recipe_snapshot:
+            # Same values, maybe typed differently ("1.0" for "1"): the
+            # field's text is what's committed now.
+            for edit in self._committed_text:
+                self._committed_text[edit] = edit.text()
             return
         self.undo_stack.push(UpdateRecipeInfoCommand(self.recipe_id, self._recipe_snapshot, after))
 

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QLineEdit, QStyle, QStyledItemDelegate
 
 from gui.models.components_model import ChangedRole, KindRole, PortionRole, ShareRole, WasRole
 from gui.widgets.tag_badge import TagColorRole
+from gui.widgets.undo_keys import pass_undo_keys
 
 
 _KALE = '#082c00'
@@ -140,6 +141,8 @@ class QuantityDelegate(QStyledItemDelegate):
         editor.setAlignment(Qt.AlignRight)
         editor.setStyleSheet(f'border: 2px solid {_ROMAINE}; border-radius: 5px;'
                              ' padding: 0 4px; background: #ffffff;')
+        # Ctrl+Z in an untouched quantity editor undoes the last recipe edit.
+        pass_undo_keys(editor, lambda e: e.isModified())
         return editor
 
     def paint(self, painter, option, index):
