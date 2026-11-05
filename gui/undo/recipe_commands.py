@@ -28,55 +28,78 @@ class UpdateRecipeInfoCommand(QUndoCommand):
         db.update_recipe_info(self.recipe_id, *self.before)
 
 
-class AddComponentCommand(QUndoCommand):
-    def __init__(self, parent_id, mode, child_id, qty, child_name):
-        super().__init__(f'Add {child_name}')
+class _SnapshotCommand(QUndoCommand):
+    '''A component edit can resize other rows too (portion rules re-split
+    a base when a green is added or removed, and typing a quantity pins
+    its category). So these commands run the edit once, then undo/redo
+    by restoring the recipe's whole Connections snapshot.'''
+
+    def __init__(self, label, parent_id):
+        super().__init__(label)
         self.parent_id = parent_id
+        self._before_snapshot = None
+        self._after_snapshot = None
+
+    def apply(self):
+        raise NotImplementedError
+
+    def redo(self):
+        if self._before_snapshot is None:
+            self._before_snapshot = db.snapshot_recipe_connections(self.parent_id)
+            self.apply()
+            self._after_snapshot = db.snapshot_recipe_connections(self.parent_id)
+        else:
+            db.restore_recipe_connections(self.parent_id, self._after_snapshot)
+
+    def undo(self):
+        db.restore_recipe_connections(self.parent_id, self._before_snapshot)
+
+
+class AddComponentCommand(_SnapshotCommand):
+    def __init__(self, parent_id, mode, child_id, qty, child_name):
+        super().__init__(f'Add {child_name}', parent_id)
         self.mode = mode
         self.child_id = child_id
         self.qty = qty
 
-    def redo(self):
+    def apply(self):
         db.add_recipe_ingredient(self.parent_id, self.mode, self.child_id, self.qty)
 
-    def undo(self):
-        db.delete_recipe_ingredient(self.parent_id, self.mode, self.child_id)
 
-
-class RemoveComponentCommand(QUndoCommand):
+class RemoveComponentCommand(_SnapshotCommand):
     def __init__(self, parent_id, mode, child_id, qty, child_name, sort_order=None):
-        super().__init__(f'Remove {child_name}')
-        self.parent_id = parent_id
+        super().__init__(f'Remove {child_name}', parent_id)
         self.mode = mode
         self.child_id = child_id
         self.qty = qty
-        # Capture the row's SortOrder so undo puts it back in its original
-        # slot instead of always appending to the end.
-        self.sort_order = sort_order
+        self.sort_order = sort_order   # kept for callers; the snapshot restores order
 
-    def redo(self):
+    def apply(self):
         db.delete_recipe_ingredient(self.parent_id, self.mode, self.child_id)
 
-    def undo(self):
-        db.add_recipe_ingredient(
-            self.parent_id, self.mode, self.child_id, self.qty, self.sort_order,
-        )
 
-
-class SetComponentQtyCommand(QUndoCommand):
+class SetComponentQtyCommand(_SnapshotCommand):
     def __init__(self, parent_id, mode, child_id, before, after, child_name):
-        super().__init__(f'Change {child_name} qty')
-        self.parent_id = parent_id
+        super().__init__(f'Change {child_name} qty', parent_id)
         self.mode = mode
         self.child_id = child_id
         self.before = before
         self.after = after
 
-    def redo(self):
+    def apply(self):
         db.update_recipe_ingredient(self.parent_id, self.mode, self.child_id, self.after)
 
-    def undo(self):
-        db.update_recipe_ingredient(self.parent_id, self.mode, self.child_id, self.before)
+
+class PortionCommand(_SnapshotCommand):
+    '''Any portion-rules edit on one recipe (follow / pin / re-split a
+    base): `edit` is a callable that does it; undo restores the snapshot.'''
+
+    def __init__(self, parent_id, label, edit):
+        super().__init__(label, parent_id)
+        self._edit = edit
+
+    def apply(self):
+        self._edit()
 
 
 class ReorderComponentsCommand(QUndoCommand):

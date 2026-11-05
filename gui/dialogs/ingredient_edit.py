@@ -38,6 +38,7 @@ from gui.widgets.ingredient_thumb import IngredientThumb
 from gui.widgets.price_chart import PriceStepChart
 from gui.widgets.usda_panel import UsdaLookupPanel
 from gui.widgets.wedge_view import WedgeView
+from utilities import portions
 
 
 _KALE = '#082c00'
@@ -215,7 +216,16 @@ class IngredientEditDialog(QDialog):
         fields.addLayout(_labelled('Unit', self.unit_edit, 90))
         fields.addLayout(_labelled('Weight (g)', self.weight_edit, 90))
         fields.addLayout(_labelled('Portion tool', self.portion_edit, 140))
-        layout.addLayout(fields)
+        # How portion rules read the unit; shown only for a category some
+        # format sizes by rule (Greens, Grains…).
+        self.portion_hint = QLabel('')
+        self.portion_hint.setWordWrap(True)
+        self.portion_hint.hide()
+        facts_col = QVBoxLayout()
+        facts_col.setSpacing(6)
+        facts_col.addLayout(fields)
+        facts_col.addWidget(self.portion_hint)
+        layout.addLayout(facts_col)
 
         # --- price ---
         price, head, pl, _t = _section('Price')
@@ -305,7 +315,10 @@ class IngredientEditDialog(QDialog):
 
         layout.addWidget(_eyebrow('Category'))
         self.category = CategoryPills(self._tag_id)
+        self.category.changed.connect(lambda _id: self._sync_portion_hint())
         layout.addWidget(self.category)
+        if hasattr(self, 'portion_hint'):
+            self._sync_portion_hint()
 
         layout.addWidget(_eyebrow('Contains allergens'))
         self.allergens = AllergenChecks(self.ingredient_id)
@@ -468,6 +481,25 @@ class IngredientEditDialog(QDialog):
         unit = self.unit_edit.text().strip() or 'unit'
         self.per_unit_label.setText(f'PER {unit.upper()}')
         self.nutrition_title.setText(f'Nutrition per {unit}')
+        self._sync_portion_hint()
+
+    def _sync_portion_hint(self):
+        category = getattr(self, 'category', None)
+        tag_id = category.selected() if category is not None else self._tag_id
+        formats = db.get_category_portion_formats(tag_id)
+        if not formats:
+            self.portion_hint.hide()
+            return
+        ok, text = portions.describe_unit(self.unit_edit.text())
+        sized_by = ', '.join(formats)
+        if ok:
+            self.portion_hint.setText(f'Portion rules: {text}. {sized_by} size this category by rule.')
+            self.portion_hint.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
+        else:
+            self.portion_hint.setText(f'{text}, so {sized_by} can’t size it by portion rule.'
+                                      ' Use a volume unit such as “3 cups” or “8 f.oz”.')
+            self.portion_hint.setStyleSheet(f'color: {_UP_FG}; font-size: 12px;')
+        self.portion_hint.show()
 
     # --- associations --------------------------------------------------
 

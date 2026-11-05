@@ -60,6 +60,9 @@ def main():
     app.setWindowIcon(QIcon(config.ICON))
     window = MainWindow()
     window.show()
+    # After the upgrade to portion rules, offer the review once.
+    from PySide6.QtCore import QTimer
+    QTimer.singleShot(0, window.show_portion_review_if_new)
     sys.exit(app.exec())
 
 

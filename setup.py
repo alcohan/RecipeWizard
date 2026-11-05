@@ -71,6 +71,13 @@ def initializeDB(includeSampleData=True):
     # only fills in canonical tags that aren't already there by (name, kind).
     migrateDB()
 
+    # A new library has nothing to carry over from portion multipliers,
+    # so the one-time review (gui/dialogs/portion_review.py) is skipped.
+    connection = sqlite3.connect(config.DATABASE)
+    connection.execute("INSERT OR IGNORE INTO app_meta (key, value) VALUES ('portion_review_shown', '1');")
+    connection.commit()
+    connection.close()
+
     # Fill in ImageFilename for any ingredient that didn't ship with one —
     # matches by normalized name against files in INGREDIENTS_PATH. Skips
     # rows that already have an image, so it's safe even when the sample
@@ -182,14 +189,29 @@ def migrateDB(path=None):
             )
         ''')
 
-    if not table_exists('tag_category_multipliers'):
-        print('Migrating: creating tag_category_multipliers')
+    # Category multipliers were replaced by portion rules (below). Their
+    # effect was already part of each recipe's stored quantities, so the
+    # table just goes. (An older app version recreates it empty.)
+    if table_exists('tag_category_multipliers'):
+        print('Migrating: removing tag_category_multipliers (replaced by portion rules)')
+        cursor.execute('DROP TABLE tag_category_multipliers;')
+
+    # Portion rules (utilities/portions.py) replace the category
+    # multipliers: a format sizes a category by rule, and a Connections
+    # row follows it when portion_share is set (NULL = pinned).
+    if not column_exists('Connections', 'portion_share'):
+        print('Migrating: adding Connections.portion_share')
+        cursor.execute('ALTER TABLE Connections ADD COLUMN portion_share FLOAT')
+    if not table_exists('tag_portion_rules'):
+        print('Migrating: creating tag_portion_rules')
         cursor.execute('''
-            CREATE TABLE tag_category_multipliers (
+            CREATE TABLE tag_portion_rules (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               tag_id INTEGER NOT NULL,
               category_tag_id INTEGER NOT NULL,
-              multiplier FLOAT NOT NULL DEFAULT 1,
+              mode TEXT NOT NULL,
+              amount REAL NOT NULL,
+              measure TEXT NOT NULL,
               UNIQUE (tag_id, category_tag_id),
               FOREIGN KEY (tag_id) REFERENCES tags(id),
               FOREIGN KEY (category_tag_id) REFERENCES tags(id)
@@ -460,6 +482,23 @@ def migrateDB(path=None):
                            (BUILTIN_FORMAT_NAME, json.dumps(builtin_format_settings())))
         cursor.execute("INSERT INTO app_meta (key, value) VALUES ('seeded_import_format', '1');")
 
+    # Portion rules: seed the default rules once, then (also once) let
+    # every row that already sits at its format's standard follow the
+    # rule. Neither step changes a quantity; rows that differ from the
+    # standard stay pinned for the user to review.
+    cursor.execute("SELECT 1 FROM app_meta WHERE key = 'seeded_portion_rules';")
+    if cursor.fetchone() is None:
+        added = _seed_portion_rules(cursor)
+        if added:
+            print(f'Migrating: adding {added} default portion rule(s)')
+        cursor.execute("INSERT INTO app_meta (key, value) VALUES ('seeded_portion_rules', '1');")
+    cursor.execute("SELECT 1 FROM app_meta WHERE key = 'adopted_portion_rules';")
+    if cursor.fetchone() is None:
+        adopted = adopt_matching_portions(cursor)
+        if adopted:
+            print(f'Migrating: {adopted} recipe row(s) now follow their format portion rules')
+        cursor.execute("INSERT INTO app_meta (key, value) VALUES ('adopted_portion_rules', '1');")
+
     # Archived used to be a recipe tag; it's Recipes.status now. Once:
     # recipes tagged Archived become archived, and the tag goes away.
     cursor.execute("SELECT 1 FROM app_meta WHERE key = 'archived_tag_to_status';")
@@ -475,6 +514,91 @@ def migrateDB(path=None):
 
     connection.commit()
     connection.close()
+
+
+def _seed_portion_rules(cursor):
+    '''Insert portions.DEFAULT_RULES for each format, by name, that has no
+    rules yet (a format the user has set up keeps its own). Returns the
+    number of rules added.'''
+    from utilities import portions
+    cursor.execute('SELECT DISTINCT tag_id FROM tag_portion_rules;')
+    has_rules = {r[0] for r in cursor.fetchall()}
+    added = 0
+    for fmt, category, mode, amount, measure in portions.DEFAULT_RULES:
+        cursor.execute("SELECT id FROM tags WHERE kind = 'recipe' AND name = ? ORDER BY id LIMIT 1;", (fmt,))
+        fmt_row = cursor.fetchone()
+        cursor.execute("SELECT id FROM tags WHERE kind = 'ingredient' AND name = ? ORDER BY id LIMIT 1;",
+                       (category,))
+        cat_row = cursor.fetchone()
+        if fmt_row is None or cat_row is None or fmt_row[0] in has_rules:
+            continue
+        cursor.execute('INSERT OR IGNORE INTO tag_portion_rules'
+                       ' (tag_id, category_tag_id, mode, amount, measure) VALUES (?, ?, ?, ?, ?);',
+                       (fmt_row[0], cat_row[0], mode, amount, measure))
+        added += cursor.rowcount
+    return added
+
+
+def adopt_matching_portions(cursor, recipe_ids=None):
+    '''Set portion_share on pinned rows whose quantity already equals what
+    their format's rule would give (within 1%, then snapped to it), so
+    they follow the rule from now on. A base category is adopted only as a
+    whole (every sizable row matches), keeping its split intact; a fixed
+    category row by row. Rows whose unit isn't a volume stay pinned.
+    Returns the number of rows adopted.'''
+    from utilities import portions
+    cursor.execute('''
+        SELECT rm.recipe_id, pr.category_tag_id, pr.mode, pr.amount, pr.measure
+        FROM recipe_tags_mapping rm
+        JOIN tags t ON t.id = rm.tag_id AND t.kind = 'recipe'
+        JOIN tag_portion_rules pr ON pr.tag_id = rm.tag_id
+        ORDER BY rm.recipe_id;
+    ''')
+    work = cursor.fetchall()
+    if recipe_ids is not None:
+        wanted = set(recipe_ids)
+        work = [w for w in work if w[0] in wanted]
+    # Following a rule isn't an edit: put back each touched recipe's
+    # updated_at afterwards (the Connections trigger would bump it).
+    cursor.execute('SELECT Id, updated_at FROM Recipes;')
+    stamps = dict(cursor.fetchall())
+    touched = set()
+    adopted = 0
+    for recipe_id, category_id, mode, amount, measure in work:
+        cursor.execute('''
+            SELECT c.rowid, c.Quantity, i.Unit
+            FROM Connections c
+            JOIN Ingredients i ON i.Id = c.ChildIngredient
+            WHERE c.ParentRecipe = ? AND c.portion_share IS NULL
+              AND EXISTS (SELECT 1 FROM ingredient_tags_mapping itm
+                          WHERE itm.ingredient_id = c.ChildIngredient AND itm.tag_id = ?);
+        ''', (recipe_id, category_id))
+        rows = cursor.fetchall()
+        if not rows:
+            continue
+        rule = portions.Rule(mode, amount, measure)
+        if mode == 'fixed':
+            shares = {rowid: 1.0 for rowid, _q, _u in rows}
+        else:
+            shares = portions.shares_from_quantities([(rowid, unit, qty) for rowid, qty, unit in rows])
+        derived = portions.rule_quantities(rule, [(rowid, unit, shares.get(rowid)) for rowid, _q, unit in rows])
+        fits = {rowid for rowid, qty, _u in rows
+                if derived.get(rowid) is not None and portions.matches(qty, derived[rowid])}
+        sizable = {rowid for rowid, v in derived.items() if v is not None}
+        if mode == 'base' and fits != sizable:
+            continue
+        # "Matches" allows 1% (0.33 for a third of a base), so store the
+        # rule's exact quantity too; the engine would snap it on the
+        # recipe's next edit anyway, and costs should agree everywhere.
+        for rowid in fits:
+            cursor.execute('UPDATE Connections SET portion_share = ?, Quantity = ? WHERE rowid = ?;',
+                           (round(shares[rowid], 6), derived[rowid], rowid))
+            adopted += 1
+            touched.add(recipe_id)
+    for recipe_id in touched:
+        if stamps.get(recipe_id) is not None:
+            cursor.execute('UPDATE Recipes SET updated_at = ? WHERE Id = ?;', (stamps[recipe_id], recipe_id))
+    return adopted
 
 
 # Recipe tags seeded once on first run of this version (see migrateDB).

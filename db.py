@@ -3,6 +3,8 @@ import json
 import sqlite3
 from re import sub
 
+from utilities import portions
+
 def make_dict(cursor):
     '''
     Return the results from query on cursor as a list of dictionaries, with keys as the column names
@@ -177,6 +179,8 @@ def update_ingredient(id, values):
         values.get('ImageFilename') or None,
     )
     result = query_from_file('sql\\update_ingredient_info.sql',params,filter = f'WHERE Id={id}')
+    # A new unit changes how portion rules size it.
+    apply_portion_rules_for_ingredient(id)
     return result
 
 def create_ingredient( values):
@@ -428,7 +432,45 @@ def recipe_components(id: int):
         # don't have to parse a formatted string back into a float.
         row['CostRaw'] = row['Cost'] or 0.0
         row['Cost'] = "$ {:.2f}".format(row['Cost'])
+    _annotate_portions(result)
     return(result)
+
+
+def _annotate_portions(rows):
+    '''Add row['Portion'] — how portion rules size the row, for the
+    recipe editor — or None where no rule applies:
+      {'state': 'base' | 'fixed' | 'hand', 'pct': share of its base (base),
+       'siblings': rows following the same base, 'sizable': unit is a volume,
+       'rule': the rule in words}'''
+    shares = {}
+    for row in rows:
+        if row.get('RuleMode') == 'base' and row.get('PortionShare') is not None \
+                and row.get('FromTemplateTagId') is None:
+            shares.setdefault(row['RuleCategoryId'], []).append(row['PortionShare'])
+    for row in rows:
+        row['Portion'] = None
+        if row['Type'] != 'ingredient' or not row.get('RuleMode') or row.get('FromTemplateTagId') is not None:
+            continue
+        unit = portions.parse_unit(row.get('Unit'))
+        info = {
+            'sizable': unit is not None and unit.is_volume,
+            'rule': portions.describe_rule(row.get('TagName') or 'category', row['RuleMode'],
+                                           row['RuleAmount'], row['RuleMeasure']),
+            'mode': row['RuleMode'],
+            'pct': None,
+            'siblings': 0,
+        }
+        share = row.get('PortionShare')
+        if share is None:
+            info['state'] = 'hand'
+        elif row['RuleMode'] == 'fixed':
+            info['state'] = 'fixed'
+        else:
+            group = shares.get(row['RuleCategoryId'], [])
+            info['state'] = 'base'
+            info['siblings'] = len(group)
+            info['pct'] = share / sum(group) if sum(group) else None
+        row['Portion'] = info
 
 def update_recipe_info(id: int, name: str, unit: str, outputqty: float, menu_price=None):
     '''menu_price is None when the recipe isn't on the menu / price unknown;
@@ -459,11 +501,11 @@ def create_recipe(name: str, unit: str, outputqty: float):
     
 def create_recipe_with(name, unit, outputqty, menu_price=None, format_tag_id=None, copy_from=None):
     '''The New recipe dialog: create a recipe with a format (its
-    template's items and portion multipliers applied) and, optionally,
-    the components of another recipe. Copying goes through the same
-    format switch the editor uses, so the source's template items and
-    multipliers are swapped for the new format's. Recipe tags aren't
-    copied. Returns the new id.'''
+    template's items and portion rules applied) and, optionally, the
+    components of another recipe. Copying goes through the same format
+    switch the editor uses, so the source's template items are swapped
+    for the new format's and its portions follow the new format's rules.
+    Recipe tags aren't copied. Returns the new id.'''
     new_id = create_recipe(name, unit, outputqty)
     if menu_price is not None:
         query('UPDATE Recipes SET menu_price = ? WHERE Id = ?;', (menu_price, new_id))
@@ -471,8 +513,8 @@ def create_recipe_with(name, unit, outputqty, menu_price=None, format_tag_id=Non
     if copy_from:
         query('''
             INSERT INTO Connections (ParentRecipe, ChildRecipe, ChildIngredient, Quantity,
-                                     SortOrder, from_template_tag_id)
-            SELECT ?, ChildRecipe, ChildIngredient, Quantity, SortOrder, from_template_tag_id
+                                     SortOrder, from_template_tag_id, portion_share)
+            SELECT ?, ChildRecipe, ChildIngredient, Quantity, SortOrder, from_template_tag_id, portion_share
             FROM Connections WHERE ParentRecipe = ?;''', (new_id, copy_from))
         old_tag_id = (get_recipe_tag(copy_from) or {}).get('id')
     if old_tag_id or format_tag_id:
@@ -490,26 +532,34 @@ def add_recipe_ingredient(parent: int, mode: str, child: int, qty: float, sort_o
     '''Insert a Connections row. If sort_order is None, the new row is
     appended (MAX(SortOrder) + 1 for the parent recipe). Pass an explicit
     sort_order when undoing a remove, so the row lands back in its
-    original position.'''
-    if sort_order is None:
-        result = query(
-            'SELECT COALESCE(MAX(SortOrder), 0) + 1 AS next FROM Connections WHERE ParentRecipe = ?;',
-            (parent,), one=True,
-        )
-        sort_order = (result or {}).get('next', 1) or 1
-    sql = '''
-        INSERT INTO Connections (ParentRecipe, ChildRecipe, ChildIngredient, Quantity, SortOrder)
-        VALUES (?, ?, ?, ?, ?);
-    '''
+    original position.
+
+    An ingredient in a category the recipe's format has a portion rule
+    for follows that rule (an equal share of a base), so `qty` is only
+    a starting value there; the rules then size it and its neighbours.'''
     if mode == 'ingredient':
-        recipe = None
-        ingredient = child
+        recipe, ingredient = None, child
     elif mode == 'recipe':
-        recipe = child
-        ingredient = None
+        recipe, ingredient = child, None
     else:
         raise ValueError(f"Invalid mode: {mode}")
-    return query(sql, (parent, recipe, ingredient, qty, sort_order))
+    con = _connect()
+    try:
+        cur = con.cursor()
+        if sort_order is None:
+            cur.execute('SELECT COALESCE(MAX(SortOrder), 0) + 1 FROM Connections WHERE ParentRecipe = ?;',
+                        (parent,))
+            sort_order = cur.fetchone()[0] or 1
+        share = _default_share(cur, parent, ingredient) if ingredient is not None else None
+        cur.execute('INSERT INTO Connections (ParentRecipe, ChildRecipe, ChildIngredient, Quantity,'
+                    ' SortOrder, portion_share) VALUES (?, ?, ?, ?, ?, ?);',
+                    (parent, recipe, ingredient, qty, sort_order, share))
+        result = {'data': [], 'rowcount': cur.rowcount, 'lastrowid': cur.lastrowid}
+        _apply_rules(cur, parent)
+        con.commit()
+        return result
+    finally:
+        con.close()
 
 
 def reorder_recipe_components(parent: int, ordered_specs):
@@ -530,35 +580,55 @@ def reorder_recipe_components(parent: int, ordered_specs):
                 (i, parent, child_id),
             )
 
-def update_recipe_ingredient(parent: int, mode: str, child: int, qty: float):
-    sql = '''
-        UPDATE Connections SET Quantity=?
-        WHERE ParentRecipe=? {filter};
-    '''
+def _child_column(mode):
     if mode == 'ingredient':
-        filter = 'AND ChildIngredient=?'
-    elif mode == 'recipe':
-        filter = 'AND ChildRecipe=?'
-    else:
-        raise ValueError(f"Invalid mode: {mode}")
-    params = (qty, parent, child)
-    return query(sql.format(filter=filter), params)
+        return 'ChildIngredient'
+    if mode == 'recipe':
+        return 'ChildRecipe'
+    raise ValueError(f"Invalid mode: {mode}")
+
+
+def update_recipe_ingredient(parent: int, mode: str, child: int, qty: float):
+    '''Set a row's quantity by hand. Typing a quantity pins it: a row
+    following a fixed rule stops following it; for a base category the
+    whole category is pinned at its current quantities, so the typed
+    amount sticks and its neighbours don't move.'''
+    column = _child_column(mode)
+    con = _connect()
+    try:
+        cur = con.cursor()
+        if mode == 'ingredient':
+            category = _ingredient_category(cur, child)
+            rule = _format_rules(cur, _recipe_format_id(cur, parent)).get(category)
+            if rule is not None and rule.mode == 'base':
+                cur.execute('''UPDATE Connections SET portion_share = NULL
+                               WHERE ParentRecipe = ? AND portion_share IS NOT NULL
+                                 AND ChildIngredient IN (
+                                   SELECT itm.ingredient_id FROM ingredient_tags_mapping itm
+                                   WHERE itm.tag_id = ?);''', (parent, category))
+        cur.execute(f'UPDATE Connections SET Quantity = ?, portion_share = NULL'
+                    f' WHERE ParentRecipe = ? AND {column} = ?;', (qty, parent, child))
+        result = {'data': [], 'rowcount': cur.rowcount, 'lastrowid': cur.lastrowid}
+        con.commit()
+        return result
+    finally:
+        con.close()
 
 
 def delete_recipe_ingredient(parent: int, mode: str, child: int):
-    sql = '''
-        DELETE FROM Connections
-        WHERE ParentRecipe=? {filter};
-    '''
-    if mode == 'ingredient':
-        filter = 'AND ChildIngredient=?'
-    elif mode == 'recipe':
-        filter = 'AND ChildRecipe=?'
-    else:
-        raise ValueError(f"Invalid mode: {mode}")
-
-    params = (parent, child)
-    return query(sql.format(filter=filter), params)
+    '''Remove a row; a base category it was in is re-split among the
+    rows left.'''
+    column = _child_column(mode)
+    con = _connect()
+    try:
+        cur = con.cursor()
+        cur.execute(f'DELETE FROM Connections WHERE ParentRecipe = ? AND {column} = ?;', (parent, child))
+        result = {'data': [], 'rowcount': cur.rowcount, 'lastrowid': cur.lastrowid}
+        _apply_rules(cur, parent)
+        con.commit()
+        return result
+    finally:
+        con.close()
 
 def set_recipe_tag(recipe_id, tag_id):
     '''Replace this recipe's format tag with `tag_id`, or clear it if
@@ -566,7 +636,7 @@ def set_recipe_tag(recipe_id, tag_id):
     SQLite can't easily express the partial-unique constraint.
 
     Note: this only flips the mapping row — it does NOT apply or unapply
-    the template's items/multipliers. Use transition_recipe_format() for
+    the template's items or portion rules. Use transition_recipe_format() for
     the full apply-or-switch flow.'''
     query(
         'DELETE FROM recipe_tags_mapping WHERE recipe_id=? '
@@ -634,46 +704,19 @@ def update_tag_component_quantity(tag_component_id, quantity):
     return query('UPDATE tag_components SET quantity=? WHERE id=?;', (quantity, tag_component_id))
 
 
-def get_tag_category_multipliers(tag_id):
-    '''All category-multiplier rows for one template. Each ingredient
-    category (kind='ingredient' tag) gets one row at most. Categories
-    without an override return multiplier=1.0 here so the editor can list
-    every category uniformly.'''
-    sql = '''
-        SELECT
-            ct.id AS category_tag_id,
-            ct.name AS category_name,
-            ct.color AS category_color,
-            COALESCE(tcm.multiplier, 1.0) AS multiplier
-        FROM tags ct
-        LEFT JOIN tag_category_multipliers tcm
-          ON tcm.category_tag_id = ct.id AND tcm.tag_id = ?
-        WHERE ct.kind = 'ingredient'
-        ORDER BY COALESCE(ct.sortOrder, 999), ct.id;
-    '''
-    return query(sql, (tag_id,))['data']
-
-
-def set_tag_category_multiplier(tag_id, category_tag_id, multiplier):
-    '''Insert or update the (tag_id, category_tag_id) pair. A multiplier of
-    exactly 1.0 deletes the row instead — keeps the table clean of no-ops
-    so the apply step doesn't waste work on identity multiplications.'''
-    if abs(multiplier - 1.0) < 1e-9:
-        query(
-            'DELETE FROM tag_category_multipliers WHERE tag_id=? AND category_tag_id=?;',
-            (tag_id, category_tag_id),
-        )
-        return
-    # Upsert by hand — SQLite's INSERT ON CONFLICT is fine but the UNIQUE
-    # constraint gives us a tidy two-step path that's easy to reason about.
-    query(
-        'DELETE FROM tag_category_multipliers WHERE tag_id=? AND category_tag_id=?;',
-        (tag_id, category_tag_id),
-    )
-    query(
-        'INSERT INTO tag_category_multipliers (tag_id, category_tag_id, multiplier) VALUES (?, ?, ?);',
-        (tag_id, category_tag_id, multiplier),
-    )
+def get_category_portion_formats(category_tag_id):
+    '''Names of the formats with a portion rule for this ingredient
+    category (utilities/portions.py), in format order.'''
+    if not category_tag_id:
+        return []
+    rows = query(
+        '''SELECT t.name FROM tag_portion_rules pr
+           JOIN tags t ON t.id = pr.tag_id
+           WHERE pr.category_tag_id = ?
+           ORDER BY COALESCE(t.sortOrder, 999), t.id;''',
+        (category_tag_id,),
+    )['data']
+    return [r['name'] for r in rows]
 
 
 def _recipe_has_component(recipe_id, mode, child_id):
@@ -691,179 +734,540 @@ def _recipe_has_component(recipe_id, mode, child_id):
     return row is not None
 
 
+# ---------------------------------------------------------------------------
+# Portion rules engine (utilities/portions.py has the math)
+# ---------------------------------------------------------------------------
+
+def _connect():
+    return sqlite3.connect(config.DATABASE)
+
+
+def _format_rules(cur, tag_id):
+    '''{category_tag_id: portions.Rule} for one format.'''
+    if not tag_id:
+        return {}
+    cur.execute('SELECT category_tag_id, mode, amount, measure FROM tag_portion_rules WHERE tag_id = ?;',
+                (tag_id,))
+    return {cat: portions.Rule(mode, amount, measure) for cat, mode, amount, measure in cur.fetchall()}
+
+
+def _recipe_format_id(cur, recipe_id):
+    cur.execute('''SELECT rtm.tag_id FROM recipe_tags_mapping rtm
+                   JOIN tags t ON t.id = rtm.tag_id AND t.kind = 'recipe'
+                   WHERE rtm.recipe_id = ? LIMIT 1;''', (recipe_id,))
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def _ingredient_category(cur, ingredient_id):
+    cur.execute('''SELECT itm.tag_id FROM ingredient_tags_mapping itm
+                   JOIN tags t ON t.id = itm.tag_id AND t.kind = 'ingredient'
+                   WHERE itm.ingredient_id = ? LIMIT 1;''', (ingredient_id,))
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def _ingredient_rows(cur, recipe_id):
+    '''The recipe's ingredient rows with what the rules need: rowid,
+    ingredient, qty, share, unit, category, template.'''
+    cur.execute('''
+        SELECT c.rowid, c.ChildIngredient, c.Quantity, c.portion_share, i.Unit,
+               (SELECT itm.tag_id FROM ingredient_tags_mapping itm
+                  JOIN tags t ON t.id = itm.tag_id AND t.kind = 'ingredient'
+                 WHERE itm.ingredient_id = c.ChildIngredient LIMIT 1) AS category,
+               c.from_template_tag_id
+        FROM Connections c JOIN Ingredients i ON i.Id = c.ChildIngredient
+        WHERE c.ParentRecipe = ?;''', (recipe_id,))
+    keys = ('rowid', 'ingredient', 'qty', 'share', 'unit', 'category', 'template')
+    return [dict(zip(keys, r)) for r in cur.fetchall()]
+
+
+def _apply_rules(cur, recipe_id):
+    '''Derive Quantity for every row that follows its format's rule.
+    Writes only rows whose quantity actually changes. Returns how many.'''
+    rules = _format_rules(cur, _recipe_format_id(cur, recipe_id))
+    if not rules:
+        return 0
+    by_category = {}
+    for r in _ingredient_rows(cur, recipe_id):
+        if r['share'] is not None and r['category'] in rules:
+            by_category.setdefault(r['category'], []).append(r)
+    changed = 0
+    for category, rows in by_category.items():
+        derived = portions.rule_quantities(rules[category], [(r['rowid'], r['unit'], r['share']) for r in rows])
+        for r in rows:
+            qty = derived.get(r['rowid'])
+            if qty is None or (r['qty'] is not None and abs(r['qty'] - qty) < 1e-9):
+                continue
+            cur.execute('UPDATE Connections SET Quantity = ? WHERE rowid = ?;', (qty, r['rowid']))
+            changed += 1
+    return changed
+
+
+def _follow_rules(cur, recipe_id):
+    '''Make every hand-added row in a category the recipe's format has a
+    rule for follow that rule, keeping the category's current split as
+    the shares. Template items stay as the template says.'''
+    rules = _format_rules(cur, _recipe_format_id(cur, recipe_id))
+    by_category = {}
+    for r in _ingredient_rows(cur, recipe_id):
+        if r['category'] in rules and r['template'] is None:
+            by_category.setdefault(r['category'], []).append(r)
+    for category, rows in by_category.items():
+        if rules[category].mode == 'fixed':
+            shares = {r['rowid']: 1.0 for r in rows
+                      if (portions.parse_unit(r['unit']) or portions.ParsedUnit(0, '', None)).is_volume}
+        else:
+            shares = portions.shares_from_quantities([(r['rowid'], r['unit'], r['qty']) for r in rows])
+        for r in rows:
+            if r['rowid'] in shares:
+                cur.execute('UPDATE Connections SET portion_share = ? WHERE rowid = ?;',
+                            (round(shares[r['rowid']], 6), r['rowid']))
+
+
+def _default_share(cur, recipe_id, ingredient_id):
+    '''The share a newly added ingredient starts with: None (pinned) if
+    its category has no rule in the recipe's format or its unit isn't a
+    volume; otherwise an equal part — the average of the shares already
+    in that category, or 1.'''
+    rules = _format_rules(cur, _recipe_format_id(cur, recipe_id))
+    category = _ingredient_category(cur, ingredient_id)
+    if category not in rules:
+        return None
+    cur.execute('SELECT Unit FROM Ingredients WHERE Id = ?;', (ingredient_id,))
+    row = cur.fetchone()
+    unit = portions.parse_unit(row[0] if row else None)
+    if unit is None or not unit.is_volume:
+        return None
+    if rules[category].mode == 'fixed':
+        return 1.0
+    shares = [r['share'] for r in _ingredient_rows(cur, recipe_id)
+              if r['category'] == category and r['share'] is not None]
+    return sum(shares) / len(shares) if shares else 1.0
+
+
+def _rule_for_row(cur, recipe_id, ingredient_id):
+    '''(category_tag_id, Rule or None) for one ingredient in a recipe.'''
+    category = _ingredient_category(cur, ingredient_id)
+    return category, _format_rules(cur, _recipe_format_id(cur, recipe_id)).get(category)
+
+
+def _hand_added_rows(cur, recipe_id, category):
+    return [r for r in _ingredient_rows(cur, recipe_id)
+            if r['category'] == category and r['template'] is None]
+
+
+def _run(fn):
+    con = _connect()
+    try:
+        result = fn(con.cursor())
+        con.commit()
+        return result
+    finally:
+        con.close()
+
+
+def pin_portion(recipe_id, ingredient_id):
+    '''Size a row by hand at its current quantity. In a base category the
+    whole category is pinned, so nothing in it moves any more.'''
+    def run(cur):
+        category, rule = _rule_for_row(cur, recipe_id, ingredient_id)
+        if rule is not None and rule.mode == 'base':
+            for r in _hand_added_rows(cur, recipe_id, category):
+                cur.execute('UPDATE Connections SET portion_share = NULL WHERE rowid = ?;', (r['rowid'],))
+        cur.execute('UPDATE Connections SET portion_share = NULL WHERE ParentRecipe = ? AND ChildIngredient = ?;',
+                    (recipe_id, ingredient_id))
+    _run(run)
+
+
+def follow_portion(recipe_id, ingredient_id):
+    '''Let a row follow its format's rule again. In a base category every
+    hand-added row of the category follows, keeping the current split.
+    Returns False when there's no rule or the unit can't be sized.'''
+    def run(cur):
+        category, rule = _rule_for_row(cur, recipe_id, ingredient_id)
+        if rule is None:
+            return False
+        rows = _hand_added_rows(cur, recipe_id, category)
+        if rule.mode == 'base':
+            shares = portions.shares_from_quantities([(r['rowid'], r['unit'], r['qty']) for r in rows])
+        else:
+            shares = {r['rowid']: 1.0 for r in rows if r['ingredient'] == ingredient_id
+                      and (portions.parse_unit(r['unit']) or portions.ParsedUnit(0, '', None)).is_volume}
+        if not any(r['ingredient'] == ingredient_id and r['rowid'] in shares for r in rows):
+            return False
+        for r in rows:
+            if r['rowid'] in shares:
+                cur.execute('UPDATE Connections SET portion_share = ? WHERE rowid = ?;',
+                            (round(shares[r['rowid']], 6), r['rowid']))
+        _apply_rules(cur, recipe_id)
+        return True
+    return _run(run)
+
+
+def _base_split(cur, recipe_id, ingredient_id, qty):
+    '''Work out set_base_quantity: (rule, target row, other rows, volume
+    wanted) or raise ValueError saying why the quantity can't be a share.'''
+    category, rule = _rule_for_row(cur, recipe_id, ingredient_id)
+    if rule is None or rule.mode != 'base':
+        raise ValueError('This ingredient doesn’t follow a shared base.')
+    rows = []
+    for r in _ingredient_rows(cur, recipe_id):
+        unit = portions.parse_unit(r['unit'])
+        if r['category'] == category and r['share'] is not None and unit is not None and unit.is_volume:
+            rows.append((r, unit.floz))
+    target = next(((r, u) for r, u in rows if r['ingredient'] == ingredient_id), None)
+    if target is None:
+        raise ValueError('This ingredient doesn’t follow a shared base.')
+    want = float(qty) * target[1]
+    if not 0 < want < rule.floz - 1e-9:
+        raise ValueError(f'That’s the whole base or more ({portions.format_amount(rule.amount, rule.measure)}).')
+    others = [(r, u) for r, u in rows if r is not target[0]]
+    if not others:
+        raise ValueError('It’s the only ingredient in the base, so it takes all of it.')
+    return rule, target, others, want
+
+
+def base_quantity_problem(recipe_id, ingredient_id, qty):
+    '''Why set_base_quantity would refuse this quantity, or None.'''
+    try:
+        _run(lambda cur: _base_split(cur, recipe_id, ingredient_id, qty))
+    except ValueError as exc:
+        return str(exc)
+    return None
+
+
+def set_base_quantity(recipe_id, ingredient_id, qty):
+    '''Type a quantity on a row that follows a base rule: it becomes that
+    row's share of the base, and the category's other rows share what's
+    left in their current proportions, so the base total holds. Raises
+    ValueError when the amount isn't less than the whole base (check
+    first with base_quantity_problem).'''
+    def run(cur):
+        rule, target, others, want = _base_split(cur, recipe_id, ingredient_id, qty)
+        total = rule.floz
+        other_sum = sum(r['share'] for r, _u in others) or len(others)
+        cur.execute('UPDATE Connections SET portion_share = ? WHERE rowid = ?;',
+                    (round(want / total, 6), target[0]['rowid']))
+        for r, _u in others:
+            part = (r['share'] or 1.0) / other_sum if other_sum else 1.0 / len(others)
+            cur.execute('UPDATE Connections SET portion_share = ? WHERE rowid = ?;',
+                        (round(part * (total - want) / total, 6), r['rowid']))
+        _apply_rules(cur, recipe_id)
+    _run(run)
+
+
+def portion_review():
+    '''Hand-sized rows a format's rule could size, for the "Check recipes
+    against portion rules" review. One group per (recipe, ruled category)
+    with at least one pinned, hand-added, volume-unit row:
+
+      {recipe_id, recipe, status, format, category_id, category, mode,
+       rule (in words), rows: [{ingredient_id, name, unit, current,
+       standard}], cost_change, at_standard}
+
+    `standard` is what following the rule would give (a base keeps its
+    current split). Rows whose unit isn't a volume are listed per group
+    under `unsizable` instead. Ordered by format, then recipe.'''
+    ingredients = {r['Id']: r for r in query('SELECT Id, Name, Unit, Cost FROM Ingredients;')['data']}
+    recipes = query('''
+        SELECT r.Id, r.Name, r.status, t.id AS tag_id, t.name AS format
+        FROM Recipes r
+        JOIN recipe_tags_mapping rtm ON rtm.recipe_id = r.Id
+        JOIN tags t ON t.id = rtm.tag_id AND t.kind = 'recipe'
+        WHERE EXISTS (SELECT 1 FROM tag_portion_rules pr WHERE pr.tag_id = t.id)
+        ORDER BY COALESCE(t.sortOrder, 999), t.id, r.Name COLLATE NOCASE;''')['data']
+    categories = {t['id']: t['name'] for t in get_tags(kind='ingredient')}
+    groups = []
+
+    def run(cur):
+        for recipe in recipes:
+            rules = _format_rules(cur, recipe['tag_id'])
+            by_category = {}
+            for r in _ingredient_rows(cur, recipe['Id']):
+                if r['category'] in rules and r['template'] is None:
+                    by_category.setdefault(r['category'], []).append(r)
+            for category, rows in by_category.items():
+                rule = rules[category]
+                sizable = [r for r in rows
+                           if (portions.parse_unit(r['unit']) or portions.ParsedUnit(0, '', None)).is_volume]
+                unsizable = [r for r in rows if r not in sizable]
+                pinned = [r for r in sizable if r['share'] is None]
+                if not pinned and not unsizable:
+                    continue
+                if rule.mode == 'base':
+                    shares = portions.shares_from_quantities([(r['rowid'], r['unit'], r['qty']) for r in sizable])
+                    standard = portions.rule_quantities(
+                        rule, [(r['rowid'], r['unit'], shares.get(r['rowid'])) for r in sizable])
+                    listed = sizable if pinned else []
+                else:
+                    standard = portions.rule_quantities(rule, [(r['rowid'], r['unit'], 1.0) for r in pinned])
+                    listed = pinned
+                out_rows, change = [], 0.0
+                for r in listed:
+                    ing = ingredients.get(r['ingredient'], {})
+                    std = standard.get(r['rowid'])
+                    change += (std - (r['qty'] or 0)) * float(ing.get('Cost') or 0)
+                    out_rows.append({'ingredient_id': r['ingredient'], 'name': ing.get('Name'), 'unit': r['unit'],
+                                     'current': r['qty'], 'standard': std, 'following': r['share'] is not None})
+                groups.append({
+                    'recipe_id': recipe['Id'], 'recipe': recipe['Name'], 'status': recipe['status'],
+                    'format': recipe['format'], 'category_id': category,
+                    'category': categories.get(category, ''), 'mode': rule.mode,
+                    'rule': portions.describe_rule(categories.get(category, 'category'), rule.mode,
+                                                   rule.amount, rule.measure),
+                    'rows': out_rows, 'cost_change': change,
+                    'at_standard': bool(out_rows) and all(portions.matches(x['current'], x['standard'])
+                                                          for x in out_rows),
+                    'unsizable': [{'ingredient_id': r['ingredient'],
+                                   'name': ingredients.get(r['ingredient'], {}).get('Name'), 'unit': r['unit']}
+                                  for r in unsizable],
+                })
+    _run(run)
+    return groups
+
+
+def follow_portion_groups(groups):
+    '''Bring review groups onto their rules (see portion_review). Returns
+    {recipe_id: snapshot before} so the caller can undo.'''
+    before = {}
+    for g in groups:
+        if not g['rows']:
+            continue
+        before.setdefault(g['recipe_id'], snapshot_recipe_connections(g['recipe_id']))
+        if g['mode'] == 'base':
+            follow_portion(g['recipe_id'], g['rows'][0]['ingredient_id'])
+        else:
+            for row in g['rows']:
+                follow_portion(g['recipe_id'], row['ingredient_id'])
+    return before
+
+
+def split_base_evenly(recipe_id, ingredient_id):
+    '''Give every row following this ingredient's base an equal share.'''
+    def run(cur):
+        category, rule = _rule_for_row(cur, recipe_id, ingredient_id)
+        if rule is None or rule.mode != 'base':
+            return
+        for r in _ingredient_rows(cur, recipe_id):
+            if r['category'] == category and r['share'] is not None:
+                cur.execute('UPDATE Connections SET portion_share = 1.0 WHERE rowid = ?;', (r['rowid'],))
+        _apply_rules(cur, recipe_id)
+    _run(run)
+
+
+def apply_portion_rules(recipe_id):
+    '''Bring one recipe's rule-following quantities up to date. Safe to
+    call any time: the result depends only on rules, shares and units.'''
+    con = _connect()
+    try:
+        changed = _apply_rules(con.cursor(), recipe_id)
+        con.commit()
+        return changed
+    finally:
+        con.close()
+
+
+def apply_portion_rules_for_ingredient(ingredient_id):
+    '''Re-derive every recipe that uses this ingredient — after its unit
+    or category changes.'''
+    con = _connect()
+    try:
+        cur = con.cursor()
+        cur.execute('SELECT DISTINCT ParentRecipe FROM Connections WHERE ChildIngredient = ?;',
+                    (ingredient_id,))
+        for (recipe_id,) in cur.fetchall():
+            _apply_rules(cur, recipe_id)
+        con.commit()
+    finally:
+        con.close()
+
+
+def get_portion_rules(tag_id):
+    '''A format's portion rules, joined to the category name/color.'''
+    return query('''
+        SELECT pr.id, pr.category_tag_id, ct.name AS category_name, ct.color AS category_color,
+               pr.mode, pr.amount, pr.measure
+        FROM tag_portion_rules pr JOIN tags ct ON ct.id = pr.category_tag_id
+        WHERE pr.tag_id = ?
+        ORDER BY COALESCE(ct.sortOrder, 999), ct.id;''', (tag_id,))['data']
+
+
+def set_portion_rule(tag_id, category_tag_id, mode, amount, measure):
+    '''Add or replace a format's rule for one category. Doesn't touch any
+    recipe; follow with apply_template_to_recipes(tag_id).'''
+    if mode not in portions.MODES:
+        raise ValueError(f'Invalid portion rule mode: {mode}')
+    if portions.to_floz(amount, measure) is None or float(amount) <= 0:
+        raise ValueError(f'Invalid portion rule amount: {amount} {measure}')
+    query('''INSERT INTO tag_portion_rules (tag_id, category_tag_id, mode, amount, measure)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT (tag_id, category_tag_id)
+             DO UPDATE SET mode = excluded.mode, amount = excluded.amount, measure = excluded.measure;''',
+          (tag_id, category_tag_id, mode, float(amount), measure))
+
+
+def delete_portion_rule(tag_id, category_tag_id):
+    query('DELETE FROM tag_portion_rules WHERE tag_id = ? AND category_tag_id = ?;',
+          (tag_id, category_tag_id))
+
+
+def get_format_recipe_ids(tag_id):
+    return [r['recipe_id'] for r in query(
+        'SELECT recipe_id FROM recipe_tags_mapping WHERE tag_id = ? ORDER BY recipe_id;', (tag_id,))['data']]
+
+
+def get_format_costs(tag_id):
+    '''{recipe_id: cost} for every recipe in a format.'''
+    return {r['Id']: float(r['Cost'] or 0) for r in query(
+        '''SELECT rtv.Id, rtv.Cost FROM RecipeTotalValues rtv
+           JOIN recipe_tags_mapping rtm ON rtm.recipe_id = rtv.Id
+           WHERE rtm.tag_id = ?;''', (tag_id,))['data']}
+
+
+def count_hand_sized_recipes(tag_id):
+    '''How many of a format's recipes have a hand-added, pinned row in a
+    category the format has a rule for — rows its rules don't resize.'''
+    return query('''
+        SELECT COUNT(DISTINCT c.ParentRecipe) AS n
+        FROM Connections c
+        JOIN recipe_tags_mapping rtm ON rtm.recipe_id = c.ParentRecipe AND rtm.tag_id = ?
+        JOIN ingredient_tags_mapping itm ON itm.ingredient_id = c.ChildIngredient
+        JOIN tag_portion_rules pr ON pr.tag_id = rtm.tag_id AND pr.category_tag_id = itm.tag_id
+        WHERE c.portion_share IS NULL AND c.from_template_tag_id IS NULL;''', (tag_id,), one=True)['n']
+
+
+def snapshot_template(tag_id):
+    '''A format's auto-add items and portion rules, for undoing a template
+    edit with restore_template.'''
+    return {
+        'components': query('SELECT child_recipe, child_ingredient, quantity FROM tag_components'
+                            ' WHERE tag_id = ? ORDER BY id;', (tag_id,))['data'],
+        'rules': query('SELECT category_tag_id, mode, amount, measure FROM tag_portion_rules'
+                       ' WHERE tag_id = ? ORDER BY id;', (tag_id,))['data'],
+    }
+
+
+def restore_template(tag_id, snapshot):
+    con = _connect()
+    try:
+        cur = con.cursor()
+        cur.execute('DELETE FROM tag_components WHERE tag_id = ?;', (tag_id,))
+        cur.execute('DELETE FROM tag_portion_rules WHERE tag_id = ?;', (tag_id,))
+        for c in snapshot['components']:
+            cur.execute('INSERT INTO tag_components (tag_id, child_recipe, child_ingredient, quantity)'
+                        ' VALUES (?, ?, ?, ?);', (tag_id, c['child_recipe'], c['child_ingredient'], c['quantity']))
+        for r in snapshot['rules']:
+            cur.execute('INSERT INTO tag_portion_rules (tag_id, category_tag_id, mode, amount, measure)'
+                        ' VALUES (?, ?, ?, ?, ?);', (tag_id, r['category_tag_id'], r['mode'], r['amount'],
+                                                     r['measure']))
+        con.commit()
+    finally:
+        con.close()
+
+
+def apply_template_to_recipes(tag_id):
+    '''After a template edit: bring every recipe in this format in line
+    with its items (added, removed, quantities) and portion rules, in one
+    transaction. Returns {recipe_id: snapshot before} for the recipes that
+    changed, so the caller can offer to revert them.'''
+    recipe_ids = get_format_recipe_ids(tag_id)
+    before = {rid: snapshot_recipe_connections(rid) for rid in recipe_ids}
+    con = _connect()
+    try:
+        cur = con.cursor()
+        for rid in recipe_ids:
+            _reconcile_items(cur, rid, tag_id)
+            _apply_rules(cur, rid)
+        con.commit()
+    finally:
+        con.close()
+    return {rid: rows for rid, rows in before.items() if snapshot_recipe_connections(rid) != rows}
+
+
+def _template_items(cur, tag_id):
+    '''{ingredient_id: quantity} a template adds (ingredients only — see
+    add_tag_component on why sub-recipes are refused).'''
+    if not tag_id:
+        return {}
+    cur.execute('SELECT child_ingredient, quantity FROM tag_components'
+                ' WHERE tag_id = ? AND child_ingredient IS NOT NULL;', (tag_id,))
+    return {ing: (qty if qty is not None else 1.0) for ing, qty in cur.fetchall()}
+
+
+def _reconcile_items(cur, recipe_id, tag_id, old_tag_id=None):
+    '''Make the recipe's template rows match `tag_id`'s items. Rows from
+    this template (or `old_tag_id`, when switching) that it no longer
+    lists are deleted. Rows of a listed item — template or hand-added —
+    become template rows at the template's quantity. Missing items are
+    appended. Other hand-added rows are untouched.'''
+    items = _template_items(cur, tag_id)
+    attributed = {t for t in (tag_id, old_tag_id) if t}
+    cur.execute('SELECT rowid, ChildIngredient, Quantity, from_template_tag_id, portion_share'
+                ' FROM Connections WHERE ParentRecipe = ?;', (recipe_id,))
+    present = set()
+    for rowid, ingredient, qty, template, share in cur.fetchall():
+        if ingredient in items:
+            present.add(ingredient)
+            if (template, qty, share) != (tag_id, items[ingredient], None):
+                cur.execute('UPDATE Connections SET from_template_tag_id = ?, Quantity = ?,'
+                            ' portion_share = NULL WHERE rowid = ?;', (tag_id, items[ingredient], rowid))
+        elif template is not None and template in attributed:
+            cur.execute('DELETE FROM Connections WHERE rowid = ?;', (rowid,))
+    for ingredient, qty in items.items():
+        if ingredient in present:
+            continue
+        cur.execute('SELECT COALESCE(MAX(SortOrder), 0) + 1 FROM Connections WHERE ParentRecipe = ?;',
+                    (recipe_id,))
+        cur.execute('INSERT INTO Connections (ParentRecipe, ChildRecipe, ChildIngredient, Quantity,'
+                    ' SortOrder, from_template_tag_id) VALUES (?, NULL, ?, ?, ?, ?);',
+                    (recipe_id, ingredient, qty, cur.fetchone()[0], tag_id))
+
+
 def transition_recipe_format(recipe_id, old_tag_id, new_tag_id):
-    '''Move the recipe from one format to another:
-      1. Reverse the old template's category multipliers
-      2. Remove items that came from the old template (and aren't in the new
-         template's spec) — items the user manually added are left alone
-         because their from_template_tag_id is NULL
-      3. Re-attribute items shared between old and new templates so they
-         survive a future switch-back
-      4. Add new template's items that aren't already present
-      5. Apply the new template's category multipliers
-
-    Multipliers scale ALL ingredients of a given category in the recipe
-    (whether user- or template-added), which matches the user-facing
-    notion that "Wraps get a 0.3 portion of greens" is a property of the
-    recipe-as-served, not a property of any particular component.
-    '''
-    # --- 1. reverse old multipliers ---
-    if old_tag_id:
-        for m in get_tag_category_multipliers(old_tag_id):
-            mult = m['multiplier']
-            if abs(mult - 1.0) < 1e-9 or mult == 0:
-                continue
-            query(
-                '''UPDATE Connections SET Quantity = Quantity / ?
-                   WHERE ParentRecipe = ?
-                     AND ChildIngredient IN (
-                         SELECT itm.ingredient_id FROM ingredient_tags_mapping itm
-                         WHERE itm.tag_id = ?
-                     );''',
-                (mult, recipe_id, m['category_tag_id']),
-            )
-
-    # --- 2/3. handle old template's items ---
-    new_template_keys = set()
-    if new_tag_id:
-        for c in get_tag_components(new_tag_id):
-            key = ('ingredient' if c['child_ingredient'] else 'recipe',
-                   c['child_ingredient'] or c['child_recipe'])
-            new_template_keys.add(key)
-
-    if old_tag_id:
-        old_rows = query(
-            'SELECT rowid, ChildRecipe, ChildIngredient FROM Connections '
-            'WHERE ParentRecipe=? AND from_template_tag_id=?;',
-            (recipe_id, old_tag_id),
-        )['data']
-        for r in old_rows:
-            mode = 'ingredient' if r['ChildIngredient'] else 'recipe'
-            child = r['ChildIngredient'] or r['ChildRecipe']
-            if (mode, child) in new_template_keys:
-                # Carries over — re-attribute so the next switch can still
-                # find it. Without this, switching back-and-forth would
-                # orphan template items as merely-manual ones.
-                query(
-                    'UPDATE Connections SET from_template_tag_id=? WHERE rowid=?;',
-                    (new_tag_id, r['rowid']),
-                )
-            else:
-                query('DELETE FROM Connections WHERE rowid=?;', (r['rowid'],))
-
-    # --- 4. add new template's items not already present ---
-    if new_tag_id:
-        for c in get_tag_components(new_tag_id):
-            mode = 'ingredient' if c['child_ingredient'] else 'recipe'
-            child_id = c['child_ingredient'] or c['child_recipe']
-            if _recipe_has_component(recipe_id, mode, child_id):
-                continue
-            # Append; capture template provenance so it can be removed cleanly
-            # if the format changes again. Reuses the standard add path so the
-            # SortOrder backfill is consistent with manual adds.
-            next_order = query(
-                'SELECT COALESCE(MAX(SortOrder), 0) + 1 AS next FROM Connections WHERE ParentRecipe=?;',
-                (recipe_id,), one=True,
-            )
-            sort_order = (next_order or {}).get('next', 1) or 1
-            qty = c['quantity'] if c['quantity'] is not None else 1.0
-            recipe_child = child_id if mode == 'recipe' else None
-            ingredient_child = child_id if mode == 'ingredient' else None
-            query(
-                'INSERT INTO Connections '
-                '(ParentRecipe, ChildRecipe, ChildIngredient, Quantity, SortOrder, from_template_tag_id) '
-                'VALUES (?, ?, ?, ?, ?, ?);',
-                (recipe_id, recipe_child, ingredient_child, qty, sort_order, new_tag_id),
-            )
-
-    # --- 5. apply new multipliers ---
-    if new_tag_id:
-        for m in get_tag_category_multipliers(new_tag_id):
-            mult = m['multiplier']
-            if abs(mult - 1.0) < 1e-9:
-                continue
-            query(
-                '''UPDATE Connections SET Quantity = Quantity * ?
-                   WHERE ParentRecipe = ?
-                     AND ChildIngredient IN (
-                         SELECT itm.ingredient_id FROM ingredient_tags_mapping itm
-                         WHERE itm.tag_id = ?
-                     );''',
-                (mult, recipe_id, m['category_tag_id']),
-            )
+    '''Move the recipe from one format to another (either may be None),
+    and set its format mapping:
+      1. Swap template items: the old template's that the new one doesn't
+         list go, listed ones are at the new template's quantity, missing
+         ones are added. Other hand-added rows stay.
+      2. Every hand-added row in a category the new format has a rule for
+         follows that rule, keeping the category's current split — so a
+         salad's 3 cups of greens become a wrap's 1 cup, and romaine moved
+         onto a bowl becomes its 0.5 cup topping.
+      3. Derive the quantities.
+    SetRecipeTagCommand snapshots before/after, so undo never runs this
+    in reverse.'''
+    con = _connect()
+    try:
+        cur = con.cursor()
+        _reconcile_items(cur, recipe_id, new_tag_id, old_tag_id)
+        cur.execute("DELETE FROM recipe_tags_mapping WHERE recipe_id = ?"
+                    " AND tag_id IN (SELECT id FROM tags WHERE kind = 'recipe');", (recipe_id,))
+        if new_tag_id:
+            cur.execute('INSERT INTO recipe_tags_mapping (recipe_id, tag_id) VALUES (?, ?);',
+                        (recipe_id, new_tag_id))
+        _follow_rules(cur, recipe_id)
+        _apply_rules(cur, recipe_id)
+        con.commit()
+    finally:
+        con.close()
 
 
 def reconcile_recipe_template(recipe_id):
-    '''Bring the recipe's Connections rows back in line with its current
-    format template — without re-applying multipliers.
-
-    Three steps:
-      1. Backfill `from_template_tag_id` on existing rows whose (mode,
-         child) matches a template item but whose provenance is NULL.
-         Without this, sample-seeded rows look like manual additions and
-         a future format switch can't remove them cleanly.
-      2. INSERT any template item the recipe is missing, tagged with the
-         current `from_template_tag_id`.
-      3. DELETE rows still attributed to the current template that aren't
-         in the spec anymore (orphaned by a template edit). Manual rows
-         (`from_template_tag_id IS NULL`) are never touched.
-
-    Multipliers are deliberately NOT re-applied — they're not idempotent
-    and we can't tell whether existing quantities have already been
-    scaled. Quantity adjustments stay an explicit, user-driven operation.
-    '''
-    tag = get_recipe_tag(recipe_id)
-    if not tag:
-        return
-    tag_id = tag['id']
-    # Defensive filter: tag_components rows with a non-NULL child_recipe
-    # are legacy data from before recipes-in-templates were disallowed.
-    # Reconciling one would re-create the cycle that crashed the app, so
-    # they're skipped here. The cleanup pass in setup.migrateDB removes
-    # such rows; this guard means a stale DB doesn't crash if migration
-    # hasn't run yet.
-    template_items = [
-        c for c in get_tag_components(tag_id) if c['child_ingredient']
-    ]
-    template_keys = set()
-    for c in template_items:
-        template_keys.add(('ingredient', c['child_ingredient']))
-
-    rows = query(
-        'SELECT rowid, ChildRecipe, ChildIngredient, from_template_tag_id '
-        'FROM Connections WHERE ParentRecipe=?;',
-        (recipe_id,),
-    )['data']
-    existing_keys = set()
-    for r in rows:
-        mode = 'ingredient' if r['ChildIngredient'] else 'recipe'
-        child = r['ChildIngredient'] or r['ChildRecipe']
-        existing_keys.add((mode, child))
-        if (mode, child) in template_keys and r['from_template_tag_id'] is None:
-            query(
-                'UPDATE Connections SET from_template_tag_id=? WHERE rowid=?;',
-                (tag_id, r['rowid']),
-            )
-        elif r['from_template_tag_id'] == tag_id and (mode, child) not in template_keys:
-            query('DELETE FROM Connections WHERE rowid=?;', (r['rowid'],))
-
-    # Template items are always ingredients (recipes are filtered out above).
-    for c in template_items:
-        child_id = c['child_ingredient']
-        if ('ingredient', child_id) in existing_keys:
-            continue
-        next_order = query(
-            'SELECT COALESCE(MAX(SortOrder), 0) + 1 AS next FROM Connections WHERE ParentRecipe=?;',
-            (recipe_id,), one=True,
-        )
-        sort_order = (next_order or {}).get('next', 1) or 1
-        qty = c['quantity'] if c['quantity'] is not None else 1.0
-        query(
-            'INSERT INTO Connections '
-            '(ParentRecipe, ChildRecipe, ChildIngredient, Quantity, SortOrder, from_template_tag_id) '
-            'VALUES (?, ?, ?, ?, ?, ?);',
-            (recipe_id, None, child_id, qty, sort_order, tag_id),
-        )
+    '''Bring the recipe in line with its current format: template items
+    (added, removed, quantities) and rule-following quantities. Run when
+    the editor opens, as a safety net — template edits already apply to
+    every recipe in the format (apply_template_to_recipes).'''
+    con = _connect()
+    try:
+        cur = con.cursor()
+        tag_id = _recipe_format_id(cur, recipe_id)
+        if tag_id:
+            _reconcile_items(cur, recipe_id, tag_id)
+            _apply_rules(cur, recipe_id)
+        con.commit()
+    finally:
+        con.close()
 
 
 def snapshot_recipe_connections(recipe_id):
@@ -872,8 +1276,8 @@ def snapshot_recipe_connections(recipe_id):
     is a simple table-restore rather than re-running the transition logic
     in reverse.'''
     return query(
-        'SELECT ChildRecipe, ChildIngredient, Quantity, SortOrder, from_template_tag_id '
-        'FROM Connections WHERE ParentRecipe=?;',
+        'SELECT ChildRecipe, ChildIngredient, Quantity, SortOrder, from_template_tag_id, portion_share '
+        'FROM Connections WHERE ParentRecipe=? ORDER BY rowid;',
         (recipe_id,),
     )['data']
 
@@ -886,10 +1290,10 @@ def restore_recipe_connections(recipe_id, rows):
     for r in rows:
         query(
             'INSERT INTO Connections '
-            '(ParentRecipe, ChildRecipe, ChildIngredient, Quantity, SortOrder, from_template_tag_id) '
-            'VALUES (?, ?, ?, ?, ?, ?);',
+            '(ParentRecipe, ChildRecipe, ChildIngredient, Quantity, SortOrder, from_template_tag_id,'
+            ' portion_share) VALUES (?, ?, ?, ?, ?, ?, ?);',
             (recipe_id, r['ChildRecipe'], r['ChildIngredient'], r['Quantity'],
-             r['SortOrder'], r['from_template_tag_id']),
+             r['SortOrder'], r['from_template_tag_id'], r.get('portion_share')),
         )
 
 
@@ -931,6 +1335,7 @@ def set_ingredient_tag(ingredient_id, tag_id):
             'INSERT INTO ingredient_tags_mapping (ingredient_id, tag_id) VALUES (?, ?);',
             (ingredient_id, tag_id),
         )
+    apply_portion_rules_for_ingredient(ingredient_id)
 
 
 def get_tags(kind=None):
@@ -1274,8 +1679,8 @@ def duplicate_recipe(recipe_id):
         new_id = cur.lastrowid
         cur.execute('''
             INSERT INTO Connections (ParentRecipe, ChildRecipe, ChildIngredient, Quantity,
-                                     SortOrder, from_template_tag_id)
-            SELECT ?, ChildRecipe, ChildIngredient, Quantity, SortOrder, from_template_tag_id
+                                     SortOrder, from_template_tag_id, portion_share)
+            SELECT ?, ChildRecipe, ChildIngredient, Quantity, SortOrder, from_template_tag_id, portion_share
             FROM Connections WHERE ParentRecipe = ?;''', (new_id, recipe_id))
         cur.execute('''
             INSERT INTO recipe_tags_mapping (tag_id, recipe_id)

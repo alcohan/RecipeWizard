@@ -650,6 +650,11 @@ class MainWindow(QMainWindow):
 
     # --- refresh ---
 
+    def show_portion_review_if_new(self):
+        from gui.dialogs.portion_review import maybe_show_after_upgrade
+        if maybe_show_after_upgrade(self):
+            self.refresh()
+
     def refresh(self):
         '''Reset both source models — model-reset signals propagate to
         each place, the custom status bar, and Library Health. No

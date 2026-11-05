@@ -511,12 +511,12 @@ class _Merger:
         self._new_formats = new_formats
 
     def _empty_template(self, tag_id):
-        '''A format here that auto-adds nothing and scales nothing (the
+        '''A format here that auto-adds nothing and sizes nothing (the
         seeded Bowl, Wrap… in a new library) takes the backup's
         template; one the user has set up keeps its own.'''
         return not self.con.execute(
             'SELECT 1 FROM main.tag_components WHERE tag_id = ?1'
-            ' UNION ALL SELECT 1 FROM main.tag_category_multipliers WHERE tag_id = ?1;',
+            ' UNION ALL SELECT 1 FROM main.tag_portion_rules WHERE tag_id = ?1;',
             (tag_id,)).fetchone()
 
     def allergens(self):
@@ -634,9 +634,10 @@ class _Merger:
                                  (row['updated_at'], new_id))
 
     def templates(self):
-        '''What a new format auto-adds and its portion multipliers come
-        along with it. A format already here keeps its own, unless it
-        has none (see _empty_template).'''
+        '''What a new format auto-adds and its portion rules come along
+        with it. A format already here keeps its own, unless it has none
+        (see _empty_template). An older backup's multipliers were dropped
+        when it was migrated; their effect is in its recipes' quantities.'''
         tags, ingredients = self.maps['tags'], self.maps['ingredients']
         for src_tag in self._new_formats:
             tag_id = tags[src_tag]
@@ -645,12 +646,13 @@ class _Merger:
                     continue
                 self.insert('tag_components', row, tag_id=tag_id, child_recipe=None,
                             child_ingredient=ingredients[row['child_ingredient']])
-            for row in self.src_rows('tag_category_multipliers', 'id'):
+            for row in self.src_rows('tag_portion_rules', 'id'):
                 if row['tag_id'] != src_tag or row['category_tag_id'] not in tags:
                     continue
-                self.con.execute('INSERT OR IGNORE INTO main.tag_category_multipliers'
-                                 ' (tag_id, category_tag_id, multiplier) VALUES (?, ?, ?);',
-                                 (tag_id, tags[row['category_tag_id']], row['multiplier']))
+                self.con.execute('INSERT OR IGNORE INTO main.tag_portion_rules'
+                                 ' (tag_id, category_tag_id, mode, amount, measure) VALUES (?, ?, ?, ?, ?);',
+                                 (tag_id, tags[row['category_tag_id']], row['mode'], row['amount'],
+                                  row['measure']))
 
     def diets(self):
         if 'diets' not in self.src_had['tables']:

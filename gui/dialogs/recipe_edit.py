@@ -39,7 +39,7 @@ from PySide6.QtGui import QDoubleValidator, QFont, QKeySequence, QShortcut, QUnd
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QFrame, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy,
-    QSplitter, QTableView, QVBoxLayout, QWidget,
+    QSplitter, QTableView, QToolTip, QVBoxLayout, QWidget,
 )
 
 import config
@@ -50,7 +50,7 @@ from gui.dialogs.price_history import PriceHistoryDialog
 from gui.dialogs.recipe_component_add import RecipeComponentAddDialog
 from gui.models.components_model import RecipeComponentsModel
 from gui.undo.recipe_commands import (
-    AddComponentCommand, RemoveComponentCommand, ReorderComponentsCommand,
+    AddComponentCommand, PortionCommand, RemoveComponentCommand, ReorderComponentsCommand,
     SetComponentQtyCommand, SetRecipeStatusCommand, SetRecipeTagCommand, SetRecipeTagsCommand,
     UpdateRecipeInfoCommand,
 )
@@ -886,6 +886,13 @@ class RecipeEditWidget(QWidget):
         qty_col = self.components_model.COLUMNS.index('Quantity')
         qty_index = self.components_model.index(view_index.row(), qty_col)
         self.components_table.setCurrentIndex(qty_index)
+        row_dict = self.components_model.row_dict(view_index.row())
+        if row_dict.get('FromTemplateTagId') is None and not self.components_model.qty_editable(view_index.row()):
+            # The format's rule sets this quantity; say how to change it.
+            rect = self.components_table.visualRect(qty_index)
+            QToolTip.showText(self.components_table.viewport().mapToGlobal(rect.bottomLeft()),
+                              self.components_model.portion_tooltip(row_dict), self.components_table)
+            return
         self.components_table.edit(qty_index)
 
     def _on_qty_edited(self, row, new_qty):
@@ -898,6 +905,19 @@ class RecipeEditWidget(QWidget):
         except (TypeError, ValueError):
             old_qty = 0.0
         if new_qty == old_qty:
+            return
+        portion = row_dict.get('Portion')
+        if portion and portion['state'] == 'base' and portion['siblings'] >= 2:
+            # A shared base keeps its total: the typed amount becomes this
+            # row's share and the others split the rest.
+            problem = db.base_quantity_problem(self.recipe_id, row_dict['Id'], new_qty)
+            if problem:
+                QMessageBox.information(self, 'Shared base', f'{problem} Use Size by hand to set it freely.')
+                self.components_model.refresh()
+                return
+            self.undo_stack.push(PortionCommand(
+                self.recipe_id, f"Change {row_dict['Name']} share",
+                lambda rid=self.recipe_id, iid=row_dict['Id'], q=new_qty: db.set_base_quantity(rid, iid, q)))
             return
         self.undo_stack.push(SetComponentQtyCommand(
             self.recipe_id, row_dict['Type'], row_dict['Id'],
@@ -913,6 +933,20 @@ class RecipeEditWidget(QWidget):
         menu = QMenu(self.components_table)
         edit_action = menu.addAction('Edit Quantity')
         remove_action = menu.addAction('Remove')
+        portion = None if is_template else row_dict.get('Portion')
+        follow_action = pin_action = even_action = None
+        if portion:
+            menu.addSeparator()
+            if portion['state'] == 'hand':
+                follow_action = menu.addAction('Follow format rule')
+                follow_action.setEnabled(portion['sizable'])
+                if not portion['sizable']:
+                    follow_action.setToolTip('Its unit isn’t a volume, so the rule can’t size it.')
+            else:
+                pin_action = menu.addAction('Size by hand')
+                if portion['state'] == 'base' and portion['siblings'] >= 2:
+                    even_action = menu.addAction('Split base evenly')
+            edit_action.setEnabled(self.components_model.qty_editable(index.row()))
         open_action = None
         if row_dict['Type'] == 'recipe':
             menu.addSeparator()
@@ -930,6 +964,18 @@ class RecipeEditWidget(QWidget):
             self._remove_component(index.row())
         elif open_action is not None and chosen is open_action:
             self.openRecipeRequested.emit(row_dict['Id'])
+        elif chosen is not None and chosen in (follow_action, pin_action, even_action):
+            self._portion_action(chosen, follow_action, pin_action, row_dict)
+
+    def _portion_action(self, chosen, follow_action, pin_action, row_dict):
+        rid, iid, name = self.recipe_id, row_dict['Id'], row_dict['Name']
+        if chosen is follow_action:
+            self.undo_stack.push(PortionCommand(rid, f'{name}: follow format rule',
+                                                lambda: db.follow_portion(rid, iid)))
+        elif chosen is pin_action:
+            self.undo_stack.push(PortionCommand(rid, f'{name}: size by hand', lambda: db.pin_portion(rid, iid)))
+        else:
+            self.undo_stack.push(PortionCommand(rid, 'Split base evenly', lambda: db.split_base_evenly(rid, iid)))
 
     def _remove_component(self, row):
         row_dict = self.components_model.row_dict(row)

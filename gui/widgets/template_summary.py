@@ -1,9 +1,9 @@
 '''One-line summary of a recipe's format template, with a Details
-flyout listing the template's auto-add items and portion overrides.
+flyout listing the template's auto-add items and portion rules.
 
 Sits under the recipe editor's components grid:
 
-    Bowl template · 3 items · $0.34 · 2 overrides · Details
+    Bowl template · 3 items · $0.34 · 2 portion rules · Details
 
 Template items include packaging, which the grid and wedge don't list,
 so this line is also where those items are named. With no format the
@@ -18,6 +18,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QFrame, QGridLayout, QLabel, QVBoxLayout, QWidget
 
 import db
+from utilities import portions
 
 
 _KALE = '#082c00'
@@ -32,11 +33,11 @@ class TemplateSummaryLine(QLabel):
         super().__init__(parent)
         self.recipe_id = recipe_id
         self._popup = None
-        # Cache the items/multipliers from the last refresh so opening the
+        # Cache the items/rules from the last refresh so opening the
         # flyout doesn't have to round-trip to the DB.
         self._tag = None
         self._items = []
-        self._mults = []
+        self._rules = []
         self.setTextFormat(Qt.RichText)
         self.setWordWrap(True)
         self.setStyleSheet(f'color: {_MUTED}; font-size: 12px; padding: 6px 16px;')
@@ -50,7 +51,7 @@ class TemplateSummaryLine(QLabel):
         tag = db.get_recipe_tag(self.recipe_id)
         self._tag = tag
         if not tag:
-            self._items, self._mults = [], []
+            self._items, self._rules = [], []
             if unlisted_cost >= 0.005:
                 self.setText(f'Also in cost, not listed: packaging · ${unlisted_cost:.2f}')
                 self.show()
@@ -59,8 +60,7 @@ class TemplateSummaryLine(QLabel):
             return
 
         self._items = db.get_tag_components(tag['id'])
-        self._mults = [m for m in db.get_tag_category_multipliers(tag['id'])
-                       if abs(m['multiplier'] - 1.0) > 1e-9]
+        self._rules = db.get_portion_rules(tag['id'])
         total = sum(float(it.get('UnitCost') or 0) * float(it.get('quantity') or 0)
                     for it in self._items)
         color = _color(tag)
@@ -70,14 +70,14 @@ class TemplateSummaryLine(QLabel):
         parts.append(f"{n} item{'' if n == 1 else 's'}")
         if self._items:
             parts.append(f'${total:.2f}')
-        if self._mults:
-            m = len(self._mults)
-            parts.append(f"{m} portion override{'' if m == 1 else 's'}")
+        if self._rules:
+            m = len(self._rules)
+            parts.append(f"{m} portion rule{'' if m == 1 else 's'}")
         text = ' · '.join(parts)
-        if self._items or self._mults:
+        if self._items or self._rules:
             text += f' · <a href="details" style="color: {_ROMAINE}">Details</a>'
         self.setText(text)
-        self.setToolTip('Items this format adds to every recipe, and how it scales'
+        self.setToolTip('Items this format adds to every recipe, and how it sizes'
                         ' portions. Edit in Configure › Formats & templates.')
         self.show()
 
@@ -89,7 +89,7 @@ class TemplateSummaryLine(QLabel):
             return
         # Stale ref (popup was deleted by Qt.Popup auto-close earlier) —
         # drop it before creating a fresh popup.
-        self._popup = _TemplateDetailsPopup(self._tag, self._items, self._mults, self)
+        self._popup = _TemplateDetailsPopup(self._tag, self._items, self._rules, self)
         self._popup.destroyed.connect(self._on_popup_destroyed)
         # Open upward if there's no room below (the line sits at the
         # bottom of the components card).
@@ -133,11 +133,11 @@ class _TemplateDetailsPopup(QWidget):
     destroyed signal.
 
     Content: "<format> adds" → a table of items (name, qty × unit,
-    cost) → "Portion overrides" with any non-×1 category multipliers.'''
+    cost) → "Portion rules", one line per rule.'''
 
     POPUP_WIDTH = 360
 
-    def __init__(self, tag, items, multipliers, parent=None):
+    def __init__(self, tag, items, rules, parent=None):
         super().__init__(parent)
         self.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_DeleteOnClose)
@@ -173,16 +173,17 @@ class _TemplateDetailsPopup(QWidget):
         grid.setColumnStretch(0, 1)
         layout.addLayout(grid)
 
-        if multipliers:
-            rule = QFrame()
-            rule.setFixedHeight(1)
-            rule.setStyleSheet(f'background: {_RULE};')
-            layout.addWidget(rule)
-            layout.addWidget(QLabel('<b>Portion overrides</b>'))
-            for m in multipliers:
-                layout.addWidget(QLabel(
-                    f'<span style="color: {m.get("category_color") or _MUTED}">●</span> '
-                    f'{_esc(m["category_name"])} × {_fmt_qty(m["multiplier"])}'))
+        if rules:
+            line = QFrame()
+            line.setFixedHeight(1)
+            line.setStyleSheet(f'background: {_RULE};')
+            layout.addWidget(line)
+            layout.addWidget(QLabel('<b>Portion rules</b>'))
+            for r in rules:
+                text = portions.describe_rule(r['category_name'], r['mode'], r['amount'], r['measure'])
+                lbl = QLabel(f'<span style="color: {r.get("category_color") or _MUTED}">●</span> {_esc(text)}')
+                lbl.setWordWrap(True)
+                layout.addWidget(lbl)
 
         layout.addWidget(_muted('Edit in Configure › Formats & templates.'))
         self.setFixedWidth(self.POPUP_WIDTH)

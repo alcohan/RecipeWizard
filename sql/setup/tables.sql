@@ -1,7 +1,8 @@
 DROP VIEW IF EXISTS RecipeAllergens;
 DROP VIEW IF EXISTS recipe_ingredients_expanded;
 DROP TABLE IF EXISTS tag_components;
-DROP TABLE IF EXISTS tag_category_multipliers;
+DROP TABLE IF EXISTS tag_category_multipliers;  -- retired: replaced by tag_portion_rules
+DROP TABLE IF EXISTS tag_portion_rules;
 DROP TABLE IF EXISTS tags;
 DROP TABLE IF EXISTS ingredient_tags_mapping;
 DROP TABLE IF EXISTS recipe_tags_mapping;
@@ -63,6 +64,11 @@ CREATE TABLE Connections (
 	-- switching a recipe's format can remove the previous template's items
 	-- cleanly without touching anything the user added themselves.
 	, from_template_tag_id Integer
+	-- Portion rules (utilities/portions.py): NULL = pinned, Quantity is
+	-- typed by hand. Set = the row follows its format's rule for the
+	-- ingredient's category; for a base rule it's this row's share of
+	-- the category's total, and Quantity is derived from it.
+	, portion_share float
 );
 
 
@@ -145,15 +151,18 @@ CREATE TABLE tag_components (
   , FOREIGN KEY (tag_id) REFERENCES tags(id)
 );
 
--- Per-template portion overrides keyed by ingredient-category tag. E.g.
--- (Wrap, Base, 0.3) means "when Wrap is applied, multiply every Base
--- ingredient's quantity by 0.3 in the target recipe." Reversed on
--- template switch.
-CREATE TABLE tag_category_multipliers (
+-- How a format sizes each ingredient category (utilities/portions.py).
+-- mode 'base': the category's ingredients share `amount` by portion_share
+-- (Salad greens: 3 cup). mode 'fixed': each ingredient gets `amount`
+-- (rice on a Salad: 3 f.oz). Amounts are volumes; `measure` is one of
+-- portions.RULE_MEASURES. A category with no rule is sized by hand.
+CREATE TABLE tag_portion_rules (
   id INTEGER PRIMARY KEY AUTOINCREMENT
-  , tag_id INTEGER NOT NULL              -- must reference a kind='recipe' tag
-  , category_tag_id INTEGER NOT NULL     -- must reference a kind='ingredient' tag
-  , multiplier FLOAT NOT NULL DEFAULT 1
+  , tag_id INTEGER NOT NULL              -- kind='recipe' tag (the format)
+  , category_tag_id INTEGER NOT NULL     -- kind='ingredient' tag
+  , mode TEXT NOT NULL                   -- 'base' | 'fixed'
+  , amount REAL NOT NULL
+  , measure TEXT NOT NULL
   , UNIQUE (tag_id, category_tag_id)
   , FOREIGN KEY (tag_id) REFERENCES tags(id)
   , FOREIGN KEY (category_tag_id) REFERENCES tags(id)

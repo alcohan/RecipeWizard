@@ -29,9 +29,23 @@ SELECT COALESCE(r.Name, i.Name) AS Name
     , (SELECT t.color FROM tags t
         JOIN ingredient_tags_mapping itm ON itm.tag_id=t.id
         WHERE itm.ingredient_id=i.Id AND t.kind='ingredient' LIMIT 1) AS TagColor
+    -- Portion rules (utilities/portions.py): the row's share (NULL =
+    -- sized by hand) and the recipe format's rule for its category.
+    , c.portion_share AS PortionShare
+    , pr.category_tag_id AS RuleCategoryId
+    , pr.mode AS RuleMode
+    , pr.amount AS RuleAmount
+    , pr.measure AS RuleMeasure
 FROM Connections c
 LEFT JOIN RecipesWithNutrition r on r.Id=c.ChildRecipe
 LEFT JOIN Ingredients i on i.Id=c.ChildIngredient
+LEFT JOIN tag_portion_rules pr
+  ON pr.tag_id = (SELECT rtm.tag_id FROM recipe_tags_mapping rtm
+                  JOIN tags ft ON ft.id = rtm.tag_id AND ft.kind = 'recipe'
+                  WHERE rtm.recipe_id = c.ParentRecipe LIMIT 1)
+ AND pr.category_tag_id = (SELECT itm.tag_id FROM ingredient_tags_mapping itm
+                           JOIN tags t ON t.id = itm.tag_id AND t.kind = 'ingredient'
+                           WHERE itm.ingredient_id = c.ChildIngredient LIMIT 1)
 -- Components shown in the editor include template-added rows (marked
 -- "template" in the grid), except packaging the template added: those
 -- would clutter every recipe of the format, and the editor's template

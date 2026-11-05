@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 import db
 from gui.widgets.toolbar_controls import ToolbarCombo
+from utilities import portions
 from utilities.wedge_renderer import render_recipe
 
 
@@ -74,10 +75,6 @@ def _dashed_circle():
 
 def _money(value):
     return f'${float(value or 0):.2f}'
-
-
-def _fmt_mult(m):
-    return '{:.2f}'.format(m).rstrip('0').rstrip('.')
 
 
 class _FormatCard(QToolButton):
@@ -308,7 +305,7 @@ class RecipeCreateDialog(QDialog):
                                        ' which other recipes use.')
             return
         items = db.get_tag_components(tag['id'])
-        mults = [m for m in db.get_tag_category_multipliers(tag['id']) if abs(m['multiplier'] - 1.0) > 1e-9]
+        rules = db.get_portion_rules(tag['id'])
         name = f'<b>{_esc(tag["name"])} template</b>'
         if items:
             total = sum(float(it.get('UnitCost') or 0) * float(it.get('quantity') or 0) for it in items)
@@ -317,8 +314,9 @@ class RecipeCreateDialog(QDialog):
                     f'{", ".join(_esc(it["Name"]) for it in items)} ({_money(total)}).')
         else:
             text = f'{name} adds no items.'
-        if mults:
-            text += ' ' + ', '.join(f'{_esc(m["category_name"])} ×{_fmt_mult(m["multiplier"])}' for m in mults) + '.'
+        if rules:
+            text += ' ' + ' '.join(_esc(portions.describe_rule(r['category_name'], r['mode'], r['amount'],
+                                                               r['measure'])) for r in rules)
         if self._edit_templates is not None:
             text += f' <a href="edit" style="color: {_ROMAINE}">Edit template</a>'
         self.template_note.setText(text)

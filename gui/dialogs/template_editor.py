@@ -3,20 +3,21 @@ format's silhouette, shape, auto-add item count and how many recipes
 use it) beside the selected format's editor — a large silhouette
 preview, Name, Shape (one button per silhouette), Shape tint (the
 palette swatches plus Custom…), an Auto-add items card and a Portion
-multipliers card.
+rules card (utilities/portions.py: how the format sizes a category).
 
 TemplatesEditor is the Configure page; TemplatesManagerDialog wraps it
 for the New recipe dialog's "Edit template" link.
 
-Writes are immediate — no Save button. Items and multipliers write
-through db.* helpers; recipes already tagged with a format don't get
-re-applied here (that happens via db.reconcile_recipe_template when the
-recipe is opened, plus the transition flow when a recipe's format
-changes).'''
+Writes are immediate — no Save button. Every item or rule change is
+applied straight away to every recipe in the format
+(db.apply_template_to_recipes), and a banner says what changed with an
+Undo that puts the template and those recipes back. The banner gathers
+the edits made to one format; it's dropped (the edits kept) when
+another format is picked or the page is left.'''
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QColor, QDoubleValidator, QIcon, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView, QButtonGroup, QColorDialog, QDialog, QDialogButtonBox, QFrame, QHBoxLayout,
+    QAbstractItemView, QButtonGroup, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout,
     QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox,
     QPushButton, QScrollArea, QStyledItemDelegate, QTableWidget, QTableWidgetItem, QToolButton,
     QVBoxLayout, QWidget,
@@ -26,7 +27,7 @@ import config
 import db
 from gui.dialogs.recipe_component_add import RecipeComponentAddDialog
 from gui.widgets import config_kit as kit
-from gui.widgets.flow_layout import FlowLayout
+from utilities import portions
 from utilities.wedge_renderer import render_recipe
 
 
@@ -56,6 +57,10 @@ _TINTS = (
     ('#bbca00', 'Avocado'),
     ('#ffa98b', 'Red Wine Vini'),
 )
+
+# Portion rule modes as the editor names them.
+_MODE_LABELS = (('base', 'Shared base'), ('fixed', 'Each'))
+_MEASURE_LABELS = {'cup': 'cup', 'f.oz': 'f.oz', 'tbsp': 'tbsp', 'tsp': 'tsp'}
 
 _PREVIEW = 140
 _LIST_ICON = 40
@@ -114,6 +119,10 @@ class TemplatesEditor(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_tag_id = None
+        # Edits to one format since the banner appeared: the template and
+        # each changed recipe as they were before the first edit, plus the
+        # format's costs then. None when there's nothing to undo.
+        self._pending = None
         self.setObjectName('TemplatesEditor')
         self.setStyleSheet(f'QWidget#TemplatesEditor {{ background: {kit.BG}; }}')
 
@@ -200,6 +209,8 @@ class TemplatesEditor(QWidget):
         layout = QVBoxLayout(body)
         layout.setContentsMargins(28, 20, 28, 28)
         layout.setSpacing(20)
+
+        layout.addWidget(self._build_banner())
 
         # Preview + identity
         self.preview = QLabel()
@@ -322,17 +333,34 @@ class TemplatesEditor(QWidget):
         ic.addWidget(self.items_empty)
         layout.addWidget(items_card)
 
-        # Portion multipliers card
-        mult_card, ml = kit.card()
-        mh = QHBoxLayout()
-        mh.setSpacing(12)
-        mh.addWidget(kit.subheading('Portion multipliers'))
-        mh.addWidget(kit.note('Scale a category’s quantities for this format. Categories not listed stay at ×1.'),
-                     stretch=1)
-        ml.addLayout(mh)
-        self.overrides_layout = FlowLayout()
-        ml.addLayout(self.overrides_layout)
-        layout.addWidget(mult_card)
+        # Portion rules card
+        rules_card, rl = kit.card()
+        rh = QHBoxLayout()
+        rh.setSpacing(12)
+        rh.addWidget(kit.subheading('Portion rules'))
+        rh.addWidget(kit.note('How this format sizes a category. Shared base: the category’s ingredients'
+                              ' split one amount. Each: every ingredient gets the amount. Categories'
+                              ' without a rule are sized by hand.'), stretch=1)
+        self.review_btn = kit.button('Check recipes…')
+        self.review_btn.setToolTip('Recipes with portions sized by hand where a format has a rule')
+        self.review_btn.clicked.connect(self.open_review)
+        rh.addWidget(self.review_btn, alignment=Qt.AlignTop)
+        rl.addLayout(rh)
+        self.rules_layout = QVBoxLayout()
+        self.rules_layout.setSpacing(8)
+        rl.addLayout(self.rules_layout)
+        self.add_rule_btn = QPushButton('+ Category')
+        self.add_rule_btn.setCursor(Qt.PointingHandCursor)
+        self.add_rule_btn.setStyleSheet(
+            f'QPushButton {{ min-height: 36px; padding: 0 12px; border: 1px dashed {kit.FIELD_BORDER};'
+            f' border-radius: 8px; background: transparent; color: {kit.MUTED}; }}'
+            ' QPushButton:hover { background: #f8f2e6; }')
+        self.add_rule_btn.clicked.connect(lambda: self._on_add_rule(self.add_rule_btn))
+        add_row = QHBoxLayout()
+        add_row.addWidget(self.add_rule_btn)
+        add_row.addStretch()
+        rl.addLayout(add_row)
+        layout.addWidget(rules_card)
 
         self.delete_btn = kit.button('Delete format…', danger=True)
         self.delete_btn.clicked.connect(self._on_delete)
@@ -361,9 +389,11 @@ class TemplatesEditor(QWidget):
             self.current_tag_id = None
             self._set_editor_enabled(False)
             self._refresh_items()
-            self._refresh_overrides()
+            self._refresh_rules()
             self.preview.setPixmap(_silhouette(None, None, _PREVIEW))
             return
+        if current.data(Qt.UserRole) != self.current_tag_id:
+            self._drop_pending()
         self.current_tag_id = current.data(Qt.UserRole)
         self._set_editor_enabled(True)
         tag = self._current_tag()
@@ -374,7 +404,7 @@ class TemplatesEditor(QWidget):
         self.name_edit.blockSignals(False)
         self._sync_identity(tag)
         self._refresh_items()
-        self._refresh_overrides()
+        self._refresh_rules()
 
     def _sync_identity(self, tag):
         shape = tag.get('shape') or 'none'
@@ -448,8 +478,12 @@ class TemplatesEditor(QWidget):
 
     def _sync_items_note(self):
         tag = self._current_tag()
-        self.items_note.setText(f'Added to every recipe tagged {tag["name"]}. Existing recipes update the next'
-                                ' time they open.' if tag else '')
+        if not tag:
+            self.items_note.setText('')
+            return
+        n = len(db.get_format_recipe_ids(tag['id']))
+        self.items_note.setText(f'Added to every recipe tagged {tag["name"]}; changes apply to its'
+                                f' {n} recipe{"" if n == 1 else "s"} right away.')
 
     def _refresh_items(self):
         self._sync_items_note()
@@ -503,10 +537,13 @@ class TemplatesEditor(QWidget):
             qty = float(item.text())
         except (TypeError, ValueError):
             qty = 0
-        if qty <= 0:
+        component_id = name_item.data(Qt.UserRole)
+        current = next((r['quantity'] for r in db.get_tag_components(self.current_tag_id)
+                        if r['id'] == component_id), None)
+        if qty <= 0 or (current is not None and abs(float(current) - qty) < 1e-9):
             self._refresh_items()
             return
-        db.update_tag_component_quantity(name_item.data(Qt.UserRole), qty)
+        self._template_write(lambda: db.update_tag_component_quantity(component_id, qty))
         self._refresh_items()
 
     def _on_add_item(self):
@@ -524,104 +561,234 @@ class TemplatesEditor(QWidget):
                     (mode == 'recipe' and row['child_recipe'] == child_id):
                 QMessageBox.information(self, 'Already added', 'This format already includes that item.')
                 return
-        db.add_tag_component(self.current_tag_id, mode, child_id, dlg.qty)
+        tag_id = self.current_tag_id
+        self._template_write(lambda: db.add_tag_component(tag_id, mode, child_id, dlg.qty))
         self._refresh_items()
         self._refresh_list_item_in_place()
 
     def _remove_item(self, tag_component_id):
-        db.delete_tag_component(tag_component_id)
+        self._template_write(lambda: db.delete_tag_component(tag_component_id))
         self._refresh_items()
         self._refresh_list_item_in_place()
 
-    # --- portion multipliers -------------------------------------------------
+    # --- portion rules --------------------------------------------------------
 
-    def _refresh_overrides(self):
-        _clear_layout(self.overrides_layout)
-        if not self.current_tag_id:
-            return
-        for m in db.get_tag_category_multipliers(self.current_tag_id):
-            if abs(m['multiplier'] - 1.0) > 1e-9:
-                self.overrides_layout.addWidget(self._override_chip(m))
-        add = QPushButton('+ Category')
-        add.setCursor(Qt.PointingHandCursor)
-        add.setStyleSheet(f'QPushButton {{ min-height: 40px; padding: 0 12px; border: 1px dashed {kit.FIELD_BORDER};'
-                          f' border-radius: 8px; background: transparent; color: {kit.MUTED}; }}'
-                          ' QPushButton:hover { background: #f8f2e6; }')
-        add.clicked.connect(lambda: self._on_add_override(add))
-        self.overrides_layout.addWidget(add)
+    def _refresh_rules(self):
+        _clear_layout(self.rules_layout)
+        rules = db.get_portion_rules(self.current_tag_id) if self.current_tag_id else []
+        for rule in rules:
+            self.rules_layout.addWidget(self._rule_row(rule))
+        if not rules and self.current_tag_id:
+            empty = kit.note('No rules: every category in this format is sized by hand.')
+            self.rules_layout.addWidget(empty)
+        self.add_rule_btn.setVisible(self.current_tag_id is not None)
 
-    def _override_chip(self, m):
-        chip = QFrame()
-        chip.setObjectName('MultChip')
-        chip.setStyleSheet(f'QFrame#MultChip {{ border: 1px solid {kit.BORDER}; border-radius: 8px; background: #ffffff; }}')
-        hl = QHBoxLayout(chip)
-        hl.setContentsMargins(10, 5, 6, 5)
-        hl.setSpacing(8)
+    def _rule_row(self, rule):
+        row = QFrame()
+        row.setObjectName('RuleRow')
+        row.setStyleSheet(f'QFrame#RuleRow {{ border: 1px solid {kit.BORDER}; border-radius: 8px;'
+                          ' background: #ffffff; }')
+        hl = QHBoxLayout(row)
+        hl.setContentsMargins(12, 6, 6, 6)
+        hl.setSpacing(10)
         dot = QLabel()
-        dot.setPixmap(_dot(m['category_color'] or '#a7ad9c'))
-        name = QLabel(m['category_name'])
-        name.setStyleSheet(f'color: {kit.KALE};')
-        times = QLabel('×')
-        times.setStyleSheet(f'color: {kit.MUTED};')
-        edit = QLineEdit(_fmt_qty(m['multiplier']))
-        edit.setFixedWidth(52)
-        edit.setAlignment(Qt.AlignRight)
-        edit.setValidator(QDoubleValidator(0.0, 100.0, 3, edit))
-        edit.setToolTip('Set to 1 to remove')
-        edit.setStyleSheet(f'QLineEdit {{ min-height: 26px; border: 1px solid {kit.FIELD_BORDER}; border-radius: 4px;'
-                           f' padding: 0 6px; color: {kit.KALE}; background: #ffffff; }}')
-        cat_id = m['category_tag_id']
-        edit.editingFinished.connect(lambda e=edit, c=cat_id: self._on_override_edited(c, e.text()))
+        dot.setPixmap(_dot(rule['category_color'] or '#a7ad9c'))
+        name = QLabel(rule['category_name'])
+        name.setStyleSheet(f'color: {kit.KALE}; font-weight: 600;')
+        name.setFixedWidth(110)
+        combo_css = (f'QComboBox {{ min-height: 28px; border: 1px solid {kit.FIELD_BORDER}; border-radius: 4px;'
+                     f' padding: 0 8px; color: {kit.KALE}; background: #ffffff; }}')
+        mode = QComboBox()
+        for value, label in _MODE_LABELS:
+            mode.addItem(label, value)
+        mode.setCurrentIndex(max(0, mode.findData(rule['mode'])))
+        mode.setStyleSheet(combo_css)
+        amount = QLineEdit(_fmt_qty(rule['amount']))
+        amount.setFixedWidth(64)
+        amount.setAlignment(Qt.AlignRight)
+        amount.setValidator(QDoubleValidator(0.0001, 10000.0, 4, amount))
+        amount.setStyleSheet(f'QLineEdit {{ min-height: 28px; border: 1px solid {kit.FIELD_BORDER};'
+                             f' border-radius: 4px; padding: 0 6px; color: {kit.KALE}; background: #ffffff; }}')
+        measure = QComboBox()
+        for value in portions.RULE_MEASURES:
+            measure.addItem(_MEASURE_LABELS.get(value, value), value)
+        measure.setCurrentIndex(max(0, measure.findData(rule['measure'])))
+        measure.setStyleSheet(combo_css)
+        summary = kit.note(portions.describe_rule(rule['category_name'], rule['mode'], rule['amount'], rule['measure']))
         remove = QToolButton()
         remove.setText('×')
-        remove.setToolTip(f'Back to ×1 for {m["category_name"]}')
+        remove.setToolTip(f'Size {rule["category_name"]} by hand in this format')
         remove.setCursor(Qt.PointingHandCursor)
-        remove.setStyleSheet(f'QToolButton {{ border: 0; background: transparent; color: {kit.MUTED}; }}'
-                             ' QToolButton:hover { color: #8a4a00; }')
-        remove.clicked.connect(lambda _c=False, c=cat_id: self._on_override_edited(c, '1'))
-        for w in (dot, name, times, edit, remove):
-            hl.addWidget(w)
-        return chip
+        remove.setStyleSheet(f'QToolButton {{ border: 0; background: transparent; color: {kit.MUTED};'
+                             ' font-size: 15px; } QToolButton:hover { color: #8a4a00; }')
+        cat_id = rule['category_tag_id']
 
-    def _on_override_edited(self, category_tag_id, text):
+        def commit(*_args):
+            self._on_rule_edited(cat_id, mode.currentData(), amount.text(), measure.currentData())
+
+        mode.activated.connect(commit)
+        measure.activated.connect(commit)
+        amount.editingFinished.connect(commit)
+        remove.clicked.connect(lambda _c=False: self._remove_rule(cat_id))
+        for w in (dot, name, mode, amount, measure):
+            hl.addWidget(w)
+        hl.addWidget(summary, stretch=1)
+        hl.addWidget(remove)
+        return row
+
+    def _on_rule_edited(self, category_tag_id, mode, amount_text, measure):
         if not self.current_tag_id:
             return
         try:
-            value = float(text)
+            amount = float(amount_text)
         except (TypeError, ValueError):
-            value = 1.0
-        current = next((m['multiplier'] for m in db.get_tag_category_multipliers(self.current_tag_id)
-                        if m['category_tag_id'] == category_tag_id), 1.0)
-        if abs(value - current) < 1e-9:
+            amount = 0
+        current = next((r for r in db.get_portion_rules(self.current_tag_id)
+                        if r['category_tag_id'] == category_tag_id), None)
+        if amount <= 0:
+            self._refresh_rules()
             return
-        # 1.0 is how the db says "no multiplier": the row goes away.
-        db.set_tag_category_multiplier(self.current_tag_id, category_tag_id, value)
-        if abs(value - 1.0) < 1e-9:
-            self._refresh_overrides()
-        self._refresh_list_item_in_place()
+        if current and (current['mode'], current['measure']) == (mode, measure) \
+                and abs(float(current['amount']) - amount) < 1e-9:
+            return
+        tag_id = self.current_tag_id
+        self._template_write(lambda: db.set_portion_rule(tag_id, category_tag_id, mode, amount, measure))
+        self._refresh_rules()
 
-    def _on_add_override(self, anchor):
-        available = [m for m in db.get_tag_category_multipliers(self.current_tag_id)
-                     if abs(m['multiplier'] - 1.0) < 1e-9]
+    def _remove_rule(self, category_tag_id):
+        tag_id = self.current_tag_id
+        self._template_write(lambda: db.delete_portion_rule(tag_id, category_tag_id))
+        self._refresh_rules()
+
+    def _on_add_rule(self, anchor):
+        if not self.current_tag_id:
+            return
+        taken = {r['category_tag_id'] for r in db.get_portion_rules(self.current_tag_id)}
+        available = [t for t in db.get_tags(kind='ingredient') if t['id'] not in taken]
         if not available:
-            QMessageBox.information(self, 'No categories left', 'Every ingredient category already has a multiplier.')
+            QMessageBox.information(self, 'No categories left', 'Every ingredient category already has a rule.')
             return
         menu = QMenu(self)
-        for m in available:
-            menu.addAction(QIcon(_dot(m['category_color'] or '#a7ad9c')), m['category_name'],
-                           lambda m=m: self.add_override(m['category_tag_id'], m['category_name']))
+        for t in available:
+            menu.addAction(QIcon(_dot(t.get('color') or '#a7ad9c')), t['name'],
+                           lambda t=t: self.add_rule(t['id']))
         menu.exec(anchor.mapToGlobal(anchor.rect().bottomLeft()))
 
-    def add_override(self, category_tag_id, name, value=None):
-        if value is None:
-            value, ok = QInputDialog.getDouble(self, 'Portion multiplier', f'Scale {name} by:', 1.25, 0.0, 100.0, 2)
-            if not ok:
-                return
-        if abs(value - 1.0) < 1e-9:
+    def add_rule(self, category_tag_id, mode='base', amount=1.0, measure='cup'):
+        tag_id = self.current_tag_id
+        self._template_write(lambda: db.set_portion_rule(tag_id, category_tag_id, mode, amount, measure))
+        self._refresh_rules()
+
+    # --- applying template edits to recipes ---------------------------------
+
+    def _build_banner(self):
+        self.banner = QFrame()
+        self.banner.setObjectName('ApplyBanner')
+        self.banner.setStyleSheet(f'QFrame#ApplyBanner {{ background: {kit.SELECTED}; border: 1px solid #f0d9b5;'
+                                  ' border-radius: 8px; }')
+        hl = QHBoxLayout(self.banner)
+        hl.setContentsMargins(14, 8, 8, 8)
+        hl.setSpacing(10)
+        self.banner_text = QLabel('')
+        self.banner_text.setWordWrap(True)
+        self.banner_text.setStyleSheet(f'color: {kit.KALE};')
+        self.banner_undo = kit.button('Undo')
+        self.banner_undo.clicked.connect(self.undo_pending)
+        self.banner_review = kit.button('Review…')
+        self.banner_review.setToolTip('Bring hand-sized recipes onto the rules')
+        self.banner_review.clicked.connect(self.open_review)
+        close = QToolButton()
+        close.setText('×')
+        close.setToolTip('Keep these changes')
+        close.setCursor(Qt.PointingHandCursor)
+        close.setStyleSheet(f'QToolButton {{ border: 0; background: transparent; color: {kit.MUTED};'
+                            ' font-size: 15px; }')
+        close.clicked.connect(self._drop_pending)
+        hl.addWidget(self.banner_text, stretch=1)
+        hl.addWidget(self.banner_review)
+        hl.addWidget(self.banner_undo)
+        hl.addWidget(close)
+        self.banner.hide()
+        return self.banner
+
+    def _template_write(self, write):
+        '''Run one template edit, apply it to every recipe in the format
+        and update the banner.'''
+        tag_id = self.current_tag_id
+        if not tag_id:
             return
-        db.set_tag_category_multiplier(self.current_tag_id, category_tag_id, value)
-        self._refresh_overrides()
+        if self._pending is None or self._pending['tag_id'] != tag_id:
+            self._pending = {'tag_id': tag_id, 'template': db.snapshot_template(tag_id),
+                             'recipes': {}, 'costs': db.get_format_costs(tag_id)}
+        write()
+        for rid, rows in db.apply_template_to_recipes(tag_id).items():
+            self._pending['recipes'].setdefault(rid, rows)
+        self._show_banner()
         self._refresh_list_item_in_place()
+
+    def _show_banner(self):
+        pending = self._pending
+        if pending is None:
+            self.banner.hide()
+            return
+        tag = next((t for t in db.get_tags(kind='recipe') if t['id'] == pending['tag_id']), None)
+        fmt = tag['name'] if tag else 'this format'
+        n = len(pending['recipes'])
+        if not n:
+            text = f'Saved. No {fmt} recipe needed to change.'
+        else:
+            before, after = pending['costs'], db.get_format_costs(pending['tag_id'])
+            ids = [rid for rid in after if rid in before]
+            text = f'Updated {n} {fmt} recipe{"" if n == 1 else "s"}'
+            if ids:
+                b = sum(before[i] for i in ids) / len(ids)
+                a = sum(after[i] for i in ids) / len(ids)
+                text += f' · average cost ${b:.2f} → ${a:.2f}'
+            text += '.'
+        hand = db.count_hand_sized_recipes(pending['tag_id'])
+        self.banner_review.setVisible(bool(hand))
+        if hand:
+            text += (f' {hand} recipe{" has" if hand == 1 else "s have"} hand-sized portions in a ruled'
+                     ' category, which rules don’t change.')
+        self.banner_text.setText(text)
+        self.banner_undo.setToolTip(f'Put the {fmt} template and its recipes back as they were')
+        self.banner.show()
+
+    def open_review(self):
+        '''The "Check recipes against portion rules" review. Recipes it
+        changes aren't part of the banner's Undo, so the banner goes.'''
+        from gui.dialogs.portion_review import PortionReviewDialog
+        self._drop_pending()
+        dlg = PortionReviewDialog(parent=self)
+        dlg.exec()
+        if dlg.changed:
+            self._refresh_items()
+            self._refresh_list_item_in_place()
+
+    def undo_pending(self):
+        '''Put the template and every recipe the pending edits changed
+        back as they were.'''
+        pending = self._pending
+        if pending is None:
+            return
+        db.restore_template(pending['tag_id'], pending['template'])
+        for rid, rows in pending['recipes'].items():
+            db.restore_recipe_connections(rid, rows)
+        self._pending = None
+        self.banner.hide()
+        self._refresh_items()
+        self._refresh_rules()
+        self._refresh_list_item_in_place()
+
+    def _drop_pending(self):
+        self._pending = None
+        self.banner.hide()
+
+    def hideEvent(self, event):
+        # Leaving the page keeps the edits; recipes may be edited next, so
+        # an Undo from here could overwrite them.
+        self._drop_pending()
+        super().hideEvent(event)
 
     # --- new / delete -----------------------------------------------------
 
