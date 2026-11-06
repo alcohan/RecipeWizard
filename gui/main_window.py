@@ -604,8 +604,8 @@ class MainWindow(QMainWindow):
         recipe_menu.addSeparator()
         label_action = add(recipe_menu, 'Nutrition &Label…',
                            lambda: self._with_editor('show_nutrition_label'))
-        history_action = add(recipe_menu, '&Price History…',
-                             lambda: self._with_editor('show_price_history'))
+        history_action = add(recipe_menu, '&Cost Over Time',
+                             lambda: self._with_editor('show_cost_history'))
         add(recipe_menu, 'Pr&int Recipe…', self._on_print_current, 'Ctrl+P')
         recipe_menu.addSeparator()
         add(recipe_menu, 'D&uplicate Recipe', self._on_duplicate_current, 'Ctrl+D')

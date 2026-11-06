@@ -1785,30 +1785,34 @@ def delete_tag(tag_id):
     query('DELETE FROM ingredient_tags_mapping WHERE tag_id=?;', (tag_id,))
     return query('DELETE FROM tags WHERE id=?;', (tag_id,))['rowcount']
 
-def get_price_history(id):
-    '''
-    Get price history for an ingredient {id}
-    '''
-    result = query_from_file('sql\\get_ingredient_price_history.sql', (id,))['data']
-    return result
-
-def get_recipe_price_history(id):
-    '''
-    Get price history for a recipe {id}
-    '''
-    return query_from_file('sql\\get_recipe_price_history.sql', (id,))['data']
-
-def get_recipe_price_history_details(id, date):
-    '''
-    Get price by component for a recipe {id} and date {date}
-    '''
-    return query_from_file('sql\\get_recipe_price_history_details.sql', (id,date))['data']
-
-def get_recipe_price_history_dates(recipe_id):
-    '''
-    For the given recipe, get the list of ingredients and dates of earliest price history
-    '''
-    return query_from_file('sql\\get_recipe_price_history_dates.sql', (recipe_id,))['data']
+def recipe_cost_history_inputs(recipe_id):
+    '''What utilities.cost_history needs for one recipe: its ingredients
+    with quantity per serving (sub-recipes expanded) and current cost,
+    every price entry those ingredients have, and the menu price.'''
+    recipe = query('SELECT Id, Name, Unit, OutputQty, menu_price AS MenuPrice FROM Recipes WHERE Id = ?;',
+                   (recipe_id,), one=True)
+    if not recipe:
+        return None
+    components = query('''
+        SELECT i.Id AS ingredient_id, i.Name AS name, i.Unit AS unit, i.Cost AS cost,
+               SUM(rx.Quantity) / r.OutputQty AS qty,
+               (SELECT t.color FROM ingredient_tags_mapping m JOIN tags t ON t.id = m.tag_id
+                WHERE m.ingredient_id = i.Id AND t.kind = 'ingredient'
+                ORDER BY t.sortOrder LIMIT 1) AS color
+        FROM recipe_ingredients_expanded rx
+        JOIN Ingredients i ON i.Id = rx.ingredient_id
+        JOIN Recipes r ON r.Id = rx.recipe_id
+        WHERE rx.recipe_id = ?
+        GROUP BY i.Id
+        ORDER BY i.Name COLLATE NOCASE;
+    ''', (recipe_id,))['data']
+    prices = query('''
+        SELECT p.id, p.ingredient_id, p.effective_date, p.unit_price, p.import_batch_id
+        FROM ingredient_prices p
+        WHERE p.ingredient_id IN (SELECT ingredient_id FROM recipe_ingredients_expanded WHERE recipe_id = ?)
+          AND p.unit_price IS NOT NULL;
+    ''', (recipe_id,))['data']
+    return {'recipe': recipe, 'components': components, 'prices': prices}
 
 def set_ingredient_image(ingredient_id, filename):
     '''Set or clear an ingredient's ImageFilename. Pass None/empty to clear.'''
