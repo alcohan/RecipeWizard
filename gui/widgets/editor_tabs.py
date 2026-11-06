@@ -11,6 +11,13 @@ current one lifted onto white. Each recipe tab carries a small wedge
 of its recipe, an unsaved dot and its own ×; Library carries the
 recipe count and sits a little apart, since it's pinned.
 
+Library is still tab 0 (so indexes mean the same everywhere), but its
+tab is hidden and drawn instead by a fixed button left of the tab bar.
+Recipe names are shortened to a fixed width (full name in the
+tooltip), so with many recipes open the tab bar scrolls rather than
+squeezing names to a letter, and Library always stays in view. The
+▾ in the corner lists every open recipe.
+
 Keyboard: Ctrl+W closes the current recipe tab, Ctrl+Tab cycles
 through every tab including Library, Ctrl+0 jumps to Library (the
 main window owns that shortcut via its View menu).
@@ -18,8 +25,12 @@ main window owns that shortcut via its View menu).
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QTabBar, QTabWidget, QToolButton, QWidget,
+    QHBoxLayout, QLabel, QMenu, QTabBar, QTabWidget, QToolButton, QWidget,
 )
+from PySide6.QtCore import QRectF, QSize
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
+
+from gui.widgets.text_fit import elide
 
 from gui.dialogs.recipe_edit import RecipeEditWidget
 from gui.widgets.wedge_view import WedgeView
@@ -32,11 +43,11 @@ _ROMAINE = '#347200'
 _MUTED = '#55624c'
 _BORDER = '#ebe1cd'
 _STRIP = '#efe9de'
+_TAB_TEXT_MAX = 150     # px of recipe name on a tab; longer names end in …
 
 _STYLE = f'''
     EditorTabs {{ background: {_STRIP}; }}
     EditorTabs::pane {{ border: 0; border-top: 1px solid {_BORDER}; top: -1px; }}
-    EditorTabs::tab-bar {{ left: 16px; }}
     EditorTabs > QStackedWidget {{ background: #fffaf2; }}
     QTabBar {{ background: transparent; }}
     QTabBar::tab {{
@@ -50,9 +61,7 @@ _STYLE = f'''
         background: transparent;
         color: {_MUTED};
         font-size: 14px;
-        max-width: 260px;
     }}
-    QTabBar::tab:first {{ margin-right: 12px; padding-right: 14px; }}
     QTabBar::tab:hover:!selected {{ background: #f7f1e6; }}
     QTabBar::tab:selected {{
         background: #ffffff;
@@ -83,16 +92,18 @@ class EditorTabs(QTabWidget):
         self.setStyleSheet(_STYLE)
         self.tabBar().setDrawBase(False)
         self.tabBar().setExpanding(False)
-        # Long recipe names shorten with … instead of making huge tabs.
-        self.tabBar().setElideMode(Qt.ElideRight)
+        # Names are shortened by _tab_text, not by Qt: Qt's eliding
+        # squeezes every tab to a letter or two once many are open.
+        self.tabBar().setElideMode(Qt.ElideNone)
 
         self.addTab(library_widget, 'Library')
-        # Pinned: a library glyph, no close button.
-        glyph = QLabel('▦')
-        glyph.setStyleSheet(f'color: {_ROMAINE}; font-size: 15px; background: transparent;')
-        self.tabBar().setTabButton(LIBRARY_INDEX, QTabBar.LeftSide, _inset(glyph, left=6))
-        self.tabBar().setTabButton(LIBRARY_INDEX, QTabBar.RightSide, None)
-        self.setTabToolTip(LIBRARY_INDEX, 'Library (pinned) · Ctrl+0')
+        # Pinned: the tab itself is hidden; the button left of the bar
+        # stands in for it, so it never shrinks or scrolls away.
+        self.tabBar().setTabVisible(LIBRARY_INDEX, False)
+        self.library_button = _LibraryButton()
+        self.library_button.clicked.connect(self.show_library)
+        self.setCornerWidget(_inset(self.library_button, left=16, right=10), Qt.TopLeftCorner)
+        self.setCurrentIndex(LIBRARY_INDEX)
 
         plus = QToolButton()
         plus.setText('+')
@@ -103,11 +114,24 @@ class EditorTabs(QTabWidget):
                            f' color: {_MUTED}; background: transparent; }}'
                            f' QToolButton:hover {{ background: #f7f1e6; color: {_KALE}; }}')
         plus.clicked.connect(self.newTabRequested.emit)
-        self.setCornerWidget(_TabCorner(plus), Qt.TopRightCorner)
+        # Every open recipe, for when there are more than fit.
+        self.list_button = QToolButton()
+        self.list_button.setText('▾')
+        self.list_button.setToolTip('Open recipes')
+        self.list_button.setFixedSize(32, 32)
+        self.list_button.setPopupMode(QToolButton.InstantPopup)
+        self.list_button.setStyleSheet(plus.styleSheet() + ' QToolButton::menu-indicator { image: none; }')
+        menu = QMenu(self.list_button)
+        menu.aboutToShow.connect(lambda m=menu: self._fill_tab_menu(m))
+        self.list_button.setMenu(menu)
+        self.list_button.hide()
+        self.setCornerWidget(_TabCorner(self.list_button, plus), Qt.TopRightCorner)
 
         self.currentChanged.connect(
             lambda _i: self.currentEditorChanged.emit(self.current_editor())
         )
+        self.currentChanged.connect(lambda i: self.library_button.setChecked(i == LIBRARY_INDEX))
+        self.library_button.setChecked(True)
 
         # Ctrl+W closes current, Ctrl+Tab / Ctrl+Shift+Tab cycle.
         # Window-wide, so they work wherever focus is (after a restart it
@@ -141,7 +165,8 @@ class EditorTabs(QTabWidget):
         widget.recipeDeleted.connect(
             lambda _rid, w=widget: self._on_recipe_deleted(w, _rid)
         )
-        idx = self.addTab(widget, widget.title())
+        idx = self.addTab(widget, _tab_text(widget.title()))
+        self.setTabToolTip(idx, widget.title())
         bar = self.tabBar()
         # A small wedge of the recipe, redrawn as its components change.
         icon = WedgeView(recipe_id, size=24)
@@ -157,11 +182,37 @@ class EditorTabs(QTabWidget):
         self.recipeOpened.emit(recipe_id)
         return idx
 
+    def tabInserted(self, index):
+        super().tabInserted(index)
+        self._sync_list_button()
+
+    def tabRemoved(self, index):
+        super().tabRemoved(index)
+        self._sync_list_button()
+
+    def _sync_list_button(self):
+        # Shown from two open recipes on (tabInserted runs for Library
+        # before the button exists).
+        if hasattr(self, 'list_button'):
+            self.list_button.setVisible(self.count() > 2)
+
+    def _fill_tab_menu(self, menu):
+        menu.clear()
+        current = self.currentIndex()
+        for i in range(1, self.count()):
+            w = self.widget(i)
+            dirty = getattr(self.tabBar().tabButton(i, QTabBar.RightSide), 'unsaved', False)
+            act = menu.addAction(w.title() + ('  •' if dirty else ''))
+            act.setCheckable(True)
+            act.setChecked(i == current)
+            act.triggered.connect(lambda _c=False, w=w: self.setCurrentWidget(w))
+
     def show_library(self):
         self.setCurrentIndex(LIBRARY_INDEX)
 
     def set_library_count(self, n):
         self.setTabText(LIBRARY_INDEX, f'Library  {n}')
+        self.library_button.set_count(n)
 
     # --- closing -------------------------------------------------------
 
@@ -182,6 +233,8 @@ class EditorTabs(QTabWidget):
         # Closing a background tab (× or middle-click) keeps you where you were.
         if previous is not widget and self.indexOf(previous) >= 0:
             self.setCurrentWidget(previous)
+        elif self.count() == 1:
+            self.setCurrentIndex(LIBRARY_INDEX)
         self.dirtyChanged.emit()
         return True
 
@@ -222,13 +275,16 @@ class EditorTabs(QTabWidget):
     def _sync_tab_text(self, widget):
         idx = self.indexOf(widget)
         if idx >= 0:
-            self.setTabText(idx, widget.title())
+            self.setTabText(idx, _tab_text(widget.title()))
+            self.setTabToolTip(idx, widget.title())
 
     def _remove_widget(self, widget):
         idx = self.indexOf(widget)
         if idx >= 0:
             self.removeTab(idx)
             widget.deleteLater()
+        if self.count() == 1:
+            self.setCurrentIndex(LIBRARY_INDEX)
         self.dirtyChanged.emit()
 
     def _on_recipe_deleted(self, widget, recipe_id):
@@ -262,6 +318,73 @@ class EditorTabs(QTabWidget):
         '''Recipe ids open in tabs, in tab order — persisted so tabs
         survive restarts.'''
         return [w.recipe_id for w in self.editors()]
+
+
+def _tab_text(title):
+    '''A recipe name shortened to fit _TAB_TEXT_MAX, measured bold (the
+    current tab is bold, and the tab mustn't change width with it).'''
+    font = QFont()
+    font.setPixelSize(14)
+    font.setBold(True)
+    return elide(font, title or '', _TAB_TEXT_MAX)
+
+
+_ICON = 24   # same as the wedge on a recipe tab
+
+
+def _library_icon():
+    '''Two stacked recipe cards, the front one carrying a wedge in four
+    category colors: the collection that the recipe tabs come from.'''
+    icon = QIcon()
+    for ratio in (1, 2):
+        pm = QPixmap(_ICON * ratio, _ICON * ratio)
+        pm.setDevicePixelRatio(ratio)
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(QPen(QColor('#7d8771'), 1.2))
+        p.setBrush(QColor('#fff1da'))
+        p.drawRoundedRect(QRectF(7, 1.5, 15, 17), 3, 3)       # back card
+        p.setBrush(QColor('#ffffff'))
+        p.drawRoundedRect(QRectF(2, 5.5, 15, 17), 3, 3)       # front card
+        p.setPen(Qt.NoPen)
+        wedge = QRectF(4.5, 8.5, 10, 10)
+        for i, color in enumerate(('#347200', '#ff8c00', '#c9007a', '#d9b26a')):
+            p.setBrush(QColor(color))
+            p.drawPie(wedge, (90 - i * 90) * 16, -90 * 16)
+        p.end()
+        icon.addPixmap(pm)
+    return icon
+
+
+class _LibraryButton(QToolButton):
+    '''The pinned Library "tab": icon, name and recipe count, drawn
+    lifted onto white while Library is showing.'''
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip('Library (pinned) · Ctrl+0')
+        self.setFixedHeight(48)   # 40 px tab plus the 8 px margin above, like recipe tabs
+        self.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.setIcon(_library_icon())
+        self.setIconSize(QSize(_ICON, _ICON))
+        self.setStyleSheet(f'''
+            QToolButton {{
+                margin-top: 8px; padding: 0 14px 0 10px;
+                border: 1px solid transparent; border-bottom: 0;
+                border-top-left-radius: 8px; border-top-right-radius: 8px;
+                background: transparent; color: {_MUTED}; font-size: 14px;
+            }}
+            QToolButton:hover:!checked {{ background: #f7f1e6; }}
+            QToolButton:checked {{ background: #ffffff; border-color: {_BORDER}; color: {_KALE}; font-weight: 600; }}
+        ''')
+        self.set_count(None)
+
+    def set_count(self, n):
+        # Leading spaces: QToolButton has no icon-to-text spacing setting.
+        self.setText('  Library' + (f'  {n}' if n is not None else ''))
 
 
 def _inset(widget, left=0, right=0):
@@ -317,10 +440,10 @@ class _TabTail(QWidget):
 
 
 class _TabCorner(QWidget):
-    '''Right-hand corner of the tab strip: the "+" button and a muted
-    keyboard hint.'''
+    '''Right-hand corner of the tab strip: the open-recipes list, the "+"
+    button and a muted keyboard hint.'''
 
-    def __init__(self, plus_button, parent=None):
+    def __init__(self, list_button, plus_button, parent=None):
         super().__init__(parent)
         self.setStyleSheet('background: transparent;')
         hint = QLabel('Ctrl+Tab next tab · Ctrl+W close')
@@ -328,5 +451,6 @@ class _TabCorner(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 4, 16, 0)
         layout.setSpacing(12)
+        layout.addWidget(list_button)
         layout.addWidget(plus_button)
         layout.addWidget(hint)
