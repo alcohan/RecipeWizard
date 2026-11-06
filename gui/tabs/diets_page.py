@@ -52,8 +52,6 @@ class DietsPage(QWidget):
         ll.setContentsMargins(16, 20, 16, 16)
         ll.setSpacing(12)
         ll.addLayout(head)
-        ll.addWidget(kit.note('A recipe fits a diet when none of its ingredients have the excluded allergens'
-                              ' and it meets the nutrient rule. Drag to reorder. Changes save as you make them.'))
         ll.addWidget(self.list, stretch=1)
 
         # detail
@@ -66,7 +64,6 @@ class DietsPage(QWidget):
 
         allergen_card, al = kit.card()
         al.addWidget(kit.subheading('Excludes allergens'))
-        al.addWidget(kit.note('Recipes with any of these anywhere in their ingredients don’t fit.'))
         self._allergen_grid = QGridLayout()
         self._allergen_grid.setHorizontalSpacing(16)
         self._allergen_grid.setVerticalSpacing(6)
@@ -76,13 +73,10 @@ class DietsPage(QWidget):
         self.strict_box.setStyleSheet(f'QCheckBox {{ color: {kit.KALE}; spacing: 8px; font-weight: 600; }}')
         self.strict_box.toggled.connect(lambda _on: self._on_strict())
         al.addWidget(self.strict_box)
-        al.addWidget(kit.note('With Strict on, a recipe whose ingredients are only “made in a facility that also'
-                              ' handles” one of these allergens doesn’t fit either. Turn it off for diets where'
-                              ' a trace is fine.'))
 
         nutrient_card, nl = kit.card()
         nl.addWidget(kit.subheading('Nutrient rule'))
-        nl.addWidget(kit.note('Per serving: one unit of the recipe’s yield.'))
+        nl.addWidget(kit.note('Per serving'))
         self.nutrient_combo = ToolbarCombo()
         self.nutrient_combo.addItem('No nutrient rule', None)
         for key, label, _unit in diets.NUTRIENTS:
@@ -306,8 +300,7 @@ class DietsPage(QWidget):
         if d is None:
             return
         if confirm and QMessageBox.question(
-                self, 'Delete diet', f'Delete the diet “{d["name"]}”? Recipes stay as they are;'
-                ' saved views that filter by it stop narrowing by it.',
+                self, 'Delete diet', f'Delete the diet “{d["name"]}”?',
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
         db.delete_diet(d['id'])

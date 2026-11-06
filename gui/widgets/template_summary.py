@@ -77,8 +77,6 @@ class TemplateSummaryLine(QLabel):
         if self._items or self._rules:
             text += f' · <a href="details" style="color: {_ROMAINE}">Details</a>'
         self.setText(text)
-        self.setToolTip('Items this format adds to every recipe, and how it sizes'
-                        ' portions. Edit in Configure › Formats & templates.')
         self.show()
 
     # --- flyout --------------------------------------------------------

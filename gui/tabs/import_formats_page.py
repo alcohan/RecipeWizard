@@ -104,7 +104,6 @@ class FormatEditor(QWidget):
         self.catch_weight = QCheckBox('Pack size “LB WEIGHT” means catch weight: quantity is pounds')
         rc.addWidget(self.skip_credits)
         rc.addWidget(self.catch_weight)
-        rc.addWidget(kit.note('When the item code is blank, items are told apart by description + pack size.'))
 
         vendors_card, vc = kit.card()
         head = QHBoxLayout()
@@ -166,9 +165,7 @@ class FormatEditor(QWidget):
             combo.setCurrentIndex(max(idx, 0))
             combo.blockSignals(False)
             self._show_sample(key)
-        sample = self._settings.get('sample')
-        self.cols_note.setText('Sample values from the last file imported with this format. Bold fields are required.'
-                               if sample else 'Bold fields are required.')
+        self.cols_note.setText('Bold = required')
         self.date_format.setCurrentText(self._settings.get('date_format') or 'MM/DD/YYYY')
         self.price_from.setCurrentIndex(max(self.price_from.findData(self._settings.get('price_from', 'amount')), 0))
         self.skip_credits.setChecked(bool(self._settings.get('skip_credits', True)))
@@ -266,8 +263,6 @@ class ImportFormatsPage(QWidget):
         new_btn = kit.button('+ New format from a file…')
         new_btn.clicked.connect(self._new_from_file)
         ll.addWidget(new_btn)
-        ll.addWidget(kit.note('A format tells the importer which column is which. Files are matched to a format by'
-                              ' their headers.'))
         self.list = QListWidget()
         self.list.setStyleSheet(kit.LIST_STYLE)
         self.list.setWordWrap(True)
@@ -289,8 +284,7 @@ class ImportFormatsPage(QWidget):
         hist_card, hc = kit.card()
         head = QHBoxLayout()
         head.addWidget(kit.subheading('Import history'))
-        head.addWidget(kit.note('Undo removes every price an import wrote. Re-price applies today’s vendor item'
-                                ' yields to it.'), stretch=1)
+        head.addStretch(1)
         hc.addLayout(head)
         self.history = QTableWidget(0, 7)
         self.history.setHorizontalHeaderLabels(['#', 'Imported', 'Purchases', 'File', 'Ingredients', 'Prices', ''])
@@ -399,9 +393,7 @@ class ImportFormatsPage(QWidget):
         self.changed.emit()
 
     def _undo(self, batch_id):
-        if QMessageBox.question(self, 'Undo import', f'Undo import #{batch_id}? Every price it wrote is removed;'
-                                ' weeks it had replaced in earlier imports come back. Vendor item mappings stay.'
-                                ) != QMessageBox.Yes:
+        if QMessageBox.question(self, 'Undo import', f'Undo import #{batch_id}? Its prices are removed; mappings stay.') != QMessageBox.Yes:
             return
         pi.undo_batch(batch_id)
         self.refresh()

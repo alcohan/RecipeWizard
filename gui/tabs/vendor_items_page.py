@@ -43,12 +43,9 @@ class VendorItemsPage(QWidget):
         self._selected_id = None
 
         title = kit.heading('Vendor items')
-        sub = kit.note('What each case on an invoice yields, in portions of an ingredient. Many vendor items can'
-                       ' feed one ingredient.')
         head_text = QVBoxLayout()
         head_text.setSpacing(2)
         head_text.addWidget(title)
-        head_text.addWidget(sub)
         import_btn = kit.button('Import purchases…', primary=True)
         import_btn.clicked.connect(self.importRequested.emit)
         head = QHBoxLayout()
@@ -297,7 +294,7 @@ class VendorItemsPage(QWidget):
         self._refresh_feeds()
         batches = pi.batches_with_item(v['id'])
         self.reprice_note.setText(f'Saving re-prices the {len(batches)} import{"s" if len(batches) != 1 else ""}'
-                                  ' that bought this item.' if batches else 'No imports have priced this item yet.')
+                                  ' that bought this item.' if batches else '')
         self.save_btn.setText('Save && re-price' if batches else 'Save')
         self._dirty(False)
 

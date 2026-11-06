@@ -200,7 +200,7 @@ class EditorResults(QWidget):
             self._scale_layout.insertStretch(3, max(1, 100 - left))
             self.bar_scale.show()
         else:
-            self.food_cost_label.setText('Set a menu price to see food cost')
+            self.food_cost_label.setText('No menu price')
             self.margin_label.hide()
             self.food_cost_bar.hide()
             self.bar_scale.hide()

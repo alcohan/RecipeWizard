@@ -68,8 +68,7 @@ class FormatSegments(QFrame):
             btn = QPushButton(name)
             btn.setCheckable(True)
             btn.setProperty('tagId', tag_id)
-            btn.setToolTip('No format — e.g. a sub-recipe' if tag_id is None else
-                           f'{name}: applies the {name} template')
+            btn.setToolTip('Sub-recipe' if tag_id is None else '')
             btn.clicked.connect(lambda _c=False, t=tag_id: self._on_clicked(t))
             self._group.addButton(btn)
             self._layout.addWidget(btn)

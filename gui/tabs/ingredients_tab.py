@@ -178,7 +178,7 @@ class IngredientsTab(QWidget):
         row.addWidget(self.count_label)
         row.addStretch()
         import_btn = QPushButton('Import purchases…')
-        import_btn.setToolTip('Update prices from a purchase history export (Ctrl+Shift+I)')
+        import_btn.setToolTip('Ctrl+Shift+I')
         import_btn.setStyleSheet(
             f'QPushButton {{ min-height: 34px; padding: 0 14px; border: 1px solid {_FIELD_BORDER};'
             f' border-radius: 8px; background: #ffffff; color: {_KALE}; }}'

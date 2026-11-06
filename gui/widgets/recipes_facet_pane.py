@@ -85,8 +85,6 @@ class RecipesFacetPane(FacetPane):
 
     def _build_archived(self):
         row = QWidget()
-        row.setToolTip('Archived recipes are off the menu. Archive or restore one from its'
-                       ' right-click menu or the inspector.')
         hl = QHBoxLayout(row)
         hl.setContentsMargins(0, 0, 0, 0)
         hl.setSpacing(6)
@@ -192,7 +190,7 @@ class RecipesFacetPane(FacetPane):
 
         self.review_note = QPushButton('Only recipes needing review  ×')
         self.review_note.setCursor(Qt.PointingHandCursor)
-        self.review_note.setToolTip('The Needs review rule is still on. Click to turn it off.')
+        self.review_note.setToolTip('Click to turn off')
         self.review_note.setStyleSheet(f'QPushButton {{ color: {WARN}; background: #fff0dc; border: 0;'
                                        ' border-radius: 8px; padding: 1px 8px; font-size: 11px; font-weight: 600;'
                                        ' text-align: left; }')
@@ -371,7 +369,7 @@ class RecipesFacetPane(FacetPane):
         self.food_cost.setEnabled(bool(priced))
         value = self.food_cost.value()
         if not priced:
-            self.food_cost_label.setText('Set menu prices on recipes to filter by food cost.')
+            self.food_cost_label.setText('No menu prices yet')
         elif value >= FOOD_COST_OFF:
             self.food_cost_label.setText(f'Any{_target_text()} · {priced} priced')
         else:

@@ -524,11 +524,10 @@ class RecipeEditWidget(QWidget):
         if recipe_photo(self.recipe_id):
             self.photo_links.setText(f'<a href="change" style="{link}">Change photo</a>'
                                      f' &nbsp;·&nbsp; <a href="remove" style="{link}">Remove</a>')
-            self.photo_links.setToolTip('The photo shows in place of the wedge everywhere.')
+            self.photo_links.setToolTip('')
         else:
             self.photo_links.setText(f'<a href="change" style="{link}">Add photo</a>')
-            self.photo_links.setToolTip('A photo shows in place of the wedge everywhere,'
-                                        ' printed pages included. You can also drop an image here.')
+            self.photo_links.setToolTip('Or drop an image here')
 
     def _on_photo_link(self, href):
         if href == 'remove':
@@ -782,7 +781,6 @@ class RecipeEditWidget(QWidget):
                 pill = QPushButton(name)
                 pill.setCheckable(True)
                 pill.setCursor(Qt.PointingHandCursor)
-                pill.setToolTip(f'Tag this recipe {name}. Manage tags in Configure › Recipe tags.')
                 dot = color or _MUTED
                 pill.setStyleSheet(
                     f'QPushButton {{ border: 1px dashed {_FIELD_BORDER}; border-radius: 10px; padding: 1px 10px;'
@@ -810,19 +808,15 @@ class RecipeEditWidget(QWidget):
     def _refresh_chips(self, recipe):
         self._archived = recipe.get('Status') == 'archived'
         self.archive_btn.setText('Restore to menu' if self._archived else 'Archive')
-        self.archive_btn.setToolTip('Put it back on the menu' if self._archived else
-                                    'Take it off the menu: hidden from the Library and analytics, kept for later')
+        self.archive_btn.setToolTip('Put back on the menu' if self._archived else 'Take off the menu')
         if self._archived:
-            self.menu_chip.configure('Archived · off the menu', 'neutral',
-                                     'Hidden from the Library and analytics. Click to restore it.',
-                                     clickable=True)
+            self.menu_chip.configure('Archived', 'neutral', 'Click to restore', clickable=True)
         elif _coerce_menu_price(recipe.get('MenuPrice')):
             self.menu_chip.configure('On the menu', 'positive',
-                                     'Click to archive it (take it off the menu).', clickable=True)
+                                     'Click to take off the menu', clickable=True)
         else:
             self.menu_chip.configure('On the menu · no price', 'neutral',
-                                     'Set a menu price to see its food cost. Click to archive it'
-                                     ' (take it off the menu).', clickable=True)
+                                     'Click to take off the menu', clickable=True)
 
         self._parents = db.get_parent_recipes(self.recipe_id)
         n = len(self._parents)
@@ -831,7 +825,7 @@ class RecipeEditWidget(QWidget):
                               for p in self._parents)
             self.used_in_chip.configure(
                 f"Used in {n} recipe{'s' if n != 1 else ''}", 'neutral',
-                f'Used as a sub-recipe in {names}. Click to open one.', clickable=True)
+                f'Used in {names}', clickable=True)
         self.used_in_chip.setVisible(bool(n))
 
         # Prices moved since the last save (not caused by this session's
@@ -845,7 +839,7 @@ class RecipeEditWidget(QWidget):
             sign = '+' if drift > 0 else '−'
             self.prices_chip.configure(
                 f'Prices changed {sign}${abs(drift):.2f} since last save', 'warn',
-                'Supplier prices moved since this recipe was last saved. Save to confirm the new cost.')
+                'Save to confirm the new cost')
         self.prices_chip.setVisible(abs(drift) >= 0.01)
 
     def toggle_archived(self):
@@ -1028,7 +1022,7 @@ class RecipeEditWidget(QWidget):
                 follow_action = menu.addAction('Follow format rule')
                 follow_action.setEnabled(portion['sizable'])
                 if not portion['sizable']:
-                    follow_action.setToolTip('Its unit isn’t a volume, so the rule can’t size it.')
+                    follow_action.setToolTip('Not a volume unit; size by hand')
             else:
                 pin_action = menu.addAction('Size by hand')
                 if portion['state'] == 'base' and portion['siblings'] >= 2:

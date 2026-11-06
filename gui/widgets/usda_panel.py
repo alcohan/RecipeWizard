@@ -297,15 +297,14 @@ class UsdaLookupPanel(QFrame):
                             + (f' · {food.get("foodCategory")}' if food.get('foodCategory') else ''))
             self.results.addItem(item)
         n = len(foods)
-        self.status.setText(f'{n} result{"s" if n != 1 else ""} for "{text}" — '
-                            'lab-measured foods first, then branded products.')
+        self.status.setText(f'{n} result{"s" if n != 1 else ""} for “{text}”')
         if foods:
             self.results.setCurrentRow(0)
 
     def _on_search_error(self, token, message):
         if token != self._search_token:
             return
-        self.status.setText(message if message != 'No results' else 'No USDA matches — try fewer or different words.')
+        self.status.setText(message if message != 'No results' else 'No matches')
 
     # --- detail --------------------------------------------------------
 
@@ -410,7 +409,7 @@ class UsdaLookupPanel(QFrame):
         if self._per_100 is None:
             return
         if grams is None:
-            self.basis.setText(f'Per 100 g (USDA basis). Enter the weight of 1 × {unit} to scale.')
+            self.basis.setText(f'Per 100 g. Enter the weight of 1 × {unit} to scale.')
             values = self._per_100
             self.use_btn.setEnabled(False)
         else:

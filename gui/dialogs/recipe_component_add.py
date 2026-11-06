@@ -418,8 +418,7 @@ class RecipeComponentAddDialog(QDialog):
         if self._can_create and needle:
             text = self.filter_edit.text().strip().replace('<', '&lt;')
             self.create_link.setText(
-                f'Not here? <a href="create" style="color: {_ROMAINE}">Create "{text}" as a new'
-                f' ingredient</a> (Ctrl+Shift+N)')
+                f'<a href="create" style="color: {_ROMAINE}">Create “{text}” as a new ingredient</a>')
             self.create_link.show()
         else:
             self.create_link.hide()

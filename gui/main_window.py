@@ -302,16 +302,14 @@ class MainWindow(QMainWindow):
         cfg.add_section('formats', 'Formats & templates', self.templates_page)
         self.categories_page = TagsPage(
             'Ingredient categories', 'ingredient',
-            'Categories color the wedge slices and group components in a recipe tab. Their order is the wedge'
-            ' order. Double-click a name to rename; click the swatch to pick a color. Changes save as you make them.')
+            'Order sets the wedge order')
         cfg.add_section('categories', 'Ingredient categories', self.categories_page)
         self.allergens_page = AllergensPage()
         self.allergens_page.changed.connect(self._on_config_changed)
         cfg.add_section('allergens', 'Allergens', self.allergens_page)
         self.recipe_tags_page = TagsPage(
             'Recipe tags', 'recipe_tag',
-            'Labels such as Core or Seasonal. A recipe can have several; assign them in a recipe tab. The Library'
-            ' filters and groups by them. Double-click a name to rename; click the swatch to pick a color.')
+            '')
         cfg.add_section('recipe_tags', 'Recipe tags', self.recipe_tags_page)
         self.diets_page = DietsPage(self.recipes_model)
         self.diets_page.changed.connect(self._on_config_changed)
@@ -336,9 +334,7 @@ class MainWindow(QMainWindow):
         cfg.add_section('health', 'Library health', self.library_health_tab)
         cfg.add_section('data', 'Data & backups', LauncherPage(
             'Data & backups',
-            'Back up the whole library to a single file, restore from one, '
-            'or open the data folder. A backup is the way to move all your '
-            'data to another computer.',
+            '',
             [
                 ('Back up now', self._on_backup_now),
                 ('Back up to…', self._on_backup_database),
@@ -348,8 +344,7 @@ class MainWindow(QMainWindow):
         ))
         cfg.add_section('images', 'Images', LauncherPage(
             'Images',
-            'Match ingredient photos in the data folder to ingredients by '
-            'name, or assign them by hand.',
+            '',
             [
                 ('Auto-assign images', self._on_auto_assign_images),
                 ('Bulk assign…', self._on_bulk_assign_images),

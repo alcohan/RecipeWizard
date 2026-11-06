@@ -51,7 +51,6 @@ class CompareTrayDock(QFrame):
         print_btn = QPushButton('Print all')
         print_btn.setFlat(True)
         print_btn.setCursor(Qt.PointingHandCursor)
-        print_btn.setToolTip('Print a recipe page for each recipe in the tray')
         print_btn.clicked.connect(lambda: self._tray.count() and self.printRequested.emit(list(self._tray.ids())))
         expand_btn = QPushButton('Expand to Analytics')
         expand_btn.setCursor(Qt.PointingHandCursor)
@@ -99,10 +98,10 @@ class CompareTrayDock(QFrame):
         ids = self._tray.ids()
         n = len(ids)
         self._summary.setText(
-            f"{n} recipe{'s' if n != 1 else ''} · Space adds the selected recipe"
+            f"{n} recipe{'s' if n != 1 else ''}"
         )
         if not ids:
-            hint = QLabel('Select a recipe and press Space to add it here.')
+            hint = QLabel('Press Space on a recipe to add it')
             hint.setStyleSheet(f'color: {_MUTED}; font-size: 13px;')
             self._cards_layout.addWidget(hint)
         for rid in ids:

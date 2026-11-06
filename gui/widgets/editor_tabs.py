@@ -323,7 +323,7 @@ class _TabCorner(QWidget):
     def __init__(self, plus_button, parent=None):
         super().__init__(parent)
         self.setStyleSheet('background: transparent;')
-        hint = QLabel('Ctrl+Tab next tab · Ctrl+W close · Ctrl+0 Library')
+        hint = QLabel('Ctrl+Tab next tab · Ctrl+W close')
         hint.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 4, 16, 0)

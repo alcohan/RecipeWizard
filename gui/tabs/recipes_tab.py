@@ -209,7 +209,6 @@ class RecipesTab(QWidget):
         self.group_combo = ToolbarCombo()
         for key, label in GROUP_BY:
             self.group_combo.addItem(label, key)
-        self.group_combo.setToolTip('Gallery groups. A recipe with several tags or diets shows in each.')
         self.group_combo.activated.connect(lambda i: self._set_group(self.group_combo.itemData(i)))
 
         sort_label = QLabel('Sort')

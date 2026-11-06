@@ -15,8 +15,7 @@ def confirm_archive(parent, recipe_id, name, always=False):
             return True
         box = QMessageBox(QMessageBox.Question, 'Archive recipe',
                           f'Archive {name}?', parent=parent)
-        box.setInformativeText('It comes off the menu and is hidden from the Library and analytics.'
-                               ' You can restore it later, or undo with Ctrl+Z.')
+        box.setInformativeText('You can restore it later.')
         archive = box.addButton('Archive', QMessageBox.AcceptRole)
         box.addButton(QMessageBox.Cancel)
         box.setDefaultButton(QMessageBox.Cancel)

@@ -36,11 +36,8 @@ class BulkImageAssignDialog(QDialog):
         btn_row.addStretch()
         btn_row.addWidget(close_btn)
 
-        hint = QLabel('Unassigned ingredients are listed first. Selections save immediately.')
-        hint.setEnabled(False)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(hint)
         layout.addWidget(scroll, stretch=1)
         layout.addLayout(btn_row)
 

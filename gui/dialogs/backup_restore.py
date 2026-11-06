@@ -37,16 +37,12 @@ class BackupOptionsDialog(QDialog):
         photos = backup.image_files() + backup.image_files(config.RECIPE_IMAGES_PATH)
         heading = QLabel('Back up your library')
         heading.setStyleSheet('font-size: 15px; font-weight: 600;')
-        body = QLabel('Recipes, ingredients, prices, suppliers and settings go into one '
-                      f'{backup.EXTENSION} file.')
-        body.setWordWrap(True)
         logo = backup.logo_file()
         self.images = QCheckBox(f'Include ingredient and recipe photos{" and the print logo" if logo else ""}'
                                 f' ({len(photos)} photos, {_megabytes(backup.images_size())})')
         self.images.setEnabled(bool(photos) or bool(logo))
         self.images.setChecked(False)
-        note = QLabel('Photos make the file much larger. Without them, a restore keeps the photos '
-                      'already on that computer.')
+        note = QLabel('Without photos, a restore keeps the ones already there')
         note.setWordWrap(True)
         note.setStyleSheet(f'color: {_MUTED};')
 
@@ -58,7 +54,6 @@ class BackupOptionsDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.addWidget(heading)
-        layout.addWidget(body)
         layout.addSpacing(6)
         layout.addWidget(self.images)
         layout.addWidget(note)
@@ -143,17 +138,9 @@ class RestoreDialog(QDialog):
         summary.setWordWrap(True)
 
         self.overwrite = QRadioButton('Overwrite everything')
-        overwrite_note = QLabel(
-            'Your library is replaced by the backup'
-            + (', and photos with the same name are replaced by the backup\'s.' if info.has_images
-               else '. Your photos stay as they are.'))
+        overwrite_note = QLabel('Replaces your library with the backup')
         self.merge = QRadioButton('Merge into this library')
-        merge_note = QLabel(
-            'Adds what the backup has that this library doesn\'t; nothing here is changed or '
-            'deleted. Anything with the same name (an ingredient, recipe, supplier, tag, allergen, '
-            'diet, saved view or comparison) keeps your current version, and the summary lists '
-            'what was kept. Price history entries you don\'t have are added'
-            + (', and photos you don\'t have are copied.' if info.has_images else '.'))
+        merge_note = QLabel('Adds what’s missing. Anything with the same name keeps your version.')
         for note in (overwrite_note, merge_note):
             note.setWordWrap(True)
             note.setStyleSheet(f'color: {_MUTED}; margin-left: 22px;')
@@ -164,10 +151,6 @@ class RestoreDialog(QDialog):
 
         self.safety_box = QCheckBox('Back up my current library first')
         self.safety_box.setChecked(True)
-        safety = QLabel("Saved to the data folder. Untick this on a new install, where there's "
-                        'only the sample data to lose.')
-        safety.setWordWrap(True)
-        safety.setStyleSheet(f'color: {_MUTED}; margin-left: 22px;')
 
         buttons = QDialogButtonBox()
         self.restore_btn = buttons.addButton('Merge', QDialogButtonBox.AcceptRole)
@@ -189,7 +172,6 @@ class RestoreDialog(QDialog):
         layout.addWidget(overwrite_note)
         layout.addSpacing(8)
         layout.addWidget(self.safety_box)
-        layout.addWidget(safety)
         layout.addSpacing(4)
         layout.addWidget(buttons)
         self.setMinimumWidth(480)

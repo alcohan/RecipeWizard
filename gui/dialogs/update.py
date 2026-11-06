@@ -93,9 +93,8 @@ def install_update(window, release, backup):
     title = 'Install Update'
     answer = QMessageBox.question(
         window, title,
-        f'Back up your library before installing {release.tag}?\n\n'
-        'Your recipes stay where they are, but the new version upgrades the '
-        'database the first time it opens. A backup lets you go back.',
+        f'Back up your library before installing {release.tag}? '
+        'The update upgrades it when it first opens.',
         QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel, QMessageBox.Yes)
     if answer == QMessageBox.Cancel:
         return False
@@ -108,8 +107,7 @@ def install_update(window, release, backup):
 
     confirm = QMessageBox.question(
         window, title,
-        f'RecipeWizard {release.tag} is downloaded and verified.\n\n'
-        "Restart now to finish installing? You'll be asked to save any open edits.",
+        f'{release.tag} is ready. Restart now to install?',
         QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Yes)
     # close() runs the window's own save prompts; Cancel there keeps
     # the app open and the install off.

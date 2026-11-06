@@ -74,7 +74,7 @@ class AnalyticsTab(QWidget):
         self.export_btn.setToolTip('Save the side-by-side table as a CSV file')
         self.export_btn.clicked.connect(lambda: self.export_csv())
         dock_btn = kit.button('Dock to bottom')
-        dock_btn.setToolTip('Back to Recipes with the compare tray docked (Ctrl+Shift+C)')
+        dock_btn.setToolTip('Ctrl+Shift+C')
         dock_btn.clicked.connect(self.dockRequested.emit)
         self.save_btn = kit.button('Save comparison', primary=True)
         self.save_btn.clicked.connect(lambda: self.save_comparison())
@@ -108,7 +108,7 @@ class AnalyticsTab(QWidget):
         self.add_edit.setCompleter(self._completer)
         self.saved_box = QVBoxLayout()
         self.saved_box.setSpacing(2)
-        self.saved_empty = kit.note('None yet. Save comparison keeps this set and its settings.')
+        self.saved_empty = kit.note('None yet')
 
         aside = QWidget()
         aside.setFixedWidth(250)
@@ -201,8 +201,7 @@ class AnalyticsTab(QWidget):
         self.empty_card, ecl = kit.card()
         ecl.setContentsMargins(24, 20, 24, 24)
         ecl.addWidget(kit.subheading('Nothing to compare yet'))
-        ecl.addWidget(kit.note('Add recipes with the box on the left, press Space on a recipe in the Library,'
-                               ' or open a saved comparison.'))
+        ecl.addWidget(kit.note('Add recipes on the left, or press Space on one in the Library'))
         self.library_btn = kit.button('Compare the Library view')
         self.library_btn.clicked.connect(self.compare_library_view)
         row = QHBoxLayout()
@@ -470,7 +469,7 @@ class AnalyticsTab(QWidget):
         self.tray_heading.setText(f'COMPARE TRAY · {n}')
         by_id = {r['Id']: r for r in self._model.rows()}
         self.tray_list.set_recipes([by_id[i] for i in ids], self._thumb)
-        self.subtitle.setText(f"The compare tray, expanded · {n} recipe{'s' if n != 1 else ''}")
+        self.subtitle.setText(f"{n} recipe{'s' if n != 1 else ''}")
         has = n > 0
         self.export_btn.setEnabled(has)
         self.save_btn.setEnabled(has)
@@ -684,7 +683,6 @@ class _TrayRow(QFrame):
         self.setObjectName('TrayRow')
         self.setStyleSheet(f'QFrame#TrayRow {{ background: #ffffff; border: 1px solid {kit.BORDER};'
                            ' border-radius: 8px; }')
-        self.setToolTip('Double-click to open · drag to reorder')
         archived = recipe.get('Archived')
         name = ElidedLabel(recipe['Name'] + (' · archived' if archived else ''))
         name.setStyleSheet(f'color: {kit.MUTED if archived else kit.KALE}; border: 0;')
@@ -735,7 +733,7 @@ class _SavedLink(QPushButton):
         self.setCursor(Qt.PointingHandCursor)
         self.setFlat(True)
         n = len(row['recipe_ids'])
-        self.setToolTip(f"{n} recipe{'s' if n != 1 else ''} · right-click to update, rename or delete")
+        self.setToolTip(f"{n} recipe{'s' if n != 1 else ''}")
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(
             lambda pos: self.menuRequested.emit(self.comparison_id, self.mapToGlobal(pos)))

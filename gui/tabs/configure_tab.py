@@ -150,6 +150,7 @@ class LauncherPage(QWidget):
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(12)
         layout.addWidget(heading)
-        layout.addWidget(body)
+        if description:
+            layout.addWidget(body)
         layout.addLayout(button_row)
         layout.addStretch()

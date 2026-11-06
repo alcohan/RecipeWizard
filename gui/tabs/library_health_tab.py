@@ -29,13 +29,13 @@ _CHECKS = (
     # (key, title, idle_label, description)
     ('missing_nutrition', 'Missing nutrition',
      'Every ingredient has calorie data',
-     'Ingredients with no calories recorded. USDA search fills these in automatically.'),
+     'No calories recorded'),
     ('stale_prices', 'Stale prices',
      'All prices are fresh',
-     'No supplier price newer than 90 days — add a current price or confirm the latest.'),
+     'No price in 90 days'),
     ('unused_ingredients', 'Unused ingredients',
      'No orphans',
-     'Not referenced by any recipe. Candidates for cleanup if intentionally retired.'),
+     'Not in any recipe'),
     ('duplicate_names', 'Duplicate names',
      'No duplicates',
      'Two or more ingredients share a name (case-insensitive). Rename or merge.'),
@@ -91,10 +91,7 @@ class LibraryHealthTab(QWidget):
         heading = QLabel('Library Health')
         heading.setStyleSheet('font-size: 22px; font-weight: 700; color: #082c00;'
                               ' letter-spacing: -0.01em;')
-        subhead = QLabel("Data-quality signals, worst first. Address each when you have a moment.")
-        subhead.setStyleSheet('color: #5B625C; padding-bottom: 4px;')
         self._container_layout.addWidget(heading)
-        self._container_layout.addWidget(subhead)
 
         try:
             report = db.library_health_report()
@@ -236,7 +233,7 @@ class _BackupsCard(QFrame):
         layout.setSpacing(6)
         layout.addLayout(header_row)
         if not files:
-            body = QLabel('No backup files yet — Tools > Back Up Library Now makes one.')
+            body = QLabel('No backups yet')
             body.setStyleSheet('color: #5B625C;')
             layout.addWidget(body)
             return

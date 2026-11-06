@@ -140,7 +140,7 @@ class IngredientInspector(QScrollArea):
         buttons.addWidget(self.edit_btn)
         buttons.addWidget(self.price_btn)
 
-        self.empty = QLabel('Select an ingredient to see its price, usage and allergens.')
+        self.empty = QLabel('Select an ingredient')
         self.empty.setWordWrap(True)
         self.empty.setStyleSheet(f'color: {_MUTED};')
 
@@ -230,7 +230,7 @@ class IngredientInspector(QScrollArea):
             parts.append(_short_date(row.get('PriceDate')))
             self.cost_detail.setText(' · '.join(parts))
         else:
-            self.cost_detail.setText('No price yet. Add one with New price.')
+            self.cost_detail.setText('No price yet')
 
         self._fill_usage(row, prev, cur)
         text = row.get('Allergens') or 'None'
@@ -254,7 +254,7 @@ class IngredientInspector(QScrollArea):
             self.usage_title.setText('NOT USED IN ANY RECIPE')
         elif changed:
             self.usage_title.setText(f"USED IN {n_live} RECIPE{'S' if n_live != 1 else ''}{archived_bit}"
-                                     ' · IMPACT OF THE CHANGE')
+                                     ' · CHANGE')
         else:
             self.usage_title.setText(f"USED IN {n_live} RECIPE{'S' if n_live != 1 else ''}{archived_bit}")
         shown = usage if self._show_all_usage else usage[:_USAGE_PREVIEW]

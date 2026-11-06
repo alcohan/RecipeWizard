@@ -487,8 +487,7 @@ class ImportPurchasesDialog(QDialog):
         bc.addWidget(self.basis_weekly)
         bc.addWidget(self.basis_weekly_note)
         bc.addWidget(self.basis_latest)
-        bc.addWidget(kit.note('One price per ingredient, from its most recent purchase date, averaged across the'
-                              ' locations that bought it that day.'))
+        bc.addWidget(kit.note('Each item’s most recent purchase'))
         layout.addWidget(basis_card)
 
         layout.addStretch()
@@ -547,16 +546,13 @@ class ImportPurchasesDialog(QDialog):
         overlap = s.overlapping_batches()
         if overlap:
             ids = ', '.join(f'#{b["id"]}' for b in overlap)
-            self.overlap_note.setText(f'These dates overlap import {ids}. Weeks in both are replaced by this'
-                                      ' import’s prices; undoing it brings the earlier ones back.')
+            self.overlap_note.setText(f'Overlaps import {ids}. This import’s prices replace those weeks.')
             self.overlap_note.show()
         else:
             self.overlap_note.hide()
         weeks = sorted({pi.week_start(l.date) for l in s.lines})
         week_text = ', '.join(f'{w:%b} {w.day}' for w in weeks)
-        self.basis_weekly_note.setText(
-            f'One price per ingredient per week (Mon–Sun): total spend ÷ total portions. This file gives up to'
-            f' {len(weeks)} price points, dated {week_text}.')
+        self.basis_weekly_note.setText(f"{len(weeks)} week{'s' if len(weeks) != 1 else ''}: {week_text}")
         (self.basis_latest if s.basis == 'latest' else self.basis_weekly).setChecked(True)
         if hasattr(self, 'next_btn'):
             self._sync_chrome()
@@ -629,8 +625,7 @@ class ImportPurchasesDialog(QDialog):
         self.loc_list.setStyleSheet('QListWidget { border: 0; } QListWidget::item { padding: 5px 2px; }')
         self.loc_list.itemChanged.connect(self._on_location_toggled)
         ll.addWidget(self.loc_list, stretch=1)
-        ll.addWidget(kit.note('Remembered with the import format. Prices are blended: total spend ÷ total units'
-                              ' across the checked locations.'))
+        ll.addWidget(kit.note('Prices blend the checked locations'))
         left.setMaximumWidth(420)
 
         right, rl = kit.card()
@@ -700,13 +695,11 @@ class ImportPurchasesDialog(QDialog):
         rows = s.location_swings(ex)
         cutoff = f'{pi.SWING_MIN * 100:.0f}%'
         self.swing_title.setText(f'Items that move {cutoff} or more')
-        self.swing_hint.setText(f'Blended case price with your checked locations, against all {total}.'
-                                ' Ingredients move by the same % per portion.')
+        self.swing_hint.setText(f'Compared with all {total} locations')
         if not ex:
-            self.swing_empty.setText(f'All {total} locations are checked, so every price is blended across all of'
-                                     f' them.\n\nUncheck a location to see which items it moves by {cutoff} or more.')
+            self.swing_empty.setText('Uncheck a location to see what it changes')
         elif not rows:
-            self.swing_empty.setText(f'Leaving these out moves no item’s price by {cutoff} or more.')
+            self.swing_empty.setText(f'No item moves {cutoff} or more')
         self.swing_table.setVisible(bool(rows))
         self.swing_empty.setVisible(not rows)
         self.swing_table.setHorizontalHeaderLabels(
@@ -750,8 +743,7 @@ class ImportPurchasesDialog(QDialog):
         self.queue_count = kit.note('')
         head.addWidget(self.queue_count, stretch=1)
         ll.addLayout(head)
-        ll.addWidget(kit.note('Only items never mapped or ignored land here. Each is mapped once; later imports'
-                              ' price it automatically.'))
+        ll.addWidget(kit.note('New items only. Each is mapped once.'))
         self.queue_list = QListWidget()
         self.queue_list.setStyleSheet('QListWidget { border: 0; background: transparent; outline: 0; }')
         self.queue_list.setItemDelegate(QueueCardDelegate(self.queue_list))
@@ -978,8 +970,7 @@ class ImportPurchasesDialog(QDialog):
         if not left:
             return
         if QMessageBox.question(self, 'Import purchases',
-                                f'Ignore the {len(left)} items not mapped yet? Ignored items are never priced;'
-                                ' you can map them later in Configure › Vendor items.') != QMessageBox.Yes:
+                                f'Ignore {len(left)} unmapped items? You can map them later in Vendor items.') != QMessageBox.Yes:
             return
         for q in left:
             item = dict(q, status='ignored')
@@ -1012,8 +1003,7 @@ class ImportPurchasesDialog(QDialog):
             self.filter_buttons[key] = btn
             bar.addWidget(btn)
         bar.addStretch()
-        self.review_help = kit.note('Checked ingredients get the new prices when you apply; unchecked ones keep their'
-                                    ' current price. In the chart, the dashed line is the current price.')
+        self.review_help = kit.note('Only checked ingredients are updated')
         self.review_summary = QLabel('')
         self.review_summary.setStyleSheet(f'color: {kit.MUTED}; font-size: 12px;')
         bar.addWidget(self.review_summary)
@@ -1120,7 +1110,7 @@ class ImportPurchasesDialog(QDialog):
             t.setItem(r, 5, latest)
             if row['first']:
                 change = QTableWidgetItem('new')
-                change.setToolTip('This ingredient has no price yet; the import gives it its first one.')
+                change.setToolTip('First price')
                 change.setForeground(QColor(kit.MUTED))
             else:
                 c = row['change'] or 0
@@ -1202,7 +1192,7 @@ class ImportPurchasesDialog(QDialog):
         self.done_body.setWordWrap(True)
         self.done_body.setAlignment(Qt.AlignCenter)
         self.done_body.setStyleSheet(f'color: {kit.MUTED}; font-size: 13px;')
-        self.done_hint = QLabel('You can also undo it later in Configure › Import formats & history.')
+        self.done_hint = QLabel('Undo it anytime in Import formats & history')
         self.done_hint.setWordWrap(True)
         self.done_hint.setAlignment(Qt.AlignCenter)
         self.done_hint.setStyleSheet(f'color: {kit.MUTED}; font-size: 12px;')
@@ -1245,12 +1235,11 @@ class ImportPurchasesDialog(QDialog):
     def _undo(self):
         if self.batch_id is None:
             return
-        if QMessageBox.question(self, 'Import purchases', f'Undo import #{self.batch_id}? Every price it wrote is'
-                                ' removed. Vendor item mappings you made stay.') != QMessageBox.Yes:
+        if QMessageBox.question(self, 'Import purchases', f'Undo import #{self.batch_id}? Its prices are'
+                                ' removed; mappings stay.') != QMessageBox.Yes:
             return
         pi.undo_batch(self.batch_id)
         self.imported.emit(self.batch_id)
         self.done_title.setText('Import undone')
-        self.done_body.setText('Its prices were removed. Your vendor item mappings were kept, so importing this'
-                               ' file again goes straight to review.')
+        self.done_body.setText('Prices removed; mappings kept')
         self.undo_btn.setEnabled(False)

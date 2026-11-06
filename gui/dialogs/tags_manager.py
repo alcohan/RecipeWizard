@@ -152,7 +152,8 @@ class TagsPage(QWidget):
         layout.setContentsMargins(28, 20, 28, 28)
         layout.setSpacing(12)
         layout.addWidget(kit.heading(title))
-        layout.addWidget(kit.note(note))
+        if note:
+            layout.addWidget(kit.note(note))
         layout.addWidget(self.section, stretch=1)
 
     def refresh(self):
@@ -165,11 +166,7 @@ class IngredientTagsDialog(QDialog):
         self.setWindowTitle(f'{config.APPNAME} | Ingredient Tags')
         self.resize(560, 460)
 
-        hint = QLabel(
-            'Categories show up as colored badges on the ingredients '
-            'table and recipe components. Double-click a name to rename, '
-            'click the swatch to pick a color. Changes save automatically.'
-        )
+        hint = QLabel('Order sets the wedge order')
         hint.setEnabled(False)
         hint.setWordWrap(True)
 
@@ -193,14 +190,6 @@ class RecipeTagsDialog(QDialog):
         self.setWindowTitle(f'{config.APPNAME} | Recipe Tags')
         self.resize(560, 460)
 
-        hint = QLabel(
-            'Recipe tags label recipes (a recipe can have several) and '
-            'filter or group the Library. Assign them in a recipe tab. '
-            'Double-click a name to rename, click the swatch to pick a '
-            'color. Changes save automatically.'
-        )
-        hint.setEnabled(False)
-        hint.setWordWrap(True)
 
         section = _TagSection('Recipe Tags', 'recipe_tag')
 
@@ -211,6 +200,5 @@ class RecipeTagsDialog(QDialog):
         bottom_row.addWidget(close_btn)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(hint)
         layout.addWidget(section, stretch=1)
         layout.addLayout(bottom_row)
