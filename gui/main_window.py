@@ -1,4 +1,3 @@
-import datetime
 import os
 
 from PySide6.QtCore import Qt, QSettings, QUrl
@@ -831,9 +830,13 @@ class MainWindow(QMainWindow):
         include_images = backup_restore.ask_backup_options(self)
         if include_images is None:
             return
-        default_name = f'RecipeWizard_backup_{datetime.date.today().isoformat()}{backup.EXTENSION}'
+        # Start in the data folder, where Back Up Now saves and where the
+        # status bar and Library health look. A bare file name would open
+        # the dialog in the working directory (the project folder when
+        # run from source).
+        default_path = os.path.join(backup.default_backup_dir(), backup.timestamped_name())
         path, _ = QFileDialog.getSaveFileName(
-            self, 'Back Up Library', default_name, f'RecipeWizard backup (*{backup.EXTENSION})',
+            self, 'Back Up Library', default_path, f'RecipeWizard backup (*{backup.EXTENSION})',
         )
         if not path:
             return

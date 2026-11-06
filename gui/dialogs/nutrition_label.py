@@ -9,7 +9,7 @@ underlying data doesn't include daily-value targets.'''
 import os
 import re
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QStandardPaths, Qt, QTimer
 from PySide6.QtGui import QFont, QFontMetrics, QGuiApplication, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QDialog, QFileDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
@@ -83,7 +83,9 @@ class NutritionLabelDialog(QDialog):
         self._flash_status('✓ Copied to clipboard')
 
     def _on_save(self):
-        default_name = _slugify(self._recipe_name) + '_nutrition.png'
+        # A full path: a bare name would open in the working directory.
+        folder = QStandardPaths.writableLocation(QStandardPaths.PicturesLocation) or os.path.expanduser('~')
+        default_name = os.path.join(folder, _slugify(self._recipe_name) + '_nutrition.png')
         path, _selected = QFileDialog.getSaveFileName(
             self, 'Save Nutrition Label', default_name,
             'PNG Image (*.png);;JPEG Image (*.jpg *.jpeg)',

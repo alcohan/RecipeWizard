@@ -2,7 +2,9 @@
 label and footer line on printed recipe pages, with a live preview.
 Kept in the library via gui.services.print_branding.
 '''
-from PySide6.QtCore import QEvent, QRectF, Qt, QTimer
+import os
+
+from PySide6.QtCore import QEvent, QRectF, QStandardPaths, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QColorDialog, QFileDialog, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit, QScrollArea, QVBoxLayout,
@@ -158,7 +160,9 @@ class PrintPage(QWidget):
 
     def _choose_logo(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, 'Choose logo', '', 'Images (' + ' '.join('*' + e for e in brand.LOGO_EXTENSIONS) + ')')
+            self, 'Choose logo',
+            QStandardPaths.writableLocation(QStandardPaths.PicturesLocation) or os.path.expanduser('~'),
+            'Images (' + ' '.join('*' + e for e in brand.LOGO_EXTENSIONS) + ')')
         if path:
             try:
                 brand.set_logo_file(path)

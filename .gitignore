@@ -99,4 +99,5 @@ GitHub.sublime-settings
 
 # Local library data: backups, CSV exports (proprietary; never commit)
 backups/
+*.rwbackup
 export/
