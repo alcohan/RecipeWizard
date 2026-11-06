@@ -10,7 +10,7 @@ read their values on Save.
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QButtonGroup, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QMenu, QPlainTextEdit, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 

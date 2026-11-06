@@ -11,7 +11,7 @@ thing to search" stay simple.
 '''
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QVBoxLayout,
 )
 from utilities import fuzzy

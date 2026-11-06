@@ -32,7 +32,7 @@ category, Free from and Food cost.
   top stop it's off. Disabled, with a note, until any recipe has one.
 
 '''
-from PySide6.QtCore import QSettings, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QInputDialog, QLabel, QMenu, QMessageBox, QPushButton, QSlider, QVBoxLayout,
     QWidget,
@@ -43,7 +43,7 @@ from gui.services import food_cost
 from gui.models.recipes_facet_proxy import matches
 from gui.models.recipes_model import SUB_RECIPES
 from gui.widgets.elided_label import ElidedLabel
-from gui.widgets.facet_pane import BORDER, KALE, MUTED, ROMAINE, WARN, FacetPane, FacetSection
+from gui.widgets.facet_pane import KALE, MUTED, ROMAINE, WARN, FacetPane, FacetSection
 from gui.widgets.toolbar_controls import ToggleSwitch
 from utilities import diets
 
