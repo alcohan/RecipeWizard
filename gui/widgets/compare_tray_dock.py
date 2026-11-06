@@ -26,6 +26,7 @@ _BORDER = '#ebe1cd'
 class CompareTrayDock(QFrame):
     expandRequested = Signal()
     recipeActivated = Signal(int)
+    printRequested = Signal(list)      # recipe ids in tray order
 
     def __init__(self, compare_tray, parent=None):
         super().__init__(parent)
@@ -47,6 +48,11 @@ class CompareTrayDock(QFrame):
         clear_btn.setFlat(True)
         clear_btn.setCursor(Qt.PointingHandCursor)
         clear_btn.clicked.connect(self._tray.clear)
+        print_btn = QPushButton('Print all')
+        print_btn.setFlat(True)
+        print_btn.setCursor(Qt.PointingHandCursor)
+        print_btn.setToolTip('Print a recipe page for each recipe in the tray')
+        print_btn.clicked.connect(lambda: self._tray.count() and self.printRequested.emit(list(self._tray.ids())))
         expand_btn = QPushButton('Expand to Analytics')
         expand_btn.setCursor(Qt.PointingHandCursor)
         expand_btn.clicked.connect(self.expandRequested.emit)
@@ -59,6 +65,7 @@ class CompareTrayDock(QFrame):
         header.addWidget(self._summary)
         header.addStretch()
         header.addWidget(clear_btn)
+        header.addWidget(print_btn)
         header.addWidget(expand_btn)
 
         self._cards_host = QWidget()

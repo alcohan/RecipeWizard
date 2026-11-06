@@ -28,6 +28,23 @@ class UpdateRecipeInfoCommand(QUndoCommand):
         db.update_recipe_info(self.recipe_id, *self.before)
 
 
+class SetRecipeImageCommand(QUndoCommand):
+    '''Set or clear a recipe's photo (a filename in the recipe photos
+    folder; '' for none). The file itself is never deleted.'''
+
+    def __init__(self, recipe_id, before, after):
+        super().__init__('Remove photo' if not after else 'Set photo')
+        self.recipe_id = recipe_id
+        self.before = before or ''
+        self.after = after or ''
+
+    def redo(self):
+        db.set_recipe_image(self.recipe_id, self.after)
+
+    def undo(self):
+        db.set_recipe_image(self.recipe_id, self.before)
+
+
 class _SnapshotCommand(QUndoCommand):
     '''A component edit can resize other rows too (portion rules re-split
     a base when a green is added or removed, and typing a quantity pins

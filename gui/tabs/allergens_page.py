@@ -73,7 +73,8 @@ class AllergensPage(QWidget):
             item = QListWidgetItem(r['name'])
             item.setFlags(item.flags() | Qt.ItemIsEditable)
             item.setData(Qt.UserRole, r['id'])
-            bits = [f"{r['Ingredients']} ingredient{'s' if r['Ingredients'] != 1 else ''}",
+            bits = [f"{r['Ingredients']} ingredient{'s' if r['Ingredients'] != 1 else ''}"
+                    + (f" · {r['Facility']} facility" if r.get('Facility') else ''),
                     f"{r['Recipes']} recipe{'s' if r['Recipes'] != 1 else ''}"]
             tip = ' · '.join(bits)
             if excluded_by.get(r['id']):

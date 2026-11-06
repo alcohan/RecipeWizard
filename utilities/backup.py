@@ -7,6 +7,8 @@ A .rwbackup is a zip:
     manifest.json              what's inside (see _manifest)
     builder.db                 a consistent snapshot (SQLite backup API)
     images/ingredients/<file>  ingredient photos, when included
+    images/recipes/<file>      recipe photos, with the ingredient photos
+    images/branding/logo.<ext> the print logo, with the photos
 
 Plain .db backups from earlier versions open too: they're a database
 with no images.
@@ -24,7 +26,7 @@ else is added, with its ids remapped. Two things add up instead of
 clashing: price history (entries an ingredient doesn't have yet), and
 a format or diet here that has no rules of its own (as seeded into a
 new library) takes the backup's. Photos are copied only where no file
-of that name exists. No Qt here; `progress(done, total, text)`
+of that name exists; the print logo only when there's none here. No Qt here; `progress(done, total, text)`
 callbacks let a dialog show progress.
 '''
 import collections
@@ -45,6 +47,10 @@ FORMAT_VERSION = 1
 _DB_MEMBER = 'builder.db'
 _MANIFEST_MEMBER = 'manifest.json'
 _IMAGES_PREFIX = 'images/ingredients/'
+_RECIPE_IMAGES_PREFIX = 'images/recipes/'
+_LOGO_PREFIX = 'images/branding/'
+LOGO_STEM = 'logo'
+LOGO_EXTENSIONS = ('.svg', '.png', '.jpg', '.jpeg', '.webp', '.bmp')
 
 # Counted into the manifest and shown before a restore.
 _COUNTS = (
@@ -105,10 +111,23 @@ def image_files(images_dir=None):
         return []
 
 
-def images_size(images_dir=None):
-    '''Total bytes of the ingredient photos, for "adds 266 MB".'''
+def images_size(images_dir=None, recipe_images_dir=None):
+    '''Total bytes of the ingredient and recipe photos, for "adds 266 MB".'''
     images_dir = images_dir or config.INGREDIENTS_PATH
-    return sum(os.path.getsize(os.path.join(images_dir, n)) for n in image_files(images_dir))
+    recipe_images_dir = recipe_images_dir or config.RECIPE_IMAGES_PATH
+    return (sum(os.path.getsize(os.path.join(images_dir, n)) for n in image_files(images_dir))
+            + sum(os.path.getsize(os.path.join(recipe_images_dir, n))
+                  for n in image_files(recipe_images_dir)))
+
+
+def logo_file(branding_dir=None):
+    '''The print logo's filename ("logo.svg") in the branding folder,
+    or None.'''
+    branding_dir = branding_dir or config.BRANDING_PATH
+    for ext in LOGO_EXTENSIONS:
+        if os.path.isfile(os.path.join(branding_dir, LOGO_STEM + ext)):
+            return LOGO_STEM + ext
+    return None
 
 
 def _snapshot(db_path, dest):
@@ -153,44 +172,56 @@ def _schema(db_path):
         con.close()
 
 
-def _manifest(db_path, images):
+def _manifest(db_path, images, logo=None, recipe_images=()):
     counts = _counts(db_path)
-    counts['images'] = len(images)
+    counts['images'] = len(images) + len(recipe_images)
+    counts['recipe_images'] = len(recipe_images)
     return {
         'format': FORMAT,
         'format_version': FORMAT_VERSION,
         'app': config.APPNAME,
         'created': datetime.datetime.now().isoformat(timespec='seconds'),
-        'includes_images': bool(images),
+        'includes_images': bool(images) or bool(recipe_images),
+        'includes_logo': bool(logo),
         'counts': counts,
         'schema': _schema(db_path),
     }
 
 
-def create_backup(dest, include_images=False, db_path=None, images_dir=None, progress=None):
-    '''Write a .rwbackup of the library to `dest`. Written beside it
-    first and moved into place, so a failed backup never leaves half a
-    file. Returns the manifest.'''
+def create_backup(dest, include_images=False, db_path=None, images_dir=None, progress=None,
+                  branding_dir=None, recipe_images_dir=None):
+    '''Write a .rwbackup of the library to `dest`; with the photos
+    (ingredient and recipe), the print logo too. Written beside it first
+    and moved into place, so a failed backup never leaves half a file.
+    Returns the manifest.'''
     db_path = db_path or config.DATABASE
     images_dir = images_dir or config.INGREDIENTS_PATH
+    branding_dir = branding_dir or config.BRANDING_PATH
+    recipe_images_dir = recipe_images_dir or config.RECIPE_IMAGES_PATH
     images = image_files(images_dir) if include_images else []
-    total = len(images) + 1
+    recipe_images = image_files(recipe_images_dir) if include_images else []
+    logo = logo_file(branding_dir) if include_images else None
+    photos = ([(images_dir, _IMAGES_PREFIX, n) for n in images]
+              + [(recipe_images_dir, _RECIPE_IMAGES_PREFIX, n) for n in recipe_images])
+    total = len(photos) + 1
     with tempfile.TemporaryDirectory(prefix='rwbackup-') as tmp:
         snap = os.path.join(tmp, _DB_MEMBER)
         _report(progress, 0, total, 'Copying the library')
         _snapshot(db_path, snap)
-        manifest = _manifest(snap, images)
+        manifest = _manifest(snap, images, logo, recipe_images)
         part = dest + '.part'
         try:
             with zipfile.ZipFile(part, 'w', zipfile.ZIP_DEFLATED) as zf:
                 zf.writestr(_MANIFEST_MEMBER, json.dumps(manifest, indent=2))
                 zf.write(snap, _DB_MEMBER)
-                for i, name in enumerate(images, start=1):
-                    _report(progress, i, total, f'Adding photos ({i} of {len(images)})')
+                for i, (folder, prefix, name) in enumerate(photos, start=1):
+                    _report(progress, i, total, f'Adding photos ({i} of {len(photos)})')
                     # Photos are already compressed; storing them is as
                     # small and much faster.
-                    zf.write(os.path.join(images_dir, name), _IMAGES_PREFIX + name,
+                    zf.write(os.path.join(folder, name), prefix + name,
                              compress_type=zipfile.ZIP_STORED)
+                if logo:
+                    zf.write(os.path.join(branding_dir, logo), _LOGO_PREFIX + logo)
             os.replace(part, dest)
         except BaseException:
             if os.path.exists(part):
@@ -210,15 +241,21 @@ def _report(progress, done, total, text):
 class BackupInfo:
     '''What a backup file holds. `kind` is 'rwbackup' or 'db'.'''
 
-    def __init__(self, path, kind, manifest, image_names):
+    def __init__(self, path, kind, manifest, image_names, logo_name=None, recipe_image_names=()):
         self.path = path
         self.kind = kind
         self.manifest = manifest
-        self.image_names = image_names
+        self.image_names = image_names                   # ingredient photos
+        self.recipe_image_names = list(recipe_image_names)
+        self.logo_name = logo_name   # "logo.svg" when the backup has the print logo
 
     @property
     def has_images(self):
-        return bool(self.image_names)
+        return bool(self.image_names) or bool(self.recipe_image_names)
+
+    @property
+    def photo_count(self):
+        return len(self.image_names) + len(self.recipe_image_names)
 
     @property
     def counts(self):
@@ -247,18 +284,27 @@ def _check_library(db_path):
         raise BackupError("This file isn't a RecipeWizard library.")
 
 
-def _safe_image_name(member):
-    '''The photo filename for a zip member under images/ingredients/,
-    or None. Only a bare filename with an image extension; nothing
-    that could climb out of the images folder.'''
-    if not member.startswith(_IMAGES_PREFIX):
+def _safe_image_name(member, prefix=_IMAGES_PREFIX):
+    '''The photo filename for a zip member under `prefix`
+    (images/ingredients/ by default), or None. Only a bare filename with
+    an image extension; nothing that could climb out of the folder.'''
+    if not member.startswith(prefix):
         return None
-    name = member[len(_IMAGES_PREFIX):]
+    name = member[len(prefix):]
     if not name or name != os.path.basename(name) or '/' in name or '\\' in name or name in ('.', '..'):
         return None
     if os.path.splitext(name)[1].lower() not in setup.IMAGE_EXTENSIONS:
         return None
     return name
+
+
+def _safe_logo_name(member):
+    '''"logo.<ext>" for the print logo's zip member, or None.'''
+    if not member.startswith(_LOGO_PREFIX):
+        return None
+    name = member[len(_LOGO_PREFIX):]
+    stem, ext = os.path.splitext(name)
+    return name if stem == LOGO_STEM and ext.lower() in LOGO_EXTENSIONS else None
 
 
 def read_backup(path):
@@ -275,12 +321,17 @@ def read_backup(path):
                 except (KeyError, ValueError):
                     manifest = {}
                 images = sorted(n for n in (_safe_image_name(m) for m in names) if n)
+                recipe_images = sorted(n for n in (_safe_image_name(m, _RECIPE_IMAGES_PREFIX)
+                                                   for m in names) if n)
+                logo = next((n for n in (_safe_logo_name(m) for m in names) if n), None)
         except zipfile.BadZipFile as exc:
             raise BackupError(f'This backup file is damaged ({exc}).') from exc
         manifest.setdefault('counts', {})
-        manifest['counts']['images'] = len(images)
-        manifest['includes_images'] = bool(images)
-        return BackupInfo(path, 'rwbackup', manifest, images)
+        manifest['counts']['images'] = len(images) + len(recipe_images)
+        manifest['counts']['recipe_images'] = len(recipe_images)
+        manifest['includes_images'] = bool(images) or bool(recipe_images)
+        manifest['includes_logo'] = bool(logo)
+        return BackupInfo(path, 'rwbackup', manifest, images, logo, recipe_images)
     _check_library(path)
     manifest = {
         'format': 'RecipeWizard database (older backup)',
@@ -303,9 +354,12 @@ def _extract_db(info, tmp):
     return dest
 
 
-def _copy_images(info, images_dir, names, progress, overwrite):
-    '''Copy photos `names` out of the backup; returns how many were
-    written. Without `overwrite`, files already here are left alone.'''
+def _copy_images(info, images_dir, names, progress, overwrite, prefix=_IMAGES_PREFIX):
+    '''Copy photos `names` (under `prefix` in the zip) out of the backup;
+    returns how many were written. Without `overwrite`, files already
+    here are left alone.'''
+    if not names:
+        return 0
     os.makedirs(images_dir, exist_ok=True)
     written = 0
     with zipfile.ZipFile(info.path) as zf:
@@ -315,44 +369,68 @@ def _copy_images(info, images_dir, names, progress, overwrite):
             if not overwrite and os.path.exists(target):
                 continue
             part = target + '.part'
-            with zf.open(_IMAGES_PREFIX + name) as src, open(part, 'wb') as out:
+            with zf.open(prefix + name) as src, open(part, 'wb') as out:
                 shutil.copyfileobj(src, out)
             os.replace(part, target)
             written += 1
     return written
 
 
-def _safety_backup(db_path, images_dir, include_images, progress):
+def _copy_logo(info, branding_dir):
+    '''Put the backup's print logo in place of any logo here.'''
+    os.makedirs(branding_dir, exist_ok=True)
+    for ext in LOGO_EXTENSIONS:
+        old = os.path.join(branding_dir, LOGO_STEM + ext)
+        if os.path.isfile(old):
+            os.remove(old)
+    target = os.path.join(branding_dir, info.logo_name)
+    with zipfile.ZipFile(info.path) as zf, zf.open(_LOGO_PREFIX + info.logo_name) as src, \
+            open(target + '.part', 'wb') as out:
+        shutil.copyfileobj(src, out)
+    os.replace(target + '.part', target)
+
+
+def _safety_backup(db_path, images_dir, include_images, progress, recipe_images_dir=None):
     '''Back up the current library before a restore changes it, into
     the data folder (so it shows up as a backup there).'''
     path = os.path.join(default_backup_dir(), timestamped_name('RecipeWizard_before-restore'))
     create_backup(path, include_images=include_images, db_path=db_path,
-                  images_dir=images_dir, progress=progress)
+                  images_dir=images_dir, progress=progress, recipe_images_dir=recipe_images_dir)
     return path
 
 
 # --- overwrite ------------------------------------------------------------
 
-def restore_overwrite(path, db_path=None, images_dir=None, progress=None, safety=True):
-    '''Replace the library with the backup's, and the photos too when
-    the backup has them (photos with the same name are replaced; other
-    photos here stay). Unless safety is False, a safety backup of the
-    current library comes first, with photos when they'll be replaced.'''
+def restore_overwrite(path, db_path=None, images_dir=None, progress=None, safety=True, branding_dir=None,
+                      recipe_images_dir=None):
+    '''Replace the library with the backup's, and the photos and print
+    logo too when the backup has them (photos with the same name are
+    replaced; other photos here stay). Unless safety is False, a safety
+    backup of the current library comes first, with photos when they'll
+    be replaced.'''
     db_path = db_path or config.DATABASE
     images_dir = images_dir or config.INGREDIENTS_PATH
+    branding_dir = branding_dir or config.BRANDING_PATH
+    recipe_images_dir = recipe_images_dir or config.RECIPE_IMAGES_PATH
     info = read_backup(path)
     with tempfile.TemporaryDirectory(prefix='rwrestore-') as tmp:
         incoming = _extract_db(info, tmp)
         # Upgrade the copy first, so a backup that can't be migrated
         # fails here, before anything of the user's has changed.
         setup.migrateDB(incoming)
-        safety = _safety_backup(db_path, images_dir, info.has_images, progress) if safety else None
+        safety = (_safety_backup(db_path, images_dir, info.has_images or bool(info.logo_name), progress,
+                                 recipe_images_dir)
+                  if safety else None)
         # Restoring through the backup API rewrites the library in
         # place, so the file the app has open stays the one in use.
         _snapshot(incoming, db_path)
     setup.migrateDB(db_path)
-    images = _copy_images(info, images_dir, info.image_names, progress, overwrite=True) if info.has_images else 0
-    return {'safety': safety, 'images': images, 'counts': _counts(db_path)}
+    images = _copy_images(info, images_dir, info.image_names, progress, overwrite=True)
+    images += _copy_images(info, recipe_images_dir, info.recipe_image_names, progress, overwrite=True,
+                           prefix=_RECIPE_IMAGES_PREFIX)
+    if info.logo_name:
+        _copy_logo(info, branding_dir)
+    return {'safety': safety, 'images': images, 'logo': bool(info.logo_name), 'counts': _counts(db_path)}
 
 
 # --- merge ----------------------------------------------------------------
@@ -373,6 +451,7 @@ class MergeReport:
         ('saved_comparisons', 'Saved comparisons'),
         ('vendor_items', 'Vendor items'),
         ('import_formats', 'Import formats'),
+        ('portion_tools', 'Portion tools'),
     )
 
     def __init__(self):
@@ -380,12 +459,14 @@ class MergeReport:
         self.kept = {k: [] for k, _ in self.KINDS}
         self.prices_added = 0
         self.images_copied = 0
+        self.logo_copied = False
         self.notes = []
         self.safety = None
 
     def as_dict(self):
         return {'added': self.added, 'kept': self.kept, 'prices_added': self.prices_added,
-                'images_copied': self.images_copied, 'notes': self.notes, 'safety': self.safety}
+                'images_copied': self.images_copied, 'logo_copied': self.logo_copied,
+                'notes': self.notes, 'safety': self.safety}
 
     def summary_lines(self):
         '''One line per kind that had anything, e.g.
@@ -405,6 +486,8 @@ class MergeReport:
             lines.append(f'Price history: {self.prices_added} entries added')
         if self.images_copied:
             lines.append(f'Photos: {self.images_copied} copied')
+        if self.logo_copied:
+            lines.append('Print logo: copied')
         return lines
 
 
@@ -532,6 +615,35 @@ class _Merger:
                     'allergens', row, sortOrder=self.next_order('allergens') + 1)
                 self.report.added['allergens'].append(row['name'])
 
+    def portion_tools(self):
+        '''Tools by name; a backup's tools seeded by migrating it aren't
+        the user's, so they're only brought in when it had the table.'''
+        if 'portion_tools' not in self.src_had['tables']:
+            return
+        have = self.index('portion_tools', 'name')
+        for row in self.src_rows('portion_tools', 'COALESCE(sortOrder, id), id'):
+            key = _norm(row['name'])
+            if key in have:
+                self.report.kept['portion_tools'].append(row['name'])
+            else:
+                have[key] = self.insert('portion_tools', row, sortOrder=self.next_order('portion_tools') + 1)
+                self.report.added['portion_tools'].append(row['name'])
+
+    def print_branding(self):
+        '''Branding text settings the library hasn't set yet come from
+        the backup; ones set here stay. (The logo is a file: see
+        restore_merge.)'''
+        if not self.src_has('print_branding'):
+            return
+        have = {r[0] for r in self.con.execute('SELECT key FROM main.print_branding;')}
+        added = [row['key'] for row in self.src_rows('print_branding', 'key')
+                 if row['key'] not in have and row['key'] != 'logo']
+        for key in added:
+            self.con.execute('INSERT INTO main.print_branding (key, value)'
+                             ' SELECT key, value FROM src.print_branding WHERE key = ?;', (key,))
+        if added:
+            self.report.notes.append('Print branding: ' + ', '.join(added) + ' added from the backup')
+
     def ingredients(self):
         have = self.index('Ingredients', 'Name', id_col='Id')
         self.maps['ingredients'] = m = {}
@@ -554,12 +666,13 @@ class _Merger:
                 if tag_id in tags:
                     self.con.execute('INSERT INTO main.ingredient_tags_mapping (tag_id, ingredient_id)'
                                      ' VALUES (?, ?);', (tags[tag_id], new_id))
-            for (allergen_id,) in self.con.execute(
-                    'SELECT allergen_id FROM src.ingredient_allergens WHERE ingredient_id = ?;',
+            # The backup was migrated first, so it has the facility flag.
+            for allergen_id, facility in self.con.execute(
+                    'SELECT allergen_id, facility FROM src.ingredient_allergens WHERE ingredient_id = ?;',
                     (src_id,)) if has_allergens else ():
                 if allergen_id in allergens:
-                    self.con.execute('INSERT INTO main.ingredient_allergens (allergen_id, ingredient_id)'
-                                     ' VALUES (?, ?);', (allergens[allergen_id], new_id))
+                    self.con.execute('INSERT INTO main.ingredient_allergens (allergen_id, ingredient_id, facility)'
+                                     ' VALUES (?, ?, ?);', (allergens[allergen_id], new_id, facility or 0))
 
     def prices(self):
         '''Price history adds up rather than clashing: every backup
@@ -755,7 +868,7 @@ class _Merger:
     def run(self):
         for step in (self.suppliers, self.tags, self.allergens, self.ingredients, self.prices,
                      self.recipes, self.templates, self.diets, self.saved_views, self.saved_comparisons,
-                     self.vendor_items, self.import_formats):
+                     self.vendor_items, self.import_formats, self.portion_tools, self.print_branding):
             step()
 
 
@@ -767,7 +880,8 @@ def _num(value):
         return value
 
 
-def restore_merge(path, db_path=None, images_dir=None, progress=None, safety=True):
+def restore_merge(path, db_path=None, images_dir=None, progress=None, safety=True, branding_dir=None,
+                  recipe_images_dir=None):
     '''Add what's in the backup to the library without changing or
     deleting anything here. Matched by name (tags by kind and name,
     diets by key or name); on a match the current one stays and the
@@ -777,6 +891,8 @@ def restore_merge(path, db_path=None, images_dir=None, progress=None, safety=Tru
     first. Returns a MergeReport.'''
     db_path = db_path or config.DATABASE
     images_dir = images_dir or config.INGREDIENTS_PATH
+    branding_dir = branding_dir or config.BRANDING_PATH
+    recipe_images_dir = recipe_images_dir or config.RECIPE_IMAGES_PATH
     info = read_backup(path)
     report = MergeReport()
     with tempfile.TemporaryDirectory(prefix='rwmerge-') as tmp:
@@ -802,9 +918,16 @@ def restore_merge(path, db_path=None, images_dir=None, progress=None, safety=Tru
             con.execute('DETACH DATABASE src;')
         finally:
             con.close()
-    if info.has_images:
-        missing = [n for n in info.image_names if not os.path.exists(os.path.join(images_dir, n))]
-        if missing:
-            report.images_copied = _copy_images(info, images_dir, missing, progress, overwrite=False)
+    missing = [n for n in info.image_names if not os.path.exists(os.path.join(images_dir, n))]
+    if missing:
+        report.images_copied = _copy_images(info, images_dir, missing, progress, overwrite=False)
+    missing = [n for n in info.recipe_image_names
+               if not os.path.exists(os.path.join(recipe_images_dir, n))]
+    if missing:
+        report.images_copied += _copy_images(info, recipe_images_dir, missing, progress, overwrite=False,
+                                             prefix=_RECIPE_IMAGES_PREFIX)
+    if info.logo_name and logo_file(branding_dir) is None:
+        _copy_logo(info, branding_dir)
+        report.logo_copied = True
     _report(progress, 1, 1, 'Done')
     return report

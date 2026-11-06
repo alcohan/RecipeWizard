@@ -72,6 +72,13 @@ class DietsPage(QWidget):
         self._allergen_grid.setVerticalSpacing(6)
         al.addLayout(self._allergen_grid)
         self._boxes = {}
+        self.strict_box = QCheckBox('Strict: also exclude facility warnings')
+        self.strict_box.setStyleSheet(f'QCheckBox {{ color: {kit.KALE}; spacing: 8px; font-weight: 600; }}')
+        self.strict_box.toggled.connect(lambda _on: self._on_strict())
+        al.addWidget(self.strict_box)
+        al.addWidget(kit.note('With Strict on, a recipe whose ingredients are only “made in a facility that also'
+                              ' handles” one of these allergens doesn’t fit either. Turn it off for diets where'
+                              ' a trace is fine.'))
 
         nutrient_card, nl = kit.card()
         nl.addWidget(kit.subheading('Nutrient rule'))
@@ -179,7 +186,8 @@ class DietsPage(QWidget):
         return [r for r in self._model.rows() if not r.get('Archived')]
 
     def _fit_count(self, d):
-        return sum(1 for r in self._menu_rows() if diets.fits(d, r['Allergens'], r['PerServing']))
+        return sum(1 for r in self._menu_rows()
+                   if diets.fits(d, r['Allergens'], r['PerServing'], r.get('FacilityAllergens')))
 
     def _item_text(self, d):
         n = self._fit_count(d)
@@ -202,6 +210,7 @@ class DietsPage(QWidget):
         self.name_edit.setText(d['name'])
         for aid, cb in self._boxes.items():
             cb.setChecked(aid in d['allergen_ids'])
+        self.strict_box.setChecked(d.get('strict', True))
         idx = self.nutrient_combo.findData(d['nutrient'])
         self.nutrient_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self.op_combo.setCurrentIndex(self.op_combo.findData(d.get('op') or 'min'))
@@ -218,7 +227,8 @@ class DietsPage(QWidget):
 
     def _sync_fit(self, d):
         rows = self._menu_rows()
-        fit = [r['Name'] for r in rows if diets.fits(d, r['Allergens'], r['PerServing'])]
+        fit = [r['Name'] for r in rows
+               if diets.fits(d, r['Allergens'], r['PerServing'], r.get('FacilityAllergens'))]
         sample = ', '.join(sorted(fit, key=str.lower)[:5]) + ('…' if len(fit) > 5 else '')
         self.fit_label.setText(f'<b>Fits {len(fit)} of {len(rows)} recipes on the menu</b>'
                                + (f'<br><span style="color: {kit.MUTED}">{sample}</span>' if fit else ''))
@@ -249,6 +259,13 @@ class DietsPage(QWidget):
             self.name_edit.setText(d['name'])
             return
         db.update_diet(d['id'], name=name)
+        self._after_edit()
+
+    def _on_strict(self):
+        d = self.current()
+        if self._loading or d is None:
+            return
+        db.update_diet(d['id'], strict=self.strict_box.isChecked())
         self._after_edit()
 
     def _on_allergens(self):

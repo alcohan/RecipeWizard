@@ -45,7 +45,8 @@ def matches(row, state):
     if categories and not set(categories).issubset(row['CategoryIds']):
         return False
     free_from = state.get('free_from') or ()
-    if free_from and set(free_from).intersection(row['Allergens']):
+    # A facility warning isn't "free from" (the cautious reading).
+    if free_from and set(free_from).intersection(row['Allergens'], row.get('FacilityAllergens') or ()):
         return False
     cap = state.get('max_food_cost')
     if cap is not None:

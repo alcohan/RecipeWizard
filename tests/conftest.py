@@ -11,6 +11,7 @@ sys.path.insert(0, ROOT)
 _TMP = tempfile.mkdtemp(prefix='rw-tests-')
 os.environ.setdefault('RECIPEWIZARD_DB', os.path.join(_TMP, 'unused.db'))
 os.environ.setdefault('RECIPEWIZARD_INGREDIENTS', os.path.join(_TMP, 'ingredients'))
+os.environ.setdefault('RECIPEWIZARD_RECIPE_IMAGES', os.path.join(_TMP, 'recipes'))
 
 import config  # noqa: E402
 import setup  # noqa: E402

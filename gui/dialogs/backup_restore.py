@@ -29,20 +29,21 @@ def _megabytes(n):
 
 
 class BackupOptionsDialog(QDialog):
-    '''Include the ingredient photos or not. Starts unticked every time.'''
+    '''Include the photos (ingredient and recipe) or not. Starts unticked every time.'''
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f'{config.APPNAME} | Back up library')
-        photos = backup.image_files()
+        photos = backup.image_files() + backup.image_files(config.RECIPE_IMAGES_PATH)
         heading = QLabel('Back up your library')
         heading.setStyleSheet('font-size: 15px; font-weight: 600;')
         body = QLabel('Recipes, ingredients, prices, suppliers and settings go into one '
                       f'{backup.EXTENSION} file.')
         body.setWordWrap(True)
-        self.images = QCheckBox(f'Include ingredient photos ({len(photos)} photos, '
-                                f'{_megabytes(backup.images_size())})')
-        self.images.setEnabled(bool(photos))
+        logo = backup.logo_file()
+        self.images = QCheckBox(f'Include ingredient and recipe photos{" and the print logo" if logo else ""}'
+                                f' ({len(photos)} photos, {_megabytes(backup.images_size())})')
+        self.images.setEnabled(bool(photos) or bool(logo))
         self.images.setChecked(False)
         note = QLabel('Photos make the file much larger. Without them, a restore keeps the photos '
                       'already on that computer.')
@@ -121,7 +122,9 @@ def describe(info):
     for key, label in (('ingredients', 'ingredients'), ('recipes', 'recipes'), ('suppliers', 'suppliers')):
         if key in counts:
             parts.append(f'{counts[key]} {label}')
-    parts.append(f'{len(info.image_names)} photos' if info.has_images else 'no photos')
+    parts.append(f'{info.photo_count} photos' if info.has_images else 'no photos')
+    if info.logo_name:
+        parts.append('print logo')
     return ' · '.join(parts)
 
 

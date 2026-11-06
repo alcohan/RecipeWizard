@@ -63,9 +63,21 @@ AS SELECT Id
 FROM RecipesWithNutrition;
 
 -- Aggregate allergens up to recipes by walking the expanded ingredient tree.
+-- Allergens a recipe contains: facility-only flags are left out.
 DROP VIEW IF EXISTS RecipeAllergens;
 CREATE VIEW RecipeAllergens AS
 SELECT DISTINCT rx.recipe_id, ia.allergen_id, a.name
 FROM recipe_ingredients_expanded rx
-JOIN ingredient_allergens ia ON rx.ingredient_id = ia.ingredient_id
+JOIN ingredient_allergens ia ON rx.ingredient_id = ia.ingredient_id AND COALESCE(ia.facility, 0) = 0
 JOIN allergens a ON ia.allergen_id = a.id;
+
+-- "Made in a facility that also handles": allergens some ingredient in
+-- the tree is flagged facility for, and nothing in the tree contains.
+DROP VIEW IF EXISTS RecipeFacilityAllergens;
+CREATE VIEW RecipeFacilityAllergens AS
+SELECT DISTINCT rx.recipe_id, ia.allergen_id, a.name
+FROM recipe_ingredients_expanded rx
+JOIN ingredient_allergens ia ON rx.ingredient_id = ia.ingredient_id AND ia.facility = 1
+JOIN allergens a ON ia.allergen_id = a.id
+WHERE NOT EXISTS (SELECT 1 FROM RecipeAllergens ra
+                  WHERE ra.recipe_id = rx.recipe_id AND ra.allergen_id = ia.allergen_id);

@@ -107,7 +107,12 @@ def get_ingredient_library(change_days=90):
             , (SELECT group_concat(name, ', ') FROM (
                  SELECT a.name FROM ingredient_allergens ia
                  JOIN allergens a ON a.id = ia.allergen_id
-                 WHERE ia.ingredient_id = i.Id ORDER BY a.sortOrder, a.id)) AS Allergens
+                 WHERE ia.ingredient_id = i.Id AND ia.facility = 0 ORDER BY a.sortOrder, a.id)) AS Allergens
+            , (SELECT group_concat(name, ', ') FROM (
+                 SELECT a.name FROM ingredient_allergens ia
+                 JOIN allergens a ON a.id = ia.allergen_id
+                 WHERE ia.ingredient_id = i.Id AND ia.facility = 1 ORDER BY a.sortOrder, a.id))
+                AS FacilityAllergens
         FROM Ingredients i
         LEFT JOIN cat c ON c.ingredient_id = i.Id
         LEFT JOIN ranked cur ON cur.ingredient_id = i.Id AND cur.rn = 1
@@ -149,11 +154,21 @@ def get_ingredient_prices(ingredient_id):
     return query(sql, (ingredient_id,))['data']
 
 
-def set_ingredient_allergens(ingredient_id, allergen_ids):
-    '''Replace the ingredient's allergen set.'''
+def set_ingredient_statement(ingredient_id, text):
+    '''The ingredients list from the package label ('' clears it).'''
+    query('UPDATE Ingredients SET statement = ? WHERE Id = ?;', ((text or '').strip() or None, ingredient_id))
+
+
+def set_ingredient_allergens(ingredient_id, allergen_ids, facility_ids=()):
+    '''Replace the ingredient's allergens: `allergen_ids` it contains,
+    `facility_ids` only made in a facility that also handles them.'''
+    facility = set(facility_ids) - set(allergen_ids)
     query('DELETE FROM ingredient_allergens WHERE ingredient_id=?', (ingredient_id,))
     for aid in allergen_ids:
-        query('INSERT INTO ingredient_allergens (ingredient_id, allergen_id) VALUES (?, ?)',
+        query('INSERT INTO ingredient_allergens (ingredient_id, allergen_id, facility) VALUES (?, ?, 0)',
+              (ingredient_id, aid))
+    for aid in sorted(facility):
+        query('INSERT INTO ingredient_allergens (ingredient_id, allergen_id, facility) VALUES (?, ?, 1)',
               (ingredient_id, aid))
 
 
@@ -1352,20 +1367,23 @@ def get_tags(kind=None):
 
 def get_ingredient_allergens(ingredient_id):
     '''
-    Per-allergen rows for one ingredient, with a `checked` flag indicating
-    whether the ingredient-allergen mapping exists.
+    Per-allergen rows for one ingredient: `checked` when the ingredient
+    contains it, `facility` when it's only a facility warning.
     '''
     sql = '''
         SELECT a.name, a.id,
             CASE WHEN EXISTS (
                 SELECT 1 FROM ingredient_allergens ia
-                WHERE ia.allergen_id = a.id
-                AND ia.ingredient_id = ?
-            ) THEN 1 ELSE 0 END AS checked
+                WHERE ia.allergen_id = a.id AND ia.ingredient_id = ? AND ia.facility = 0
+            ) THEN 1 ELSE 0 END AS checked,
+            CASE WHEN EXISTS (
+                SELECT 1 FROM ingredient_allergens ia
+                WHERE ia.allergen_id = a.id AND ia.ingredient_id = ? AND ia.facility = 1
+            ) THEN 1 ELSE 0 END AS facility
         FROM allergens a
         ORDER BY a.sortOrder, a.id;
     '''
-    return query(sql, (ingredient_id,))['data']
+    return query(sql, (ingredient_id, ingredient_id))['data']
 
 def modify_ingredient_allergen(ingredient_id, allergen_id, state):
     if state:
@@ -1382,18 +1400,44 @@ def get_recipe_allergens(recipe_id):
     return [row['name'] for row in rows]
 
 
-def get_recipe_allergen_sources(recipe_id):
+def get_recipe_facility_allergens(recipe_id):
+    '''Allergens the recipe only has facility warnings for (none of its
+    ingredients contains them), in canonical order.'''
+    rows = query('''SELECT DISTINCT rf.name FROM RecipeFacilityAllergens rf
+                    JOIN allergens a ON a.id = rf.allergen_id
+                    WHERE rf.recipe_id = ? ORDER BY a.sortOrder, a.id;''', (recipe_id,))['data']
+    return [row['name'] for row in rows]
+
+
+def get_recipe_allergen_sources(recipe_id, facility=False):
     '''[(allergen, [component names])] for the editor's rolled-up
     allergen list: each allergen in the recipe's tree and the direct
     components that bring it in (an ingredient, or a sub-recipe whose
-    tree contains it). Canonical allergen order.'''
-    sql = '''
+    tree contains it). Canonical allergen order. With `facility`, the
+    facility-only warnings instead.'''
+    if facility:
+        sql = '''
         SELECT a.name AS allergen, COALESCE(r.Name, i.Name) AS source
         FROM Connections c
         LEFT JOIN Ingredients i ON i.Id = c.ChildIngredient
         LEFT JOIN Recipes r ON r.Id = c.ChildRecipe
         JOIN allergens a ON a.id IN (
-            SELECT allergen_id FROM ingredient_allergens WHERE ingredient_id = c.ChildIngredient
+            SELECT allergen_id FROM ingredient_allergens WHERE ingredient_id = c.ChildIngredient AND facility = 1
+            UNION
+            SELECT allergen_id FROM RecipeFacilityAllergens WHERE recipe_id = c.ChildRecipe
+        )
+        WHERE c.ParentRecipe = ?1
+          AND a.id IN (SELECT allergen_id FROM RecipeFacilityAllergens WHERE recipe_id = ?1)
+        ORDER BY a.sortOrder, a.id, c.SortOrder;
+    '''
+    else:
+        sql = '''
+        SELECT a.name AS allergen, COALESCE(r.Name, i.Name) AS source
+        FROM Connections c
+        LEFT JOIN Ingredients i ON i.Id = c.ChildIngredient
+        LEFT JOIN Recipes r ON r.Id = c.ChildRecipe
+        JOIN allergens a ON a.id IN (
+            SELECT allergen_id FROM ingredient_allergens WHERE ingredient_id = c.ChildIngredient AND facility = 0
             UNION
             SELECT allergen_id FROM RecipeAllergens WHERE recipe_id = c.ChildRecipe
         )
@@ -1427,7 +1471,7 @@ def get_component_allergen_maps():
     add-component picker to say which allergens an addition is new.'''
     ingredients, recipes = {}, {}
     for r in query('SELECT ia.ingredient_id AS id, a.name FROM ingredient_allergens ia'
-                   ' JOIN allergens a ON a.id = ia.allergen_id;')['data']:
+                   ' JOIN allergens a ON a.id = ia.allergen_id WHERE ia.facility = 0;')['data']:
         ingredients.setdefault(r['id'], set()).add(r['name'])
     for r in query('SELECT recipe_id AS id, name FROM RecipeAllergens;')['data']:
         recipes.setdefault(r['id'], set()).add(r['name'])
@@ -1470,10 +1514,11 @@ def get_recipe_library_extras():
                n.TTLFatGrams, n.SatFatGrams, n.SodiumMilligrams, n.CholesterolMilligrams,
                EXISTS (SELECT 1 FROM Connections c WHERE c.ChildRecipe = r.Id) AS IsSubRecipe
         FROM Recipes r LEFT JOIN RecipeTotalValues n ON n.Id = r.Id;''')['data']:
-        per = float(r['OutputQty'] or 1) or 1.0
+        # RecipeTotalValues is already per unit of yield (it divides
+        # by OutputQty), so these are per serving as they stand.
         out[r['Id']] = {
-            'CaloriesPerServing': (r['Calories'] or 0) / per,
-            'PerServing': {key: (r[col] or 0) / per for key, col in (
+            'CaloriesPerServing': r['Calories'] or 0,
+            'PerServing': {key: r[col] or 0 for key, col in (
                 ('Calories', 'Calories'), ('Protein', 'ProteinGrams'), ('Fiber', 'FiberGrams'),
                 ('Carbs', 'CarbGrams'), ('Sugar', 'SugarGrams'), ('Fat', 'TTLFatGrams'),
                 ('SatFat', 'SatFatGrams'), ('Sodium', 'SodiumMilligrams'),
@@ -1481,6 +1526,7 @@ def get_recipe_library_extras():
             'UpdatedAt': r['UpdatedAt'],
             'IsSubRecipe': bool(r['IsSubRecipe']),
             'Allergens': [],
+            'FacilityAllergens': [],
             'CategoryIds': set(),
             'TagIds': set(),
         }
@@ -1490,6 +1536,12 @@ def get_recipe_library_extras():
         ORDER BY ra.recipe_id, a.sortOrder, a.id;''')['data']:
         if r['rid'] in out and r['name'] not in out[r['rid']]['Allergens']:
             out[r['rid']]['Allergens'].append(r['name'])
+    for r in query('''
+        SELECT rf.recipe_id AS rid, a.name FROM RecipeFacilityAllergens rf
+        JOIN allergens a ON a.id = rf.allergen_id
+        ORDER BY rf.recipe_id, a.sortOrder, a.id;''')['data']:
+        if r['rid'] in out and r['name'] not in out[r['rid']]['FacilityAllergens']:
+            out[r['rid']]['FacilityAllergens'].append(r['name'])
     for r in query('''
         SELECT DISTINCT e.recipe_id AS rid, itm.tag_id
         FROM recipe_ingredients_expanded e
@@ -1530,8 +1582,11 @@ def set_recipe_status(recipe_id, status):
 
 def get_diets():
     '''Diet rules in order: [{id, key, name, excluded: [allergen
-    names], allergen_ids, nutrient, op, amount}].'''
-    rows = query('SELECT id, key, name, nutrient, op, amount FROM diets ORDER BY sortOrder, id;')['data']
+    names], allergen_ids, nutrient, op, amount, strict}]. A strict diet
+    also rules out facility allergens.'''
+    rows = query('SELECT id, key, name, nutrient, op, amount, strict FROM diets ORDER BY sortOrder, id;')['data']
+    for r in rows:
+        r['strict'] = bool(r['strict'])
     links = query('SELECT da.diet_id, a.id, a.name FROM diet_allergens da'
                   ' JOIN allergens a ON a.id = da.allergen_id ORDER BY a.sortOrder, a.id;')['data']
     for r in rows:
@@ -1549,8 +1604,10 @@ def create_diet(name):
     return new_id
 
 
-def update_diet(diet_id, name=None, nutrient=..., op=None, amount=...):
+def update_diet(diet_id, name=None, nutrient=..., op=None, amount=..., strict=None):
     '''Patch a diet. nutrient / amount accept None to clear (... = unchanged).'''
+    if strict is not None:
+        query('UPDATE diets SET strict = ? WHERE id = ?;', (1 if strict else 0, diet_id))
     if name is not None:
         query('UPDATE diets SET name = ? WHERE id = ?;', (name, diet_id))
     if nutrient is not ...:
@@ -1582,7 +1639,10 @@ def get_allergen_usage():
     each: [{id, name, Ingredients, Recipes}].'''
     return query('''
         SELECT a.id, a.name,
-               (SELECT COUNT(*) FROM ingredient_allergens ia WHERE ia.allergen_id = a.id) AS Ingredients,
+               (SELECT COUNT(*) FROM ingredient_allergens ia WHERE ia.allergen_id = a.id AND ia.facility = 0)
+                   AS Ingredients,
+               (SELECT COUNT(*) FROM ingredient_allergens ia WHERE ia.allergen_id = a.id AND ia.facility = 1)
+                   AS Facility,
                (SELECT COUNT(DISTINCT recipe_id) FROM RecipeAllergens ra WHERE ra.allergen_id = a.id) AS Recipes
         FROM allergens a ORDER BY a.sortOrder, a.id;''')['data']
 
@@ -1673,8 +1733,8 @@ def duplicate_recipe(recipe_id):
     try:
         cur = connection.cursor()
         cur.execute('''
-            INSERT INTO Recipes (Name, Unit, OutputQty, menu_price, updated_at)
-            SELECT Name || ' (copy)', Unit, OutputQty, menu_price, datetime('now')
+            INSERT INTO Recipes (Name, Unit, OutputQty, menu_price, ImageFilename, updated_at)
+            SELECT Name || ' (copy)', Unit, OutputQty, menu_price, ImageFilename, datetime('now')
             FROM Recipes WHERE Id = ?;''', (recipe_id,))
         new_id = cur.lastrowid
         cur.execute('''
@@ -1754,6 +1814,15 @@ def set_ingredient_image(ingredient_id, filename):
     '''Set or clear an ingredient's ImageFilename. Pass None/empty to clear.'''
     return query('UPDATE Ingredients SET ImageFilename=? WHERE Id=?', (filename or None, ingredient_id))
 
+def get_recipe_image(recipe_id):
+    '''A recipe's photo filename (in config.RECIPE_IMAGES_PATH), or ''.'''
+    rows = query('SELECT ImageFilename FROM Recipes WHERE Id = ?;', (recipe_id,))['data']
+    return (rows[0]['ImageFilename'] or '') if rows else ''
+
+def set_recipe_image(recipe_id, filename):
+    '''Set or clear a recipe's photo. Pass None/empty to clear.'''
+    return query('UPDATE Recipes SET ImageFilename=? WHERE Id=?', (filename or None, recipe_id))
+
 def get_recipes_using_ingredient(ingredient_id):
     '''Recipes that directly include this ingredient as a component.
     Matches the same "in use" check that blocks ingredient deletion —
@@ -1795,3 +1864,246 @@ def get_recipe_wedge_components(recipe_id):
           );
     '''
     return query(sql, (recipe_id,))['data']
+
+# --- portion tools (Configure › Portion tools) ----------------------------
+
+def get_portion_tools():
+    '''[{id, name, family, size_floz, color, pattern, used}] in sort
+    order; `used` counts ingredients whose Portion text names the tool.'''
+    return query('''
+        SELECT t.id, t.name, t.family, t.size_floz, t.color, t.pattern,
+               (SELECT COUNT(*) FROM Ingredients i
+                 WHERE lower(trim(i.Portion)) = lower(t.name)) AS used
+        FROM portion_tools t
+        ORDER BY COALESCE(t.sortOrder, t.id), t.id;''')['data']
+
+
+def portion_tool_objects():
+    '''The tools as utilities.recipe_print.Tool values.'''
+    from utilities.recipe_print import Tool
+    return [Tool(r['id'], r['name'], r['family'] or '', r['size_floz'], r['color'], r['pattern'] or 'solid')
+            for r in get_portion_tools()]
+
+
+def create_portion_tool(name, family='', size_floz=None, color=None, pattern='solid'):
+    top = query('SELECT COALESCE(MAX(sortOrder), 0) AS m FROM portion_tools;', one=True)
+    return query('INSERT INTO portion_tools (name, family, size_floz, color, pattern, sortOrder)'
+                 ' VALUES (?, ?, ?, ?, ?, ?);',
+                 (' '.join(name.split()), family or '', size_floz, color, pattern or 'solid',
+                  (top or {}).get('m', 0) + 1))['lastrowid']
+
+
+def update_portion_tool(tool_id, **fields):
+    '''Change any of name, family, size_floz, color, pattern. A rename
+    carries the ingredients that name the tool along with it.'''
+    allowed = ('name', 'family', 'size_floz', 'color', 'pattern')
+    changes = {k: v for k, v in fields.items() if k in allowed}
+    if not changes:
+        return
+    con = _connect()
+    try:
+        cur = con.cursor()
+        if 'name' in changes:
+            changes['name'] = ' '.join(str(changes['name']).split())
+            cur.execute('SELECT name FROM portion_tools WHERE id = ?;', (tool_id,))
+            old = cur.fetchone()
+            if old and old[0] != changes['name']:
+                cur.execute('UPDATE Ingredients SET Portion = ? WHERE lower(trim(Portion)) = lower(?);',
+                            (changes['name'], old[0]))
+        sets = ', '.join(f'{k} = ?' for k in changes)
+        cur.execute(f'UPDATE portion_tools SET {sets} WHERE id = ?;', (*changes.values(), tool_id))
+        con.commit()
+    finally:
+        con.close()
+
+
+def delete_portion_tool(tool_id):
+    '''Ingredients keep their Portion text; it just links to nothing.'''
+    query('DELETE FROM portion_tools WHERE id = ?;', (tool_id,))
+
+
+def reorder_portion_tools(ids):
+    con = _connect()
+    try:
+        con.executemany('UPDATE portion_tools SET sortOrder = ? WHERE id = ?;',
+                        [(i, tool_id) for i, tool_id in enumerate(ids, start=1)])
+        con.commit()
+    finally:
+        con.close()
+
+
+def get_portion_text_review():
+    '''Portion text that needs a look, grouped by (text, unit):
+    [{portion, unit, count, names, tool, problem, suggestion}]. `tool`
+    is the linked tool's name (None if unlinked), `problem` why a linked
+    sized tool doesn't fit the unit, `suggestion` a tool to link
+    unlinked text to. Linked text that fits isn't listed.'''
+    from utilities import recipe_print
+    tools = portion_tool_objects()
+    rows = query('''
+        SELECT MIN(trim(Portion)) AS portion, COALESCE(Unit, '') AS unit, COUNT(*) AS count,
+               group_concat(Name, ', ') AS names
+        FROM Ingredients
+        WHERE Portion IS NOT NULL AND trim(Portion) <> ''
+        GROUP BY lower(trim(Portion)), COALESCE(Unit, '')
+        ORDER BY lower(trim(Portion)), COALESCE(Unit, '');''')['data']
+    out = []
+    for r in rows:
+        tool = recipe_print.find_tool(r['portion'], tools)
+        if tool is not None:
+            problem = recipe_print.size_problem(r['unit'], tool)
+            if problem:
+                out.append(dict(r, tool=tool.name, problem=problem, suggestion=None))
+            continue
+        suggestion = recipe_print.suggest_tool(r['portion'], r['unit'], tools)
+        out.append(dict(r, tool=None, problem=None, suggestion=suggestion.name if suggestion else None))
+    return out
+
+
+def link_portion_text(portion_text, unit, tool_name):
+    '''Point every ingredient with this Portion text and unit at a tool:
+    its Portion text becomes the tool's name. Returns rows changed.'''
+    return query('''UPDATE Ingredients SET Portion = ?
+                    WHERE lower(trim(Portion)) = lower(trim(?)) AND COALESCE(Unit, '') = ?;''',
+                 (tool_name, portion_text, unit or ''))['rowcount']
+
+
+# --- printable recipe page -------------------------------------------------
+
+_PRINT_NUTRIENTS = ('Calories', 'TTLFatGrams', 'SatFatGrams', 'CholesterolMilligrams', 'SodiumMilligrams',
+                    'CarbGrams', 'FiberGrams', 'SugarGrams', 'ProteinGrams')
+
+
+def recipe_print_data(recipe_id):
+    '''Everything a printed recipe page shows, and no cost:
+    {id, name, unit, output_qty, weight, nutrition (per serving),
+     format: {name, color, shape} | None, tags: [{name, color}],
+     diets: [names it fits], allergens, facility (facility-only warnings),
+     free_of: [names, neither contained nor a facility warning], wedge: [components],
+     rows: [{name, type, amount, tool: ToolUse | None, allergens, facility, from_template, statement}],
+     dressings: [{name, weight, nutrition} per 1 fl oz of each Dressing ingredient],
+     tools_used: [Tool]}. Rows are in the user's order; packaging is
+    left out except a wrap's tortilla (utilities.recipe_print.prints_row).'''
+    from utilities import recipe_print
+    info = query('SELECT * FROM RecipesWithNutrition WHERE Id = ?;', (recipe_id,), one=True)
+    if info is None:
+        return None
+    fmt = get_recipe_tag(recipe_id)
+    tags = query('''
+        SELECT t.name, t.color FROM recipe_tags_mapping m
+        JOIN tags t ON t.id = m.tag_id AND t.kind = 'recipe_tag'
+        WHERE m.recipe_id = ? ORDER BY COALESCE(t.sortOrder, t.id);''', (recipe_id,))['data']
+    order = get_all_allergens()
+    present = set(get_recipe_allergens(recipe_id))
+    facility = set(get_recipe_facility_allergens(recipe_id))
+    components = query('''
+        SELECT COALESCE(r.Name, i.Name) AS Name
+             , CASE WHEN c.ChildRecipe IS NOT NULL THEN 'recipe' ELSE 'ingredient' END AS Type
+             , c.Quantity
+             , COALESCE(i.Unit, r.Unit) AS Unit
+             , i.Portion AS Portion
+             , i.Calories AS UnitCalories
+             , i.statement AS Statement
+             , i.Weight AS UnitWeight
+             , i.Calories, i.TTLFatGrams, i.SatFatGrams, i.CholesterolMilligrams, i.SodiumMilligrams
+             , i.CarbGrams, i.FiberGrams, i.SugarGrams, i.ProteinGrams
+             , c.from_template_tag_id AS FromTemplateTagId
+             , (SELECT t.name FROM tags t JOIN ingredient_tags_mapping itm ON itm.tag_id = t.id
+                 WHERE itm.ingredient_id = i.Id AND t.kind = 'ingredient' LIMIT 1) AS TagName
+             , CASE WHEN c.ChildRecipe IS NOT NULL THEN
+                 (SELECT group_concat(name, ', ') FROM
+                   (SELECT DISTINCT a.name FROM RecipeAllergens ra JOIN allergens a ON a.id = ra.allergen_id
+                     WHERE ra.recipe_id = c.ChildRecipe ORDER BY a.sortOrder, a.id))
+               ELSE
+                 (SELECT group_concat(name, ', ') FROM
+                   (SELECT a.name FROM ingredient_allergens ia JOIN allergens a ON a.id = ia.allergen_id
+                     WHERE ia.ingredient_id = c.ChildIngredient AND ia.facility = 0 ORDER BY a.sortOrder, a.id))
+               END AS Allergens
+             , CASE WHEN c.ChildRecipe IS NOT NULL THEN
+                 (SELECT group_concat(name, ', ') FROM
+                   (SELECT DISTINCT a.name FROM RecipeFacilityAllergens rf JOIN allergens a ON a.id = rf.allergen_id
+                     WHERE rf.recipe_id = c.ChildRecipe ORDER BY a.sortOrder, a.id))
+               ELSE
+                 (SELECT group_concat(name, ', ') FROM
+                   (SELECT a.name FROM ingredient_allergens ia JOIN allergens a ON a.id = ia.allergen_id
+                     WHERE ia.ingredient_id = c.ChildIngredient AND ia.facility = 1 ORDER BY a.sortOrder, a.id))
+               END AS FacilityAllergens
+        FROM Connections c
+        LEFT JOIN Recipes r ON r.Id = c.ChildRecipe
+        LEFT JOIN Ingredients i ON i.Id = c.ChildIngredient
+        WHERE c.ParentRecipe = ?
+        ORDER BY c.SortOrder, c.rowid;''', (recipe_id,))['data']
+    tools = portion_tool_objects()
+    tool_order = {t.id: n for n, t in enumerate(tools)}
+    fmt_name = fmt['name'] if fmt else None
+    rows, used, dressings = [], {}, []
+    for c in components:
+        if not recipe_print.prints_row(c, fmt_name):
+            continue
+        if c['Type'] == 'ingredient' and (c['TagName'] or '') == recipe_print.DRESSING_CATEGORY:
+            label = recipe_print.per_floz_label(c['Name'], c['Unit'], c['UnitWeight'],
+                                                {k: c.get(k) for k in _PRINT_NUTRIENTS})
+            if label:
+                dressings.append(label)
+        amt = recipe_print.amount(c['Quantity'], c['Unit'])
+        use = (recipe_print.resolve_tool(c['Quantity'], c['Unit'], c['Portion'], tools)
+               if c['Type'] == 'ingredient' else None)
+        if use and use.tool and use.tool.sized:
+            used[use.tool.id] = use.tool
+        rows.append({
+            'name': c['Name'], 'type': c['Type'], 'amount': amt.text, 'tool': use,
+            'allergens': c['Allergens'] or '', 'from_template': c['FromTemplateTagId'] is not None,
+            'statement': (c['Statement'] or '').strip(),
+            'facility': c['FacilityAllergens'] or '',
+        })
+    from utilities import diets
+    n = {k: info.get(k) or 0 for k in _PRINT_NUTRIENTS}   # already per unit of yield
+    per_serving = {'Calories': n['Calories'], 'Protein': n['ProteinGrams'], 'Fiber': n['FiberGrams'],
+                   'Carbs': n['CarbGrams'], 'Sugar': n['SugarGrams'], 'Fat': n['TTLFatGrams'],
+                   'SatFat': n['SatFatGrams'], 'Sodium': n['SodiumMilligrams'],
+                   'Cholesterol': n['CholesterolMilligrams']}
+    rules = get_diets()
+    fit = set(diets.diets_for(present, per_serving, rules, facility))
+    return {
+        'id': recipe_id,
+        'name': info['Name'],
+        'unit': info['Unit'] or '',
+        'output_qty': info['OutputQty'],
+        'weight': info.get('Weight') or 0,
+        'nutrition': n,
+        'format': {'name': fmt['name'], 'color': fmt['color'], 'shape': fmt['shape']} if fmt else None,
+        'tags': tags,
+        'diets': [r['name'] for r in rules if r['key'] in fit],
+        'allergens': [a for a in order if a in present],
+        'facility': [a for a in order if a in facility],
+        # The cautious reading: a facility warning isn't "free of".
+        'free_of': [a for a in order if a not in present and a not in facility],
+        'wedge': get_recipe_wedge_components(recipe_id),
+        'photo': get_recipe_image(recipe_id),
+        'dressings': dressings,
+        'rows': rows,
+        'tools_used': sorted(used.values(), key=lambda t: tool_order.get(t.id, 0)),
+    }
+
+
+# --- print branding (Configure › Print & branding) -------------------------
+
+def get_print_branding():
+    '''{key: value} for the branding text settings (accent, header,
+    footer); missing keys mean the defaults. The logo is a file, see
+    gui.services.print_branding.'''
+    rows = query("SELECT key, value FROM print_branding WHERE key <> 'logo';")['data']
+    return {r['key']: r['value'] for r in rows}
+
+
+def set_print_branding(key, value):
+    query('INSERT INTO print_branding (key, value) VALUES (?, ?)'
+          ' ON CONFLICT(key) DO UPDATE SET value = excluded.value;', (key, value))
+
+
+def take_legacy_print_logo():
+    '''A logo an earlier build stored in the library, as (bytes, ext),
+    removed from the library; None if there isn't one.'''
+    row = query("SELECT value, data FROM print_branding WHERE key = 'logo';", one=True)
+    query("DELETE FROM print_branding WHERE key = 'logo';")
+    return (bytes(row['data']), row['value'] or '') if row and row['data'] else None

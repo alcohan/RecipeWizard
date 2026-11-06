@@ -16,14 +16,12 @@ Clicking a recipe under "Used in" closes the dialog (asking about
 unsaved changes) and sets `open_recipe_id`, so the caller can open
 that recipe in a tab.
 '''
-import os
-import shutil
 from datetime import date
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QDoubleValidator, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractItemView, QDialog, QFileDialog, QFrame,
+    QAbstractItemView, QDialog, QFrame,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox,
     QPushButton, QScrollArea, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
@@ -31,10 +29,11 @@ from PySide6.QtWidgets import (
 import config
 import db
 from gui.dialogs.ingredient_price_edit import IngredientPriceEditDialog
-from gui.images import IMAGE_EXTENSIONS
+from gui.images import choose_photo
 from gui.models.ingredients_model import format_change, format_unit_price
-from gui.widgets.ingredient_fields import AllergenChecks, CategoryPills, NutritionGrid
+from gui.widgets.ingredient_fields import AllergenChecks, CategoryPills, NutritionGrid, StatementBox
 from gui.widgets.ingredient_thumb import IngredientThumb
+from gui.widgets.portion_tool_field import attach_tool_picker
 from gui.widgets.price_chart import PriceStepChart
 from gui.widgets.usda_panel import UsdaLookupPanel
 from gui.widgets.wedge_view import WedgeView
@@ -209,13 +208,14 @@ class IngredientEditDialog(QDialog):
         self.weight_edit.setValidator(QDoubleValidator(0.0, 1_000_000.0, 4))
         self.weight_edit.setAlignment(Qt.AlignRight)
         self.portion_edit = QLineEdit(row.get('Portion') or '')
+        attach_tool_picker(self.portion_edit)
         self.unit_edit.textChanged.connect(lambda _t: self._sync_unit_labels())
         fields = QHBoxLayout()
         fields.setSpacing(12)
         fields.addLayout(_labelled('Name', self.name_edit), stretch=1)
         fields.addLayout(_labelled('Unit', self.unit_edit, 90))
         fields.addLayout(_labelled('Weight (g)', self.weight_edit, 90))
-        fields.addLayout(_labelled('Portion tool', self.portion_edit, 140))
+        fields.addLayout(_labelled('Portion tool', self.portion_edit, 160))
         # How portion rules read the unit; shown only for a category some
         # format sizes by rule (Greens, Grains…).
         self.portion_hint = QLabel('')
@@ -300,6 +300,8 @@ class IngredientEditDialog(QDialog):
         self.usda_note.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
         self.usda_note.hide()
         nl.addWidget(self.usda_note)
+        self.statement = StatementBox(row.get('statement') or '')
+        nl.addWidget(self.statement)
         layout.addWidget(nutrition)
         layout.addStretch()
         self._sync_unit_labels()
@@ -536,27 +538,9 @@ class IngredientEditDialog(QDialog):
         self.remove_photo.setVisible(bool(self._image))
 
     def _on_change_photo(self):
-        exts = ' '.join(f'*{e}' for e in IMAGE_EXTENSIONS)
-        path, _ = QFileDialog.getOpenFileName(
-            self, 'Choose a photo', config.INGREDIENTS_PATH, f'Images ({exts})')
-        if not path:
-            return
-        folder = os.path.normcase(os.path.abspath(config.INGREDIENTS_PATH))
-        if os.path.normcase(os.path.dirname(os.path.abspath(path))) != folder:
-            # Photos live in the data folder; bring outside ones in.
-            target = os.path.join(config.INGREDIENTS_PATH, os.path.basename(path))
-            if os.path.exists(target) and QMessageBox.question(
-                self, 'Replace photo?',
-                f'"{os.path.basename(path)}" is already in the photos folder. Replace it?',
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-            ) != QMessageBox.Yes:
-                return
-            try:
-                shutil.copy(path, target)
-            except OSError as exc:
-                QMessageBox.warning(self, 'Photo not copied', str(exc))
-                return
-        self._set_photo(os.path.basename(path))
+        name = choose_photo(self, config.INGREDIENTS_PATH)
+        if name:
+            self._set_photo(name)
 
     def _fill_used_in(self):
         while self._used_layout.count():
@@ -581,6 +565,9 @@ class IngredientEditDialog(QDialog):
             name = QLabel(f'<a href="{u["Id"]}" style="color: {_MUTED if archived else _KALE}">{u["Name"]}</a>'
                           + (f'<span style="color: {_MUTED}"> · archived</span>' if archived else ''))
             name.setToolTip('Close and open this recipe in a tab')
+            # Long recipe names wrap instead of widening the side panel.
+            name.setWordWrap(True)
+            name.setMinimumWidth(1)
             name.linkActivated.connect(lambda href: self._open_recipe(int(href)))
             hl.addWidget(name, stretch=1)
             meta = QLabel(f'{_num_text(u["Quantity"])} {u["Unit"] or ""} · ${float(u["LineCost"] or 0):.2f}')
@@ -612,9 +599,9 @@ class IngredientEditDialog(QDialog):
         return (
             self.name_edit.text().strip(), self.unit_edit.text(), self.weight_edit.text(),
             self.portion_edit.text(),
-            tuple(sorted(self.nutrition.values().items())),
+            tuple(sorted(self.nutrition.values().items())), self.statement.text(),
             self.category.selected(), self._image,
-            tuple(self.allergens.checked_ids()),
+            tuple(self.allergens.checked_ids()), tuple(self.allergens.facility_ids()),
         )
 
     def _dirty(self):
@@ -656,8 +643,10 @@ class IngredientEditDialog(QDialog):
             'ImageFilename': self._image or None,
         })
         db.update_ingredient(self.ingredient_id, values)
+        db.set_ingredient_statement(self.ingredient_id, self.statement.text())
         db.set_ingredient_tag(self.ingredient_id, self.category.selected())
-        db.set_ingredient_allergens(self.ingredient_id, self.allergens.checked_ids())
+        db.set_ingredient_allergens(self.ingredient_id, self.allergens.checked_ids(),
+                                    self.allergens.facility_ids())
         self.modified = True
         self.status_message = f"Saved '{name}'"
         self._baseline = self._collect_state()

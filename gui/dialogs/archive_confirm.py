@@ -6,11 +6,22 @@ from PySide6.QtWidgets import QMessageBox
 import db
 
 
-def confirm_archive(parent, recipe_id, name):
-    '''True to go ahead and archive. Only asks when live recipes use it.'''
+def confirm_archive(parent, recipe_id, name, always=False):
+    '''True to go ahead and archive. Asks when live recipes use it, or
+    (with `always`) every time.'''
     live = [p['Name'] for p in db.get_parent_recipes(recipe_id) if p.get('Status') != 'archived']
     if not live:
-        return True
+        if not always:
+            return True
+        box = QMessageBox(QMessageBox.Question, 'Archive recipe',
+                          f'Archive {name}?', parent=parent)
+        box.setInformativeText('It comes off the menu and is hidden from the Library and analytics.'
+                               ' You can restore it later, or undo with Ctrl+Z.')
+        archive = box.addButton('Archive', QMessageBox.AcceptRole)
+        box.addButton(QMessageBox.Cancel)
+        box.setDefaultButton(QMessageBox.Cancel)
+        box.exec()
+        return box.clickedButton() is archive
     n = len(live)
     names = ', '.join(live[:5]) + (f' and {n - 5} more' if n > 5 else '')
     box = QMessageBox(QMessageBox.Warning, 'Archive sub-recipe',

@@ -499,6 +499,81 @@ def migrateDB(path=None):
             print(f'Migrating: {adopted} recipe row(s) now follow their format portion rules')
         cursor.execute("INSERT INTO app_meta (key, value) VALUES ('adopted_portion_rules', '1');")
 
+    # Portion tools (Configure › Portion tools): the scoops, bottles and
+    # tongs an ingredient's Portion text names. Sized tools let a recipe
+    # page print "1 Grey" for half of an "8 f.oz / 2 x grey" unit; the
+    # family keeps a slotted Red from turning into a plain one. An
+    # ingredient links to a tool by its Portion text (case-insensitive).
+    cursor.execute('''CREATE TABLE IF NOT EXISTS portion_tools (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        family TEXT NOT NULL DEFAULT '',
+        size_floz REAL,
+        color TEXT,
+        pattern TEXT NOT NULL DEFAULT 'solid',
+        sortOrder INTEGER
+    );''')
+    cursor.execute("SELECT 1 FROM app_meta WHERE key = 'seeded_portion_tools';")
+    if cursor.fetchone() is None:
+        cursor.execute('SELECT COUNT(*) FROM portion_tools;')
+        if cursor.fetchone()[0] == 0:
+            print('Migrating: adding default portion tools')
+            for order, (name, family, size, color, pattern) in enumerate(_DEFAULT_PORTION_TOOLS, start=1):
+                cursor.execute('INSERT INTO portion_tools (name, family, size_floz, color, pattern, sortOrder)'
+                               ' VALUES (?, ?, ?, ?, ?, ?);', (name, family, size, color, pattern, order))
+        cursor.execute("INSERT INTO app_meta (key, value) VALUES ('seeded_portion_tools', '1');")
+
+    # Facility allergens: an ingredient's allergen can be a "made in a
+    # facility that also handles" warning instead of an ingredient it
+    # contains. RecipeAllergens counts contained ones only;
+    # RecipeFacilityAllergens has the warnings. A diet that's strict
+    # (the default) counts both.
+    if table_exists('ingredient_allergens') and not column_exists('ingredient_allergens', 'facility'):
+        print('Migrating: adding ingredient_allergens.facility')
+        cursor.execute('ALTER TABLE ingredient_allergens ADD COLUMN facility INTEGER NOT NULL DEFAULT 0')
+    if not column_exists('diets', 'strict'):
+        print('Migrating: adding diets.strict')
+        cursor.execute('ALTER TABLE diets ADD COLUMN strict INTEGER NOT NULL DEFAULT 1')
+    if table_exists('ingredient_allergens'):
+        cursor.executescript('''DROP VIEW IF EXISTS RecipeAllergens;
+CREATE VIEW RecipeAllergens AS
+SELECT DISTINCT rx.recipe_id, ia.allergen_id, a.name
+FROM recipe_ingredients_expanded rx
+JOIN ingredient_allergens ia ON rx.ingredient_id = ia.ingredient_id AND COALESCE(ia.facility, 0) = 0
+JOIN allergens a ON ia.allergen_id = a.id;
+
+-- "Made in a facility that also handles": allergens some ingredient in
+-- the tree is flagged facility for, and nothing in the tree contains.
+DROP VIEW IF EXISTS RecipeFacilityAllergens;
+CREATE VIEW RecipeFacilityAllergens AS
+SELECT DISTINCT rx.recipe_id, ia.allergen_id, a.name
+FROM recipe_ingredients_expanded rx
+JOIN ingredient_allergens ia ON rx.ingredient_id = ia.ingredient_id AND ia.facility = 1
+JOIN allergens a ON ia.allergen_id = a.id
+WHERE NOT EXISTS (SELECT 1 FROM RecipeAllergens ra
+                  WHERE ra.recipe_id = rx.recipe_id AND ra.allergen_id = ia.allergen_id);''')
+
+    # The ingredients list from a product's package label, printed under
+    # the ingredient on recipe pages.
+    if not column_exists('Ingredients', 'statement'):
+        print('Migrating: adding Ingredients.statement')
+        cursor.execute('ALTER TABLE Ingredients ADD COLUMN statement TEXT')
+
+    # A recipe's photo (a file in config.RECIPE_IMAGES_PATH), shown in
+    # place of its wedge.
+    if not column_exists('Recipes', 'ImageFilename'):
+        print('Migrating: adding Recipes.ImageFilename')
+        cursor.execute('ALTER TABLE Recipes ADD COLUMN ImageFilename TEXT')
+
+    # Branding on printed recipe pages (Configure › Print & branding):
+    # accent color, header and footer text. The logo is a file in the
+    # data folder (config.BRANDING_PATH), backed up with the photos.
+    cursor.execute('''CREATE TABLE IF NOT EXISTS print_branding (
+        key TEXT PRIMARY KEY,
+        value TEXT,
+        data BLOB
+    );''')
+
     # Archived used to be a recipe tag; it's Recipes.status now. Once:
     # recipes tagged Archived become archived, and the tag goes away.
     cursor.execute("SELECT 1 FROM app_meta WHERE key = 'archived_tag_to_status';")
@@ -665,6 +740,24 @@ _PALETTE_MIGRATIONS = (
     ('Dressing',  ['#0891b2', '#3D8C86'], '#ffa98b'),
     ('Packaging', ['#475569', '#A3A396'], '#a7ad9c'),
 )
+
+# Portion tools seeded once (see migrateDB): (name, family, size in
+# f.oz or None, color, pattern). Colored dishers are fixed sizes; a
+# slotted or ice-cream scoop of the same size is a different family so
+# a recipe page never swaps one for the other. Sizeless tools are there
+# so Portion text can link to them; they print by name.
+_DEFAULT_PORTION_TOOLS = (
+    ('Yellow', 'Disher', 1.0, '#facc15', 'solid'),
+    ('Red', 'Disher', 2.0, '#ef4444', 'solid'),
+    ('White', 'Disher', 3.0, '#ffffff', 'solid'),
+    ('Grey', 'Disher', 4.0, '#9ca3af', 'solid'),
+    ('Red slotted', 'Slotted', 2.0, '#ef4444', 'striped'),
+    ('Blue', 'Ice cream', 2.0, '#3b82f6', 'solid'),
+    ('Tongs', '', None, None, 'solid'),
+    ('Bottle', '', None, None, 'solid'),
+    ('Shaker', '', None, None, 'solid'),
+)
+
 
 if __name__=="__main__":
     initializeDB()

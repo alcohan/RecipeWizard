@@ -233,7 +233,10 @@ class IngredientInspector(QScrollArea):
             self.cost_detail.setText('No price yet. Add one with New price.')
 
         self._fill_usage(row, prev, cur)
-        self.allergens.setText(row.get('Allergens') or 'None')
+        text = row.get('Allergens') or 'None'
+        if row.get('FacilityAllergens'):
+            text += f"\nFacility: {row['FacilityAllergens']}"
+        self.allergens.setText(text)
         self.allergens.setStyleSheet(f'color: {_KALE if row.get("Allergens") else _MUTED};')
 
     def _fill_usage(self, row, prev, cur):

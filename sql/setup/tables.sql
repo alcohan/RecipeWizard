@@ -1,3 +1,4 @@
+DROP VIEW IF EXISTS RecipeFacilityAllergens;
 DROP VIEW IF EXISTS RecipeAllergens;
 DROP VIEW IF EXISTS recipe_ingredients_expanded;
 DROP TABLE IF EXISTS tag_components;
@@ -52,6 +53,7 @@ CREATE TABLE Recipes (
 	, cost_snapshot_at TEXT         -- When that snapshot was taken (sqlite datetime).
 	, updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 	, status TEXT NOT NULL DEFAULT 'active'  -- 'active' (on the menu) or 'archived'
+	, ImageFilename TEXT            -- photo in the recipe photos folder; shown instead of the wedge
 );
 
 CREATE TABLE Connections (
@@ -178,6 +180,7 @@ CREATE TABLE ingredient_allergens (
   id INTEGER PRIMARY KEY AUTOINCREMENT
   , allergen_id INTEGER
   , ingredient_id INTEGER
+  , facility INTEGER NOT NULL DEFAULT 0  -- 1 = "made in a facility that also handles"
   , FOREIGN KEY (ingredient_id) REFERENCES ingredients(id)
   , FOREIGN KEY (allergen_id) REFERENCES allergens(id)
 );
