@@ -1,4 +1,5 @@
-'''Ingredient photo thumbnails: a disk cache plus background loading.
+'''Photo thumbnails (ingredients and recipes): a disk cache plus
+background loading.
 
 Ingredient photos are big (most of the sample set is 1667×1667 PNG,
 ~2 MB each). Decoding and scaling them on the UI thread is what made the
@@ -10,6 +11,8 @@ reads the cached thumbnail (or makes it once from the original and saves
 it under <data>/thumbs/<size>/) and hands a QImage to
 `receiver(image)` on the UI thread. Cache files are keyed by the source
 file's name, size and mtime, so replacing a photo makes a fresh thumb.
+Every function takes an optional `folder`: ingredient photos by default,
+config.RECIPE_IMAGES_PATH for recipe photos.
 
 `thumbnail_image(filename, size)` is the synchronous form, for callers
 already off the UI thread (the wedge renderer).
@@ -30,30 +33,42 @@ def _cache_dir(size):
     return path
 
 
-def _cache_path(source, size):
+def _cache_path(source, size, folder=None):
     st = os.stat(source)
     key = f'{os.path.basename(source)}|{st.st_size}|{int(st.st_mtime)}'
+    if folder:
+        # Another photo folder can hold a file of the same name; ingredient
+        # keys stay as they were so the existing cache still hits.
+        key = f'{os.path.basename(os.path.normpath(folder))}/{key}'
     digest = hashlib.sha1(key.encode('utf-8')).hexdigest()[:16]
     stem = os.path.splitext(os.path.basename(source))[0][:40]
     return os.path.join(_cache_dir(size), f'{stem}-{digest}.png')
 
 
-def source_path(filename):
-    '''Full path of an ingredient photo, or None if unset / missing.'''
+def _other_folder(folder):
+    '''None for the ingredient photos folder (the default), else folder.'''
+    if not folder:
+        return None
+    same = os.path.normcase(os.path.abspath(folder)) == os.path.normcase(os.path.abspath(config.INGREDIENTS_PATH))
+    return None if same else folder
+
+
+def source_path(filename, folder=None):
+    '''Full path of a photo, or None if unset / missing.'''
     if not filename:
         return None
-    path = os.path.join(config.INGREDIENTS_PATH, filename)
+    path = os.path.join(folder or config.INGREDIENTS_PATH, filename)
     return path if os.path.isfile(path) else None
 
 
-def thumbnail_image(filename, size):
+def thumbnail_image(filename, size, folder=None):
     '''Square QImage of the photo cropped to fill `size`×`size`, from
     the cache when possible. None when there's no usable photo.'''
-    source = source_path(filename)
+    source = source_path(filename, folder)
     if source is None:
         return None
     try:
-        cached = _cache_path(source, size)
+        cached = _cache_path(source, size, _other_folder(folder))
     except OSError:
         return None
     if os.path.isfile(cached):
@@ -98,14 +113,15 @@ class _Signals(QObject):
 
 
 class _ThumbTask(QRunnable):
-    def __init__(self, filename, size):
+    def __init__(self, filename, size, folder=None):
         super().__init__()
         self.filename = filename
         self.size = size
+        self.folder = folder
         self.signals = _Signals()
 
     def run(self):
-        self.signals.done.emit(thumbnail_image(self.filename, self.size))
+        self.signals.done.emit(thumbnail_image(self.filename, self.size, self.folder))
 
 
 # A dedicated pool so a gallery's worth of thumbnails doesn't queue
@@ -115,14 +131,14 @@ _POOL.setMaxThreadCount(max(2, min(4, QThreadPool.globalInstance().maxThreadCoun
 _IN_FLIGHT = set()
 
 
-def load_thumbnail(filename, size, receiver):
+def load_thumbnail(filename, size, receiver, folder=None):
     '''Start loading; `receiver(QImage)` runs on the UI thread when the
     image is ready (not at all if there's no photo). The connection
     goes away with the receiver's object, so a widget destroyed before
     the load finishes is never called.'''
-    if source_path(filename) is None:
+    if source_path(filename, folder) is None:
         return
-    task = _ThumbTask(filename, size)
+    task = _ThumbTask(filename, size, folder)
     # Hold the task until it delivers: once start() returns nothing else
     # references it, and if Python collects it its signals object goes
     # too, silently dropping the result.

@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 _KALE = '#082c00'
 _ROMAINE = '#347200'
 _MUTED = '#55624c'
+_FACILITY = '#8a4a00'   # facility warnings (made alongside)
 _RULE = '#f3ece0'
 _TRACK = '#efe9de'
 _OVER = '#8a4a00'
@@ -162,9 +163,10 @@ class EditorResults(QWidget):
         layout.addLayout(all_col)
         layout.addStretch()
 
-    def update_results(self, recipe, baseline, allergen_sources):
+    def update_results(self, recipe, baseline, allergen_sources, facility_sources=()):
         '''`recipe` and `baseline` are recipe_info() dicts (current and
-        last-saved); `allergen_sources` is [(allergen, [names])].'''
+        last-saved); `allergen_sources` is [(allergen, [names])], and
+        `facility_sources` the same for facility-only warnings.'''
         cost = _num(recipe.get('CostRaw'))
         saved_cost = _num(baseline.get('CostRaw')) if baseline else cost
         self.cost_label.setText(f'${cost:.2f}')
@@ -222,7 +224,7 @@ class EditorResults(QWidget):
                         w.deleteLater()
             elif item.widget() is not None:
                 item.widget().deleteLater()
-        if not allergen_sources:
+        if not allergen_sources and not facility_sources:
             none = QLabel('None')
             none.setStyleSheet(f'color: {_MUTED};')
             self._allergen_host.addWidget(none)
@@ -230,6 +232,22 @@ class EditorResults(QWidget):
             row = QHBoxLayout()
             row.setSpacing(8)
             name = QLabel(f'<b>{allergen}</b>')
+            name.setFixedWidth(80)
+            src = QLabel(', '.join(sources))
+            src.setWordWrap(True)
+            src.setStyleSheet(f'color: {_MUTED};')
+            row.addWidget(name, alignment=Qt.AlignTop)
+            row.addWidget(src, stretch=1)
+            self._allergen_host.addLayout(row)
+        if facility_sources:
+            head = QLabel('FACILITY')
+            head.setStyleSheet(f'color: {_FACILITY}; font-size: 11px; font-weight: 600; letter-spacing: 1px;')
+            head.setToolTip('Made in a facility that also handles these')
+            self._allergen_host.addWidget(head)
+        for allergen, sources in facility_sources:
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            name = QLabel(f'<b style="color: {_FACILITY}">{allergen}</b>')
             name.setFixedWidth(80)
             src = QLabel(', '.join(sources))
             src.setWordWrap(True)

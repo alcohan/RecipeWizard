@@ -59,6 +59,12 @@ load_dotenv(envfile)
 # files into the canonical appdata location).
 DATABASE = os.environ.get('RECIPEWIZARD_DB') or os.path.join(user_data_dir(), 'builder.db')
 INGREDIENTS_PATH = os.environ.get('RECIPEWIZARD_INGREDIENTS') or os.path.join(user_data_dir(), 'ingredients')
+# The print logo (Configure › Print & branding): a file, like the photos,
+# so data-only backups stay small; it goes into backups with the photos.
+BRANDING_PATH = os.environ.get('RECIPEWIZARD_BRANDING') or os.path.join(user_data_dir(), 'branding')
+# Recipe photos: like ingredient photos, a file per recipe named in
+# Recipes.ImageFilename. A recipe's photo stands in for its wedge.
+RECIPE_IMAGES_PATH = os.environ.get('RECIPEWIZARD_RECIPE_IMAGES') or os.path.join(user_data_dir(), 'recipes')
 os.makedirs(INGREDIENTS_PATH, exist_ok=True)
 
 ICON = resource_path('icon.ico')

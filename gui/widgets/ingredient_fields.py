@@ -3,14 +3,15 @@ per the Framework canvas. None of them write to the DB: the dialogs
 read their values on Save.
 
 - CategoryPills: one pill per ingredient category plus None.
-- AllergenChecks: the allergen checkboxes, three columns.
+- AllergenChecks: allergen chips (off / contains / facility), three columns.
 - NutritionGrid: the nine nutrition inputs, three columns.
+- StatementBox: the ingredient statement pasted from the package label.
 '''
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QVBoxLayout, QWidget,
+    QMenu, QPlainTextEdit, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 import config
@@ -82,57 +83,162 @@ class CategoryPills(QWidget):
             self.changed.emit(tag_id)
 
 
+OFF, CONTAINS, FACILITY = 0, 1, 2
+_ALERT, _ALERT_BG = '#b80700', '#ffe8e3'
+_FAC, _FAC_BG = '#8a4a00', '#fff0dc'
+
+
 class AllergenChecks(QWidget):
+    '''One chip per allergen, each off, Contains or Facility ("made in a
+    facility that also handles"). A click cycles off → Contains →
+    Facility → off; right-click picks one. "Mark all as facility" turns
+    every flagged allergen into a facility warning (spice blends with a
+    long may-contain list), and back.'''
     changed = Signal()
 
     def __init__(self, ingredient_id=None, parent=None):
         super().__init__(parent)
-        self._boxes = {}
+        self._chips = {}     # allergen id -> QPushButton
+        self._state = {}     # allergen id -> OFF / CONTAINS / FACILITY
         self._diets = db.get_diets()
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(6)
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        # The chip's look carries the state, so its text stays just the
+        # name and three chips fit the editor's narrow side panel.
+        legend = QLabel(f'<span style="color:{_ALERT}; font-weight:600">Red</span> = contains,'
+                        f' <span style="color:{_FAC}">dashed amber</span> = facility.'
+                        ' Click to cycle; right-click to choose.')
+        legend.setTextFormat(Qt.RichText)
+        legend.setWordWrap(True)
+        legend.setMinimumWidth(1)
+        legend.setStyleSheet(f'color: {_MUTED}; font-size: 11px;')
+        self.bulk_btn = QPushButton('Mark all as facility')
+        self.bulk_btn.setFlat(True)
+        self.bulk_btn.setCursor(Qt.PointingHandCursor)
+        self.bulk_btn.setAutoDefault(False)
+        self.bulk_btn.setStyleSheet(f'QPushButton {{ color: {_ROMAINE}; border: 0; padding: 0 2px; }}'
+                                    ' QPushButton:hover { text-decoration: underline; }'
+                                    ' QPushButton:disabled { color: #a7ad9c; }')
+        self.bulk_btn.clicked.connect(self._on_bulk)
+        # The legend gets the full width (a wrapping label beside the
+        # button squeezes to a word per line); the button sits under it.
+        outer.addWidget(legend)
+        top.addStretch()
+        top.addWidget(self.bulk_btn)
+        outer.addLayout(top)
         grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(6)
+        grid.setVerticalSpacing(6)
+        for col in range(3):
+            grid.setColumnStretch(col, 1)
         outer.addLayout(grid)
         # Which diets these allergens rule out, per Configure › Diets.
         self.diet_hint = QLabel('')
         self.diet_hint.setWordWrap(True)
+        self.diet_hint.setMinimumWidth(1)
         self.diet_hint.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
         outer.addWidget(self.diet_hint)
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(10)
-        grid.setVerticalSpacing(6)
-        # Id 0 matches no ingredient, so a new one gets every box unchecked.
+        # Id 0 matches no ingredient, so a new one starts with every chip off.
         for i, a in enumerate(db.get_ingredient_allergens(ingredient_id or 0)):
-            cb = QCheckBox(a['name'])
-            cb.setChecked(bool(a['checked']))
-            cb.toggled.connect(lambda _v, c=cb: self._on_toggle(c))
-            self._style(cb)
-            self._boxes[a['id']] = cb
-            grid.addWidget(cb, i // 3, i % 3)
-        self._sync_hint()
+            chip = QPushButton(a['name'])
+            chip.setProperty('allergen', a['name'])
+            # Never let a chip widen the panel; columns share the width.
+            chip.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+            chip.setMinimumWidth(0)
+            chip.setAutoDefault(False)
+            chip.setCursor(Qt.PointingHandCursor)
+            chip.setContextMenuPolicy(Qt.CustomContextMenu)
+            chip.clicked.connect(lambda _c=False, aid=a['id']: self._cycle(aid))
+            chip.customContextMenuRequested.connect(lambda pos, aid=a['id']: self._menu(aid, pos))
+            self._chips[a['id']] = chip
+            self._state[a['id']] = CONTAINS if a['checked'] else (FACILITY if a.get('facility') else OFF)
+            self._style(a['id'])
+            grid.addWidget(chip, i // 3, i % 3)
+        self._sync()
 
-    def _sync_hint(self):
-        names = diets.excluded_by([cb.text() for cb in self._boxes.values() if cb.isChecked()], self._diets)
-        if names:
-            listed = names[0] if len(names) == 1 else ', '.join(names[:-1]) + ' or ' + names[-1]
-            self.diet_hint.setText(f'Recipes with this don’t fit {listed}.')
-        self.diet_hint.setVisible(bool(names))
+    # --- reading / writing ----------------------------------------------
 
     def checked_ids(self):
-        return sorted(a for a, cb in self._boxes.items() if cb.isChecked())
+        '''Allergens the ingredient contains.'''
+        return sorted(a for a, s in self._state.items() if s == CONTAINS)
 
-    def set_checked(self, ids):
-        for a, cb in self._boxes.items():
-            cb.setChecked(a in set(ids))
+    def facility_ids(self):
+        '''Allergens that are only facility warnings.'''
+        return sorted(a for a, s in self._state.items() if s == FACILITY)
 
-    def _on_toggle(self, cb):
-        self._style(cb)
-        self._sync_hint()
+    def set_checked(self, ids, facility_ids=()):
+        ids, facility_ids = set(ids), set(facility_ids)
+        for a in self._state:
+            self._state[a] = CONTAINS if a in ids else (FACILITY if a in facility_ids else OFF)
+            self._style(a)
+        self._sync()
+
+    # --- interaction ------------------------------------------------------
+
+    def _set(self, aid, state):
+        if self._state[aid] == state:
+            return
+        self._state[aid] = state
+        self._style(aid)
+        self._sync()
         self.changed.emit()
 
-    def _style(self, cb):
-        cb.setStyleSheet(f'QCheckBox {{ color: {_KALE}; font-weight: {600 if cb.isChecked() else 400}; }}')
+    def _cycle(self, aid):
+        self._set(aid, {OFF: CONTAINS, CONTAINS: FACILITY, FACILITY: OFF}[self._state[aid]])
+
+    def _menu(self, aid, pos):
+        menu = QMenu(self)
+        for state, label in ((CONTAINS, 'Contains'), (FACILITY, 'Facility (made alongside it)'), (OFF, 'None')):
+            act = menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(self._state[aid] == state)
+            act.triggered.connect(lambda _c=False, s=state: self._set(aid, s))
+        menu.exec(self._chips[aid].mapToGlobal(pos))
+
+    def _on_bulk(self):
+        flagged = [a for a, s in self._state.items() if s != OFF]
+        to = CONTAINS if flagged and all(self._state[a] == FACILITY for a in flagged) else FACILITY
+        for a in flagged:
+            self._state[a] = to
+            self._style(a)
+        self._sync()
+        self.changed.emit()
+
+    # --- looks ------------------------------------------------------------
+
+    def _style(self, aid):
+        chip, state = self._chips[aid], self._state[aid]
+        name = chip.property('allergen')
+        if state == CONTAINS:
+            css = (f'border: 1px solid {_ALERT}; background: {_ALERT_BG}; color: {_KALE}; font-weight: 600;')
+        elif state == FACILITY:
+            css = f'border: 1px dashed {_FAC}; background: {_FAC_BG}; color: {_FAC};'
+        else:
+            css = f'border: 1px solid #d6d3d1; background: #ffffff; color: {_KALE};'
+        chip.setStyleSheet(f'QPushButton {{ {css} border-radius: 6px; padding: 4px 8px; text-align: left; }}')
+        chip.setToolTip(name + ': ' + {OFF: 'not in this ingredient. Click: contains.',
+                                       CONTAINS: 'contains it. Click: facility warning only.',
+                                       FACILITY: 'made in a facility that also handles it. Click: off.'}[state])
+
+    def _sync(self):
+        flagged = [a for a, s in self._state.items() if s != OFF]
+        all_facility = bool(flagged) and all(self._state[a] == FACILITY for a in flagged)
+        self.bulk_btn.setText('Mark all as contains' if all_facility else 'Mark all as facility')
+        self.bulk_btn.setEnabled(bool(flagged))
+        names_by_id = {a: self._chips[a].property('allergen') for a in self._chips}
+        contains = [names_by_id[a] for a in self.checked_ids()]
+        facility = [names_by_id[a] for a in self.facility_ids()]
+        out = diets.excluded_by(contains, self._diets, facility)
+        if out:
+            listed = out[0] if len(out) == 1 else ', '.join(out[:-1]) + ' or ' + out[-1]
+            self.diet_hint.setText(f'Recipes with this don’t fit {listed}.')
+        elif facility:
+            self.diet_hint.setText('Facility warnings only: no diet rules these out.')
+        self.diet_hint.setVisible(bool(out) or bool(facility))
 
 
 class NutritionGrid(QWidget):
@@ -170,3 +276,33 @@ class NutritionGrid(QWidget):
 
     def is_empty(self):
         return not any(e.text().strip() not in ('', '0') for e in self._edits.values())
+
+
+class StatementBox(QWidget):
+    '''"Ingredient statement": the ingredients list from the
+    manufacturer's label, printed under this ingredient on recipe pages.'''
+
+    def __init__(self, text='', parent=None):
+        super().__init__(parent)
+        title = QLabel('INGREDIENT STATEMENT')
+        title.setStyleSheet(f'color: {_MUTED}; font-size: 11px; font-weight: 600; letter-spacing: 1px;')
+        self.edit = QPlainTextEdit(text or '')
+        self.edit.setPlaceholderText('Paste the ingredients list from the manufacturer’s label')
+        self.edit.setFixedHeight(72)
+        self.edit.setStyleSheet(f'QPlainTextEdit {{ border: 1px solid {_FIELD_BORDER}; border-radius: 4px;'
+                                f' background: #ffffff; color: {_KALE}; padding: 4px 6px; }}'
+                                f' QPlainTextEdit:focus {{ border: 2px solid {_ROMAINE}; }}')
+        hint = QLabel('Printed in small type under this ingredient on recipe pages.')
+        hint.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(4)
+        layout.addWidget(title)
+        layout.addWidget(self.edit)
+        layout.addWidget(hint)
+
+    def text(self):
+        return ' '.join(self.edit.toPlainText().split())
+
+    def clear(self):
+        self.edit.clear()

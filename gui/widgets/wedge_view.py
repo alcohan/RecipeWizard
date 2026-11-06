@@ -1,9 +1,39 @@
 from PySide6.QtCore import QObject, QRectF, QRunnable, Qt, QThreadPool, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QLabel
 
+import config
 import db
+from gui import thumbs
 from utilities.wedge_renderer import render_recipe
+
+
+def recipe_photo(recipe_id):
+    '''The recipe's photo filename when it's set and the file exists,
+    else ''. A photo takes the wedge's place everywhere.'''
+    name = db.get_recipe_image(recipe_id)
+    return name if name and thumbs.source_path(name, config.RECIPE_IMAGES_PATH) else ''
+
+
+def photo_image(filename, size):
+    '''The recipe photo as a `size`×`size` QImage with rounded corners,
+    from the shared thumbnail cache; a null QImage if it can't be read.
+    Safe off the UI thread.'''
+    square = thumbs.thumbnail_image(filename, size, config.RECIPE_IMAGES_PATH)
+    if square is None or square.isNull():
+        return QImage()
+    out = QImage(size, size, QImage.Format_ARGB32_Premultiplied)
+    out.fill(Qt.transparent)
+    painter = QPainter(out)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setRenderHint(QPainter.SmoothPixmapTransform)
+    path = QPainterPath()
+    radius = max(3.0, size * 0.12)
+    path.addRoundedRect(QRectF(0, 0, size, size), radius, radius)
+    painter.setClipPath(path)
+    painter.drawImage(QRectF(0, 0, size, size), square)
+    painter.end()
+    return out
 
 
 class _WedgeRenderSignals(QObject):
@@ -18,23 +48,27 @@ class _WedgeRenderTask(QRunnable):
     so the 28-card gallery cold load doesn't block paint events while
     decoding sprites one-by-one.'''
 
-    def __init__(self, components, size, shape=None, shape_color=None):
+    def __init__(self, components, size, shape=None, shape_color=None, photo=''):
         super().__init__()
         self.components = components
         self.size = size
         self.shape = shape
         self.shape_color = shape_color
+        self.photo = photo
         self.signals = _WedgeRenderSignals()
 
     def run(self):
         image = QImage()
         try:
-            png = render_recipe(
-                self.components, size=self.size,
-                shape=self.shape, shape_color=self.shape_color,
-            )
-            if png:
-                image.loadFromData(png)  # PNG decode happens on the worker
+            if self.photo:
+                image = photo_image(self.photo, self.size)
+            if image.isNull():
+                png = render_recipe(
+                    self.components, size=self.size,
+                    shape=self.shape, shape_color=self.shape_color,
+                )
+                if png:
+                    image.loadFromData(png)  # PNG decode happens on the worker
         except Exception as exc:
             print(f'wedge render failed: {exc}')
         try:
@@ -46,7 +80,9 @@ class _WedgeRenderTask(QRunnable):
 
 
 class WedgeView(QLabel):
-    '''Renders the salad-wedge preview for a recipe.
+    '''Renders the salad-wedge preview for a recipe — or the recipe's
+    photo, when it has one (from the thumbnail cache, so it's as cheap
+    as a wedge after the first time).
 
     Construction always shows a placeholder circle. Callers then choose:
       - `.refresh()`  — synchronous render (blocking, simple).
@@ -83,23 +119,28 @@ class WedgeView(QLabel):
         '''Synchronous render. Suitable when only one wedge is being drawn
         (recipe edit dialog) — there's no perceived stutter for a single
         ~100ms PIL render.'''
-        shape, color = self._format_for_recipe()
-        png = render_recipe(
-            db.get_recipe_wedge_components(self.recipe_id),
-            size=self._size, shape=shape, shape_color=color,
-        )
-        image = QImage()
-        if png:
-            image.loadFromData(png)
+        photo = recipe_photo(self.recipe_id)
+        image = photo_image(photo, self._size) if photo else QImage()
+        if image.isNull():
+            shape, color = self._format_for_recipe()
+            png = render_recipe(
+                db.get_recipe_wedge_components(self.recipe_id),
+                size=self._size, shape=shape, shape_color=color,
+            )
+            if png:
+                image.loadFromData(png)
         self._apply_image(image)
 
     def render_async(self, pool=None):
         '''Background render. Use when rendering many wedges at once
         (home gallery) so the UI doesn't freeze while PIL works.'''
         pool = pool or QThreadPool.globalInstance()
-        components = db.get_recipe_wedge_components(self.recipe_id)
-        shape, color = self._format_for_recipe()
-        task = _WedgeRenderTask(components, self._size, shape, color)
+        photo = recipe_photo(self.recipe_id)
+        # With a photo the wedge is only the fallback for an unreadable
+        # file; skip its queries.
+        components = [] if photo else db.get_recipe_wedge_components(self.recipe_id)
+        shape, color = (None, None) if photo else self._format_for_recipe()
+        task = _WedgeRenderTask(components, self._size, shape, color, photo)
         # signals object lives on the task; the connection is auto-removed if
         # this WedgeView gets destroyed before the worker emits, so a late
         # callback never lands on a deleted widget.

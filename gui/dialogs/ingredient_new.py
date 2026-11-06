@@ -31,7 +31,8 @@ import config
 import db
 from gui.images import IMAGE_EXTENSIONS
 from gui.thumbs import load_thumbnail
-from gui.widgets.ingredient_fields import AllergenChecks, CategoryPills, NutritionGrid, num_text
+from gui.widgets.ingredient_fields import AllergenChecks, CategoryPills, NutritionGrid, StatementBox, num_text
+from gui.widgets.portion_tool_field import attach_tool_picker
 from gui.widgets.usda_panel import UsdaLookupPanel
 
 
@@ -213,13 +214,14 @@ class IngredientNewDialog(QDialog):
         self.weight_edit.setAlignment(Qt.AlignRight)
         self.portion_edit = QLineEdit()
         self.portion_edit.setPlaceholderText('e.g. Tongs')
+        attach_tool_picker(self.portion_edit)
         for e in (self.unit_edit, self.weight_edit):
             e.textChanged.connect(lambda _t: self._on_unit_changed())
         facts = QHBoxLayout()
         facts.setSpacing(12)
         facts.addLayout(_labelled('Unit', self.unit_edit, 110))
         facts.addLayout(_labelled('Weight per unit (g)', self.weight_edit, 130))
-        facts.addLayout(_labelled('Portion tool', self.portion_edit, 150))
+        facts.addLayout(_labelled('Portion tool', self.portion_edit, 160))
         facts.addStretch()
         photo_col = QVBoxLayout()
         photo_col.setSpacing(4)
@@ -280,6 +282,8 @@ class IngredientNewDialog(QDialog):
         layout.addWidget(self.nutrition_title)
         self.nutrition = NutritionGrid()
         layout.addWidget(self.nutrition)
+        self.statement = StatementBox()
+        layout.addWidget(self.statement)
         self.usda_note = QLabel('')
         self.usda_note.setWordWrap(True)
         self.usda_note.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
@@ -407,7 +411,8 @@ class IngredientNewDialog(QDialog):
         return (self.name_edit.text().strip(), self.unit_edit.text(), self.weight_edit.text(),
                 self.portion_edit.text(), self.category.selected(), self._image,
                 self.case_price.text(), self.case_yields.text(),
-                tuple(sorted(self.nutrition.values().items())), tuple(self.allergens.checked_ids()))
+                tuple(sorted(self.nutrition.values().items())), tuple(self.allergens.checked_ids()),
+                tuple(self.allergens.facility_ids()), self.statement.text())
 
     def _save(self):
         name = self.name_edit.text().strip()
@@ -435,7 +440,8 @@ class IngredientNewDialog(QDialog):
         })
         new_id = db.create_ingredient(values)
         db.set_ingredient_tag(new_id, self.category.selected())
-        db.set_ingredient_allergens(new_id, self.allergens.checked_ids())
+        db.set_ingredient_allergens(new_id, self.allergens.checked_ids(), self.allergens.facility_ids())
+        db.set_ingredient_statement(new_id, self.statement.text())
         if price:
             db.ingredient_price_new(new_id, (self.supplier.currentData(), price[0], price[1],
                                              date.today().isoformat(), ''))
@@ -454,7 +460,8 @@ class IngredientNewDialog(QDialog):
             return
         # Keep the supplier (a run of entries is often one invoice);
         # clear everything specific to the ingredient.
-        for e in (self.name_edit, self.weight_edit, self.portion_edit, self.case_price, self.case_yields):
+        for e in (self.name_edit, self.weight_edit, self.portion_edit, self.case_price, self.case_yields,
+                  self.statement):
             e.clear()
         self.nutrition.set_values({k: '' for k in self.nutrition.values()})
         self.allergens.set_checked([])

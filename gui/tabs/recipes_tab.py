@@ -61,6 +61,7 @@ class RecipesTab(QWidget):
     recipeDeletedFromTabs = Signal(int)  # propagates from EditorTabs so MainWindow can refresh
     newRecipeRequested = Signal()
     duplicateRequested = Signal(int)     # recipe id
+    printRequested = Signal(int)         # recipe id
 
     def __init__(self, source_model, context_actions, compare_tray=None, parent=None):
         super().__init__(parent)
@@ -142,7 +143,8 @@ class RecipesTab(QWidget):
         self.inspector = RecipeInspector()
         self.inspector.openRequested.connect(self._open_id)
         self.inspector.duplicateRequested.connect(self.duplicateRequested.emit)
-        self.inspector.archiveRequested.connect(self.set_archived)
+        # The pane's Archive link always asks first.
+        self.inspector.archiveRequested.connect(lambda rid, on: self.set_archived(rid, on, ask=True))
 
         self.stack = QStackedWidget()
         self.stack.addWidget(self.gallery)
@@ -321,13 +323,15 @@ class RecipesTab(QWidget):
         src_row = self.source_model.row_for_id(recipe_id)
         return src_row >= 0 and self.source_model.row_dict(src_row)['Archived']
 
-    def set_archived(self, recipe_id, archived):
-        '''Archive (take off the menu) or restore a recipe, undoably.'''
+    def set_archived(self, recipe_id, archived, ask=False):
+        '''Archive (take off the menu) or restore a recipe, undoably.
+        Archiving asks first when recipes on the menu use it, or always
+        with `ask`.'''
         src_row = self.source_model.row_for_id(recipe_id)
         if src_row < 0 or self.is_archived(recipe_id) == archived:
             return
         name = self.source_model.row_dict(src_row)['Name']
-        if archived and not confirm_archive(self, recipe_id, name):
+        if archived and not confirm_archive(self, recipe_id, name, always=ask):
             return
         self.library_undo.push(SetRecipeStatusCommand(
             recipe_id, 'archived' if not archived else 'active',

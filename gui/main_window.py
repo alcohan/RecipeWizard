@@ -25,6 +25,7 @@ from gui.dialogs.recipe_create import RecipeCreateDialog
 from gui.dialogs.update import UpdateDialog, install_update
 from gui.dialogs.template_editor import TemplatesEditor, TemplatesManagerDialog
 from gui.models.ingredients_model import IngredientsModel
+from gui.printing.print_dialog import print_recipes
 from gui.models.recipes_model import RecipesModel
 from gui.tabs.analytics_tab import AnalyticsTab
 from gui.dialogs.tags_manager import TagsPage
@@ -33,6 +34,8 @@ from gui.tabs.configure_tab import ConfigureTab, LauncherPage
 from gui.tabs.diets_page import DietsPage
 from gui.tabs.ingredients_tab import IngredientsTab
 from gui.tabs.library_health_tab import LibraryHealthTab
+from gui.tabs.portion_tools_page import PortionToolsPage
+from gui.tabs.print_page import PrintPage
 from gui.tabs.recipes_tab import ARCHIVE_ACTION, RecipesTab
 from gui.tabs.import_formats_page import ImportFormatsPage
 from gui.tabs.suppliers_tab import SuppliersTab
@@ -170,6 +173,7 @@ class MainWindow(QMainWindow):
         self.tray_dock = CompareTrayDock(self.compare_tray)
         self.tray_dock.expandRequested.connect(lambda: self._go_to_place('analytics'))
         self.tray_dock.recipeActivated.connect(self._on_recipe_edit_by_id)
+        self.tray_dock.printRequested.connect(self._print_recipes)
         self._tray_docked = False
 
         self.status_bar = RecipeWizardStatusBar()
@@ -216,6 +220,7 @@ class MainWindow(QMainWindow):
                 ('Open in tab', self._on_recipe_edit),
                 ('Add to compare (Space)', self._on_toggle_tray_for_row),
                 ('Duplicate', lambda r: self._duplicate_recipe(self.recipes_model.id_at_row(r))),
+                ('Print…', lambda r: self._print_recipes([self.recipes_model.id_at_row(r)])),
                 (ARCHIVE_ACTION, None),
                 (None, None),
                 ('Delete…', self._on_recipe_delete),
@@ -224,6 +229,7 @@ class MainWindow(QMainWindow):
         )
         tab.newRecipeRequested.connect(self._on_new_recipe)
         tab.duplicateRequested.connect(self._duplicate_recipe)
+        tab.printRequested.connect(lambda rid: self._print_recipes([rid]))
         # A recipe deleted or saved from its tab changes what the
         # library, gallery and counts show.
         tab.recipeDeletedFromTabs.connect(lambda _rid: self.refresh())
@@ -310,6 +316,8 @@ class MainWindow(QMainWindow):
         self.diets_page = DietsPage(self.recipes_model)
         self.diets_page.changed.connect(self._on_config_changed)
         cfg.add_section('diets', 'Diets', self.diets_page)
+        self.portion_tools_page = PortionToolsPage()
+        cfg.add_section('portion_tools', 'Portion tools', self.portion_tools_page)
         # Template, category and tag edits save as they're made; the
         # Library picks them up when you move on.
         cfg.sectionChanged.connect(self._on_config_section_changed)
@@ -352,6 +360,8 @@ class MainWindow(QMainWindow):
         self.preferences_page.changed.connect(self._refresh_configure_counts)
         self.preferences_page.foodCostChanged.connect(self._on_food_cost_target_changed)
         cfg.add_section('preferences', 'Preferences', self.preferences_page)
+        self.print_page = PrintPage()
+        cfg.add_section('print', 'Print & branding', self.print_page)
         self.configure_tab = cfg
         return cfg
 
@@ -601,6 +611,7 @@ class MainWindow(QMainWindow):
                            lambda: self._with_editor('show_nutrition_label'))
         history_action = add(recipe_menu, '&Price History…',
                              lambda: self._with_editor('show_price_history'))
+        add(recipe_menu, 'Pr&int Recipe…', self._on_print_current, 'Ctrl+P')
         recipe_menu.addSeparator()
         add(recipe_menu, 'D&uplicate Recipe', self._on_duplicate_current, 'Ctrl+D')
         self.archive_action = add(recipe_menu, 'A&rchive Recipe', self._on_toggle_archive_current)
@@ -743,6 +754,20 @@ class MainWindow(QMainWindow):
         rid = self.recipes_tab.selected_recipe_id()
         if rid is not None and self.stack.currentWidget() is self.recipes_tab:
             self._duplicate_recipe(rid)
+
+    def _on_print_current(self):
+        '''Ctrl+P: the recipe in the current tab, or the Library's
+        selection.'''
+        editor = self._current_editor()
+        if editor is not None and self.stack.currentWidget() is self.recipes_tab:
+            self._print_recipes([editor.recipe_id])
+            return
+        rid = self.recipes_tab.selected_recipe_id()
+        if rid is not None and self.stack.currentWidget() is self.recipes_tab:
+            self._print_recipes([rid])
+
+    def _print_recipes(self, recipe_ids):
+        print_recipes(self, [rid for rid in recipe_ids if rid is not None])
 
     def _sync_archive_action(self):
         editor = self._current_editor()

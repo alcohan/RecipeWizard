@@ -279,12 +279,15 @@ class RecipeInspector(QScrollArea):
 
         self._fill_components(rid)
         sources = db.get_recipe_allergen_sources(rid)
+        facility = db.get_recipe_allergen_sources(rid, facility=True)
         self._fill_diets(row)
-        if sources:
-            self.allergens.setText('<br>'.join(
-                f'{a} <span style="color: {_MUTED}">— {", ".join(src)}</span>' for a, src in sources))
-        else:
-            self.allergens.setText(f'<span style="color: {_MUTED}">None</span>')
+        lines = [f'{a} <span style="color: {_MUTED}">— {", ".join(src)}</span>' for a, src in sources]
+        if facility:
+            lines.append(f'<span style="color: #8a4a00; font-size: 11px; font-weight: 600;'
+                         f' letter-spacing: 1px;">FACILITY</span>')
+            lines += [f'<span style="color: #8a4a00">{a}</span> <span style="color: {_MUTED}">— '
+                      f'{", ".join(src)}</span>' for a, src in facility]
+        self.allergens.setText('<br>'.join(lines) if lines else f'<span style="color: {_MUTED}">None</span>')
 
     def _fill_components(self, rid):
         # "Romaine • Kale • Jalapenos • ...", in the recipe's order. The

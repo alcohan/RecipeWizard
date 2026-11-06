@@ -18,7 +18,7 @@ SELECT COALESCE(r.Name, i.Name) AS Name
         (SELECT group_concat(name, ', ') FROM
             (SELECT a.name FROM ingredient_allergens ia
              JOIN allergens a ON a.id = ia.allergen_id
-             WHERE ia.ingredient_id = c.ChildIngredient ORDER BY a.sortOrder, a.id))
+             WHERE ia.ingredient_id = c.ChildIngredient AND ia.facility = 0 ORDER BY a.sortOrder, a.id))
       END AS Allergens
     , COALESCE(r.Id, i.Id) AS Id
     , c.SortOrder AS SortOrder

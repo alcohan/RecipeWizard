@@ -166,8 +166,9 @@ class RecipesFacetPane(FacetPane):
                                 for cid, name, color in self._categories])
 
         allergens = db.get_all_allergens()
-        self._fill('allergen', [(a, a, None, sum(1 for r in rows if a not in r['Allergens']), None,
-                                 f'Recipes without {a.lower()}')
+        self._fill('allergen', [(a, a, None, sum(1 for r in rows if a not in r['Allergens']
+                                                and a not in (r.get('FacilityAllergens') or ())), None,
+                                 f'Recipes without {a.lower()}, and no facility warning for it')
                                 for a in allergens])
 
         self._priced = sum(1 for r in rows if r.get('FoodCostPct') is not None)

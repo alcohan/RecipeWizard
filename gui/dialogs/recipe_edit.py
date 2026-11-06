@@ -51,8 +51,8 @@ from gui.dialogs.recipe_component_add import RecipeComponentAddDialog
 from gui.models.components_model import RecipeComponentsModel
 from gui.undo.recipe_commands import (
     AddComponentCommand, PortionCommand, RemoveComponentCommand, ReorderComponentsCommand,
-    SetComponentQtyCommand, SetRecipeStatusCommand, SetRecipeTagCommand, SetRecipeTagsCommand,
-    UpdateRecipeInfoCommand,
+    SetComponentQtyCommand, SetRecipeImageCommand, SetRecipeStatusCommand, SetRecipeTagCommand,
+    SetRecipeTagsCommand, UpdateRecipeInfoCommand,
 )
 from gui.widgets.component_delegates import (
     ChangedRowDelegate, NameDelegate, QuantityDelegate, ShareDelegate,
@@ -61,7 +61,8 @@ from gui.widgets.editor_results import EditorResults
 from gui.widgets.undo_keys import pass_undo_keys
 from gui.widgets.format_segments import FormatSegments
 from gui.widgets.template_summary import TemplateSummaryLine
-from gui.widgets.wedge_view import WedgeView
+from gui.widgets.wedge_view import WedgeView, recipe_photo
+from gui.images import bring_in_photo, choose_photo, is_image_file
 
 
 WEDGE_SIZE = 200
@@ -199,7 +200,7 @@ class RecipeEditWidget(QWidget):
         action_bar = self._build_action_bar()
         build = self._build_build_area(recipe)
         self.wedge = WedgeView(self.recipe_id, size=WEDGE_SIZE)
-        self.results = EditorResults(self.wedge)
+        self.results = EditorResults(self._build_photo_box())
         self.results.fullLabelRequested.connect(self._on_nutrition_label)
 
         build_scroll = QScrollArea()
@@ -374,10 +375,13 @@ class RecipeEditWidget(QWidget):
         label_btn.clicked.connect(self._on_nutrition_label)
         history_btn = QPushButton('Price history')
         history_btn.clicked.connect(self._on_price_history)
+        print_btn = QPushButton('Print')
+        print_btn.setToolTip('Print this recipe’s page (Ctrl+P)')
+        print_btn.clicked.connect(self.print_recipe)
         self.compare_btn = QPushButton('')
         self.compare_btn.clicked.connect(self._toggle_compare)
         self.compare_btn.setVisible(self._compare_tray is not None)
-        for btn in (self.archive_btn, label_btn, history_btn, self.compare_btn):
+        for btn in (self.archive_btn, label_btn, history_btn, print_btn, self.compare_btn):
             btn.setStyleSheet(_SECONDARY_BTN)
             btn.setAutoDefault(False)
         self.save_btn = QPushButton('Save   Ctrl+S')
@@ -395,6 +399,7 @@ class RecipeEditWidget(QWidget):
         row.addWidget(self.archive_btn)
         row.addWidget(label_btn)
         row.addWidget(history_btn)
+        row.addWidget(print_btn)
         row.addWidget(self.compare_btn)
         row.addWidget(self.save_btn)
         return bar
@@ -496,6 +501,55 @@ class RecipeEditWidget(QWidget):
         layout.addWidget(self._build_components_card())
         layout.addStretch(1)
         return area
+
+    def _build_photo_box(self):
+        '''The wedge (or the recipe's photo) with "Add photo" /
+        "Change · Remove" under it. An image file dropped on it sets the
+        photo too. Photo changes go on the undo stack like any edit.'''
+        box = _PhotoDropBox(self._on_photo_dropped)
+        col = QVBoxLayout(box)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(6)
+        col.addWidget(self.wedge, alignment=Qt.AlignHCenter)
+        self.photo_links = QLabel('')
+        self.photo_links.setTextFormat(Qt.RichText)
+        self.photo_links.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
+        self.photo_links.linkActivated.connect(self._on_photo_link)
+        col.addWidget(self.photo_links, alignment=Qt.AlignHCenter)
+        self._sync_photo_links()
+        return box
+
+    def _sync_photo_links(self):
+        link = f'color: {_ROMAINE}; text-decoration: none'
+        if recipe_photo(self.recipe_id):
+            self.photo_links.setText(f'<a href="change" style="{link}">Change photo</a>'
+                                     f' &nbsp;·&nbsp; <a href="remove" style="{link}">Remove</a>')
+            self.photo_links.setToolTip('The photo shows in place of the wedge everywhere.')
+        else:
+            self.photo_links.setText(f'<a href="change" style="{link}">Add photo</a>')
+            self.photo_links.setToolTip('A photo shows in place of the wedge everywhere,'
+                                        ' printed pages included. You can also drop an image here.')
+
+    def _on_photo_link(self, href):
+        if href == 'remove':
+            self._set_recipe_photo('')
+            return
+        name = choose_photo(self, config.RECIPE_IMAGES_PATH, 'Choose a recipe photo')
+        if name:
+            self._set_recipe_photo(name)
+
+    def _on_photo_dropped(self, path):
+        name = bring_in_photo(self, path, config.RECIPE_IMAGES_PATH)
+        if name:
+            self._set_recipe_photo(name)
+
+    def _set_recipe_photo(self, name):
+        before = db.get_recipe_image(self.recipe_id)
+        if (before or '') == (name or ''):
+            # Same filename, maybe a replaced file: just redraw.
+            self.wedge.refresh()
+            return
+        self.undo_stack.push(SetRecipeImageCommand(self.recipe_id, before, name))
 
     def _build_components_card(self):
         card = QFrame()
@@ -674,8 +728,11 @@ class RecipeEditWidget(QWidget):
         self._refresh_tag_pills()
         self._refresh_chips(recipe)
         self.results.update_results(
-            recipe, self._baseline, db.get_recipe_allergen_sources(self.recipe_id))
+            recipe, self._baseline, db.get_recipe_allergen_sources(self.recipe_id),
+            db.get_recipe_allergen_sources(self.recipe_id, facility=True))
         self.wedge.refresh()
+        if hasattr(self, 'photo_links'):
+            self._sync_photo_links()
 
         # Sync editable fields. A field holding an edit the user hasn't
         # committed yet is left alone — otherwise typing in one field while
@@ -977,10 +1034,13 @@ class RecipeEditWidget(QWidget):
                 if portion['state'] == 'base' and portion['siblings'] >= 2:
                     even_action = menu.addAction('Split base evenly')
             edit_action.setEnabled(self.components_model.qty_editable(index.row()))
-        open_action = None
+        open_action = edit_ing_action = None
         if row_dict['Type'] == 'recipe':
             menu.addSeparator()
             open_action = menu.addAction(f"Open {row_dict['Name']}")
+        else:
+            menu.addSeparator()
+            edit_ing_action = menu.addAction('Edit ingredient…')
         if is_template:
             # Template-added rows are managed by the template, not the
             # recipe. Disable mutating actions; the user edits the
@@ -994,8 +1054,26 @@ class RecipeEditWidget(QWidget):
             self._remove_component(index.row())
         elif open_action is not None and chosen is open_action:
             self.openRecipeRequested.emit(row_dict['Id'])
+        elif edit_ing_action is not None and chosen is edit_ing_action:
+            self._edit_ingredient(row_dict['Id'])
         elif chosen is not None and chosen in (follow_action, pin_action, even_action):
             self._portion_action(chosen, follow_action, pin_action, row_dict)
+
+    def _edit_ingredient(self, ingredient_id):
+        '''Open the ingredient's editor (the main window's, so the library
+        refreshes too), then re-read this recipe: its cost, nutrition and
+        allergens may have changed.'''
+        win = self.window()
+        if hasattr(win, '_on_ingredient_edit_by_id'):
+            dlg = win._on_ingredient_edit_by_id(ingredient_id)
+        else:
+            from gui.dialogs.ingredient_edit import IngredientEditDialog
+            dlg = IngredientEditDialog(ingredient_id, parent=self)
+            dlg.exec()
+            if dlg.open_recipe_id is not None:
+                self.openRecipeRequested.emit(dlg.open_recipe_id)
+        if dlg.modified and not self._being_deleted:
+            self._refresh()
 
     def _portion_action(self, chosen, follow_action, pin_action, row_dict):
         rid, iid, name = self.recipe_id, row_dict['Id'], row_dict['Name']
@@ -1031,6 +1109,10 @@ class RecipeEditWidget(QWidget):
         if before == after:
             return
         self.undo_stack.push(ReorderComponentsCommand(self.recipe_id, before, after))
+
+    def print_recipe(self):
+        from gui.printing.print_dialog import print_recipes
+        print_recipes(self, [self.recipe_id])
 
     def _on_nutrition_label(self):
         NutritionLabelDialog(self.recipe_id, parent=self).exec()
@@ -1112,6 +1194,30 @@ class RecipeEditDialog(QDialog):
         if not self.widget.close_requested():
             return
         super().done(result)
+
+
+class _PhotoDropBox(QWidget):
+    '''Holds the wedge; accepts an image file dropped on it.'''
+
+    def __init__(self, on_drop, parent=None):
+        super().__init__(parent)
+        self._on_drop = on_drop
+        self.setAcceptDrops(True)
+
+    def _image_path(self, event):
+        urls = event.mimeData().urls() if event.mimeData().hasUrls() else []
+        path = urls[0].toLocalFile() if urls else ''
+        return path if is_image_file(path) else ''
+
+    def dragEnterEvent(self, event):
+        if self._image_path(event):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        path = self._image_path(event)
+        if path:
+            event.acceptProposedAction()
+            self._on_drop(path)
 
 
 def _html_escape(text):

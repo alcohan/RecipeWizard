@@ -356,6 +356,13 @@ class RecipeComponentAddDialog(QDialog):
         eligible = db.get_eligible_ingredients(self.recipe_id)
         if self._ingredients_only:
             eligible = [row for row in eligible if row[1] != 'recipe']
+        # Like the Ingredients gallery: ingredients by category order, then
+        # name (uncategorized last); sub-recipes after them, by name.
+        cat_order = {t['name']: i for i, t in enumerate(db.get_tags('ingredient'))}
+        eligible = sorted(eligible, key=lambda row: (
+            row[1] == 'recipe',
+            0 if row[1] == 'recipe' else cat_order.get(row[4], len(cat_order)),
+            (row[2] or '').casefold()))
         self._existing = {}
         self._recipe = None
         self._recipe_allergens = set()

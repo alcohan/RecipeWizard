@@ -2,7 +2,9 @@
 
 A diet rule excludes recipes containing any of its allergens and/or
 needs a nutrient at least (or at most) some amount per serving. A
-serving is one unit of the recipe's yield. Rules live in the library
+serving is one unit of the recipe's yield. A strict rule (the default)
+also excludes recipes with a facility warning for one of its allergens
+("made in a facility that also handles…"). Rules live in the library
 (diets / diet_allergens, edited in Configure › Diets); DEFAULT_DIETS
 seeds them once.
 
@@ -37,9 +39,9 @@ DEFAULT_DIETS = (
 )
 
 
-def _rule(key, name, excluded=(), nutrient=None, op='min', amount=None):
+def _rule(key, name, excluded=(), nutrient=None, op='min', amount=None, strict=True):
     return {'key': key, 'name': name, 'excluded': list(excluded), 'nutrient': nutrient,
-            'op': op or 'min', 'amount': amount}
+            'op': op or 'min', 'amount': amount, 'strict': strict}
 
 
 _rules = [_rule(*d) for d in DEFAULT_DIETS]
@@ -68,7 +70,8 @@ def describe(rule):
     '''"No meat, fish or dairy · 30 g protein or more per serving".'''
     parts = []
     if rule.get('excluded'):
-        parts.append('No ' + _list(rule['excluded']))
+        parts.append('No ' + _list(rule['excluded'])
+                     + (', including facility warnings' if rule.get('strict', True) else ''))
     if rule.get('nutrient') and rule.get('amount') is not None:
         amount = '{:g}'.format(float(rule['amount']))
         unit = NUTRIENT_UNITS.get(rule['nutrient'], '')
@@ -78,8 +81,12 @@ def describe(rule):
     return ' · '.join(parts) or 'Every recipe fits (no rule yet)'
 
 
-def fits(rule, allergens, per_serving):
+def fits(rule, allergens, per_serving, facility=()):
+    '''`allergens` the recipe contains; `facility` its facility-only
+    warnings, which count against a strict rule.'''
     have = set(allergens or ())
+    if rule.get('strict', True):
+        have |= set(facility or ())
     if rule.get('excluded') and have.intersection(rule['excluded']):
         return False
     if rule.get('nutrient') and rule.get('amount') is not None:
@@ -90,16 +97,23 @@ def fits(rule, allergens, per_serving):
     return True
 
 
-def diets_for(allergens, per_serving, rule_list=None):
+def diets_for(allergens, per_serving, rule_list=None, facility=()):
     '''Keys of the diets a recipe fits, in rule order. `allergens` is
     an iterable of allergen names in the recipe's tree; `per_serving`
-    maps NUTRIENTS keys to amounts per serving (missing = 0).'''
+    maps NUTRIENTS keys to amounts per serving (missing = 0); `facility`
+    the recipe's facility-only warnings.'''
     return [r['key'] for r in (rule_list if rule_list is not None else _rules)
-            if fits(r, allergens, per_serving)]
+            if fits(r, allergens, per_serving, facility)]
 
 
-def excluded_by(allergen_names, rule_list=None):
-    '''Names of the diets an ingredient with these allergens rules out.'''
+def excluded_by(allergen_names, rule_list=None, facility=()):
+    '''Names of the diets an ingredient with these allergens (and these
+    facility warnings) rules out.'''
     have = set(allergen_names or ())
-    return [r['name'] for r in (rule_list if rule_list is not None else _rules)
-            if have.intersection(r.get('excluded') or ())]
+    warned = set(facility or ())
+    out = []
+    for r in (rule_list if rule_list is not None else _rules):
+        banned = set(r.get('excluded') or ())
+        if have & banned or (r.get('strict', True) and warned & banned):
+            out.append(r['name'])
+    return out
