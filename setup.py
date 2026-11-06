@@ -285,13 +285,30 @@ def migrateDB(path=None):
         print('Migrating: adding Recipes.status')
         cursor.execute("ALTER TABLE Recipes ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
 
+    # Library health: each ingredient category says whether its items
+    # need nutrition and a price (Packaging doesn't need nutrition), an
+    # ingredient can be confirmed as really having 0 calories, and a
+    # price can be marked checked without adding a new price entry.
+    if not column_exists('tags', 'needs_nutrition'):
+        print('Migrating: adding tags.needs_nutrition / needs_price')
+        cursor.execute('ALTER TABLE tags ADD COLUMN needs_nutrition INTEGER NOT NULL DEFAULT 1')
+        cursor.execute('ALTER TABLE tags ADD COLUMN needs_price INTEGER NOT NULL DEFAULT 1')
+        cursor.execute("UPDATE tags SET needs_nutrition = 0 WHERE kind = 'ingredient' AND lower(name) = 'packaging';")
+    if not column_exists('Ingredients', 'nutrition_confirmed'):
+        print('Migrating: adding Ingredients.nutrition_confirmed / price_checked')
+        cursor.execute('ALTER TABLE Ingredients ADD COLUMN nutrition_confirmed INTEGER NOT NULL DEFAULT 0')
+        cursor.execute('ALTER TABLE Ingredients ADD COLUMN price_checked TEXT')
+
     # Trigger set is rebuilt on every migration so changes to the bump
     # logic propagate without bespoke migration steps. The WHEN guard on
     # the row-self-update triggers prevents infinite recursion.
     cursor.executescript('''
         DROP TRIGGER IF EXISTS ingredients_bump_updated_at;
+        -- Library health's "0 is right" and "Still right" aren't edits.
         CREATE TRIGGER ingredients_bump_updated_at AFTER UPDATE ON Ingredients
         WHEN NEW.updated_at = OLD.updated_at
+          AND NOT (NEW.nutrition_confirmed IS NOT OLD.nutrition_confirmed
+                   OR NEW.price_checked IS NOT OLD.price_checked)
         BEGIN
           UPDATE Ingredients SET updated_at = datetime('now') WHERE Id = NEW.Id;
         END;

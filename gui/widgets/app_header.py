@@ -11,11 +11,14 @@ other code changes.
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton
 
+from gui.widgets.text_fit import text_width
+
 
 # Evergreens tokens — the brand's app-bar palette.
 _CHROME_BG = '#082c00'            # kale
 _ON_CHROME = '#fff1da'            # parmesan
 _CHROME_ACCENT = '#bbca00'        # avocado
+_ALERT_BG = '#ffa94d'             # needs attention: a warm pill that reads on kale
 _HEADER_HEIGHT = 44
 
 
@@ -124,11 +127,11 @@ class AppHeader(QFrame):
                 return i
         return 0
 
-    def set_badge(self, index, count):
-        '''Show `count` as a small avocado pill after the place name;
-        zero or None hides it.'''
+    def set_badge(self, index, count, tooltip=''):
+        '''Show `count` as an orange pill after the place name; zero or
+        None hides it.'''
         if 0 <= index < len(self._buttons):
-            self._buttons[index].set_badge(count)
+            self._buttons[index].set_badge(count, tooltip)
 
     def set_freshness(self, text):
         '''"Prices as of Oct 14" — set by main_window from the latest
@@ -141,6 +144,8 @@ class _PlaceButton(QPushButton):
     '''Clickable place name on the kale bar. Active state draws the
     avocado underline + bold weight — not a background flood.'''
 
+    _PAD = 14
+
     def __init__(self, label, parent=None):
         super().__init__(label, parent)
         self.setFlat(True)
@@ -148,6 +153,14 @@ class _PlaceButton(QPushButton):
         self.setFixedHeight(_HEADER_HEIGHT)
         self._label = label
         self._active = False
+        # The count pill sits on the button, right of the label; the
+        # button's right padding makes room for it.
+        self._badge = QLabel(self)
+        self._badge.setAlignment(Qt.AlignCenter)
+        self._badge.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._badge.setStyleSheet(f'background: {_ALERT_BG}; color: {_CHROME_BG}; font-size: 11px;'
+                                  ' font-weight: 700; border-radius: 9px; padding: 0 6px;')
+        self._badge.hide()
         self._apply_style()
 
     def _apply_style(self):
@@ -158,7 +171,7 @@ class _PlaceButton(QPushButton):
                     background: transparent;
                     border: 0;
                     border-bottom: 3px solid {_CHROME_ACCENT};
-                    padding: 0 14px;
+                    padding: 0 {self._pad_right()}px 0 {self._PAD}px;
                     font-size: 14px;
                     font-weight: 650;
                 }}
@@ -170,7 +183,7 @@ class _PlaceButton(QPushButton):
                     background: transparent;
                     border: 0;
                     border-bottom: 3px solid transparent;
-                    padding: 0 14px;
+                    padding: 0 {self._pad_right()}px 0 {self._PAD}px;
                     font-size: 14px;
                     font-weight: 400;
                 }}
@@ -179,10 +192,26 @@ class _PlaceButton(QPushButton):
                 }}
             ''')
 
-    def set_badge(self, count):
-        # QPushButton can't mix styles inside its label, so the badge is
-        # a plain trailing count — readable and keeps the button one widget.
-        self.setText(f'{self._label}  {count}' if count else self._label)
+    def _pad_right(self):
+        return self._PAD + (self._badge.width() + 6 if self._badge.text() else 0)
+
+    def set_badge(self, count, tooltip=''):
+        self._badge.setText(str(count) if count else '')
+        self._badge.setVisible(bool(count))
+        if count:
+            w = max(18, text_width(self._badge.font(), str(count)) + 12)
+            self._badge.setFixedSize(w, 18)
+        self.setToolTip(tooltip if count else '')
+        self._apply_style()
+        self._place_badge()
+
+    def _place_badge(self):
+        if self._badge.text():
+            self._badge.move(self.width() - self._PAD - self._badge.width(), (self.height() - self._badge.height()) // 2)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._place_badge()
 
     def set_active(self, active):
         self._active = bool(active)

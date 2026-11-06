@@ -523,6 +523,7 @@ def _clear(grid):
         item = grid.takeAt(0)
         w = item.widget()
         if w is not None:
+            w.hide()
             w.deleteLater()
 
 

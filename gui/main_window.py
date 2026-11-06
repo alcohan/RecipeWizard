@@ -1,6 +1,6 @@
 import os
 
-from PySide6.QtCore import Qt, QSettings, QUrl
+from PySide6.QtCore import QSettings, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QDialog, QFileDialog, QMainWindow, QMessageBox,
@@ -279,6 +279,7 @@ class MainWindow(QMainWindow):
         self.refresh()
         self.vendor_items_page.refresh()
         self.import_formats_page.refresh()
+        self.suppliers_page.refresh()
         self._refresh_configure_counts()
 
     def _analytics_place(self):
@@ -304,14 +305,14 @@ class MainWindow(QMainWindow):
         cfg.add_section('formats', 'Formats & templates', self.templates_page)
         self.categories_page = TagsPage(
             'Ingredient categories', 'ingredient',
-            'Order sets the wedge order')
+            'Order sets the wedge order. Nutrition and Price set what Library health checks')
+        self.categories_page.changed.connect(self._on_config_changed)
         cfg.add_section('categories', 'Ingredient categories', self.categories_page)
         self.allergens_page = AllergensPage()
         self.allergens_page.changed.connect(self._on_config_changed)
         cfg.add_section('allergens', 'Allergens', self.allergens_page)
-        self.recipe_tags_page = TagsPage(
-            'Recipe tags', 'recipe_tag',
-            '')
+        self.recipe_tags_page = TagsPage('Recipe tags', 'recipe_tag')
+        self.recipe_tags_page.changed.connect(self._on_config_changed)
         cfg.add_section('recipe_tags', 'Recipe tags', self.recipe_tags_page)
         self.diets_page = DietsPage(self.recipes_model)
         self.diets_page.changed.connect(self._on_config_changed)
@@ -322,7 +323,10 @@ class MainWindow(QMainWindow):
         # Library picks them up when you move on.
         cfg.sectionChanged.connect(self._on_config_section_changed)
         cfg.add_group('Purchasing')
-        cfg.add_section('suppliers', 'Suppliers', SuppliersTab())
+        self.suppliers_page = SuppliersTab()
+        self.suppliers_page.changed.connect(self._on_config_changed)
+        self.suppliers_page.ingredientRequested.connect(self._edit_ingredient_from_suppliers)
+        cfg.add_section('suppliers', 'Suppliers', self.suppliers_page)
         self.vendor_items_page = VendorItemsPage()
         self.vendor_items_page.changed.connect(self._on_prices_imported)
         self.vendor_items_page.importRequested.connect(self._on_import_purchases)
@@ -333,6 +337,9 @@ class MainWindow(QMainWindow):
         cfg.add_section('import_formats', 'Import formats & history', self.import_formats_page)
         cfg.add_group('Upkeep')
         self.library_health_tab = LibraryHealthTab()
+        self.library_health_tab.ingredientRequested.connect(self._on_ingredient_edit_by_id)
+        self.library_health_tab.newPriceRequested.connect(self._on_ingredient_new_price)
+        self.library_health_tab.changed.connect(self._refresh_health_count)
         cfg.add_section('health', 'Library health', self.library_health_tab)
         cfg.add_section('data', 'Data & backups', LauncherPage(
             'Data & backups',
@@ -375,6 +382,11 @@ class MainWindow(QMainWindow):
             page.refresh()
         if key == 'formats':
             self.templates_page._refresh_list()
+
+    def _edit_ingredient_from_suppliers(self, ingredient_id):
+        dlg = self._on_ingredient_edit_by_id(ingredient_id)
+        if dlg is not None and getattr(dlg, 'modified', False):
+            self.suppliers_page.refresh()
 
     def _on_config_changed(self):
         '''A Configure page saved a change the Library depends on
@@ -421,12 +433,12 @@ class MainWindow(QMainWindow):
 
     def _refresh_health_count(self):
         try:
-            report = db.library_health_report()
-            n = sum(count for count, _sample in report.values())
+            n = db.library_health()['issues']
         except Exception:
             n = 0
-        self.app_header.set_badge(self._PLACES.index('configure'), n)
-        self.configure_tab.set_section_count('health', n)
+        tip = f"{n} thing{'s' if n != 1 else ''} to fix in Library health"
+        self.app_header.set_badge(self._PLACES.index('configure'), n, tip)
+        self.configure_tab.set_section_alert('health', n, tip)
 
     def _refresh_configure_counts(self):
         cfg = self.configure_tab
@@ -964,7 +976,7 @@ class MainWindow(QMainWindow):
         self.refresh()
 
     def _on_about(self):
-        AboutDialog(parent=self).exec()
+        AboutDialog(parent=self, on_check_updates=self._on_check_updates).exec()
 
     # --- updates ---
 

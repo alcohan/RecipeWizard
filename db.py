@@ -334,66 +334,76 @@ def get_recipe_category_details():
     return query_from_file('sql\\get_recipe_category_details.sql')['data']
 
 
-def library_health_report(stale_days=90):
-    '''Collect the data-quality signals Library Health surfaces.
+STALE_PRICE_DAYS = 90
 
-    Each check returns a (count, sample_names) pair — the sample is at
-    most 5 names for the UI to show inline, the full count drives the
-    badge. Checks are intentionally conservative:
+# An ingredient is "in use" when an active recipe lists it (archived
+# recipes aren't on the menu). Its category says what it needs; an
+# ingredient with no category needs both.
+_IN_USE = """EXISTS (SELECT 1 FROM Connections c JOIN Recipes r ON r.Id = c.ParentRecipe
+                     WHERE c.ChildIngredient = i.Id AND COALESCE(r.status, 'active') != 'archived')"""
+_CATEGORY = """(SELECT t.{col} FROM ingredient_tags_mapping m JOIN tags t ON t.id = m.tag_id
+                WHERE m.ingredient_id = i.Id AND t.kind = 'ingredient' LIMIT 1)"""
 
-      - missing_nutrition: Calories IS NULL or 0. Fat/protein etc. are
-        allowed to be zero (water has them), but a calorie-less row is
-        almost always a stub the user forgot to fill in.
-      - stale_prices: ingredients whose latest ingredient_prices row is
-        older than `stale_days`, plus ingredients with no prices at all.
-      - unused_ingredients: not referenced by any Connections row.
-      - duplicate_names: ingredient names colliding case-insensitively.
 
-    All read-only; this is a glance report, not an auto-fixer.'''
-    def _rows_with_sample(sql, params=(), limit=5):
-        rows = query(sql, params)['data']
-        names = [r['Name'] for r in rows[:limit]]
-        return len(rows), names
+def library_health(stale_days=STALE_PRICE_DAYS):
+    '''What Library health shows, for ingredients used in active recipes:
 
-    missing_nutrition = _rows_with_sample(
-        'SELECT Name FROM Ingredients'
-        ' WHERE (Calories IS NULL OR Calories = 0)'
-        ' ORDER BY Name COLLATE NOCASE'
-    )
+      - nutrition: no calories, in a category that needs nutrition, and
+        not confirmed as really 0. [{Id, Name, Category}]
+      - confirmed: confirmed as 0 calories. [{Id, Name, Category}]
+      - prices: no price, or the latest price (or "Still right" check)
+        older than `stale_days`, in a category that needs a price.
+        Oldest first. [{Id, Name, Category, last_price, checked,
+        supplier, unit_price, Unit}]
+      - duplicates: names two or more ingredients share. [name]
 
-    stale_prices = _rows_with_sample(
-        'SELECT i.Name FROM Ingredients i'
-        ' WHERE NOT EXISTS ('
-        '   SELECT 1 FROM ingredient_prices p'
-        '   WHERE p.ingredient_id = i.Id'
-        f'     AND p.effective_date >= date(\'now\', \'-{int(stale_days)} day\')'
-        ' )'
-        ' ORDER BY i.Name COLLATE NOCASE'
-    )
-
-    unused_ingredients = _rows_with_sample(
-        'SELECT i.Name FROM Ingredients i'
-        ' WHERE NOT EXISTS ('
-        '   SELECT 1 FROM Connections c WHERE c.ChildIngredient = i.Id'
-        ' )'
-        ' ORDER BY i.Name COLLATE NOCASE'
-    )
-
-    # Duplicate names: group rows that share a case-insensitive name;
-    # the "sample" lists each name once.
+    `issues` is what the Configure badge counts: each nutrition gap and
+    duplicate, and stale prices once.'''
+    category = _CATEGORY.format(col='name')
+    no_calories = '(i.Calories IS NULL OR i.Calories = 0)'
+    nutrition = query(f'''
+        SELECT i.Id, i.Name, {category} AS Category, COALESCE(i.nutrition_confirmed, 0) AS confirmed
+        FROM Ingredients i
+        WHERE {no_calories} AND {_IN_USE} AND COALESCE({_CATEGORY.format(col='needs_nutrition')}, 1) = 1
+        ORDER BY i.Name COLLATE NOCASE;''')['data']
+    prices = query(f'''
+        SELECT * FROM (
+            SELECT i.Id, i.Name, i.Unit, {category} AS Category, i.price_checked AS checked,
+                   p.effective_date AS last_price, p.unit_price, s.name AS supplier
+            FROM Ingredients i
+            LEFT JOIN ingredient_prices p ON p.id = (
+                SELECT p2.id FROM ingredient_prices p2 WHERE p2.ingredient_id = i.Id
+                ORDER BY p2.effective_date DESC, p2.id DESC LIMIT 1)
+            LEFT JOIN suppliers s ON s.id = p.supplier_id
+            WHERE {_IN_USE} AND COALESCE({_CATEGORY.format(col='needs_price')}, 1) = 1)
+        WHERE MAX(COALESCE(last_price, ''), COALESCE(checked, '')) < date('now', ?)
+        ORDER BY MAX(COALESCE(last_price, ''), COALESCE(checked, '')), Name COLLATE NOCASE;''',
+        (f'-{int(stale_days)} day',))['data']
     dup_rows = query(
         'SELECT lower(Name) AS k, COUNT(*) AS n, MIN(Name) AS Name'
         ' FROM Ingredients GROUP BY lower(Name) HAVING n > 1'
-        ' ORDER BY k'
-    )['data']
-    duplicate_names = (len(dup_rows), [r['Name'] for r in dup_rows[:5]])
-
-    return {
-        'missing_nutrition': missing_nutrition,
-        'stale_prices': stale_prices,
-        'unused_ingredients': unused_ingredients,
-        'duplicate_names': duplicate_names,
+        ' ORDER BY k')['data']
+    report = {
+        'nutrition': [r for r in nutrition if not r['confirmed']],
+        'confirmed': [r for r in nutrition if r['confirmed']],
+        'prices': prices,
+        'duplicates': [r['Name'] for r in dup_rows],
+        'stale_days': stale_days,
     }
+    report['issues'] = len(report['nutrition']) + len(report['duplicates']) + (1 if prices else 0)
+    return report
+
+
+def set_nutrition_confirmed(ingredient_id, confirmed=True):
+    '''Library health's "0 is right": the ingredient really has no
+    calories, so stop flagging it.'''
+    query('UPDATE Ingredients SET nutrition_confirmed = ? WHERE Id = ?;', (1 if confirmed else 0, ingredient_id))
+
+
+def mark_price_checked(ingredient_id):
+    '''Library health's "Still right": the current price was checked
+    today. Adds no price entry, so cost history is unchanged.'''
+    query("UPDATE Ingredients SET price_checked = date('now') WHERE Id = ?;", (ingredient_id,))
 
 
 def get_recently_edited(limit=6):
@@ -1751,7 +1761,7 @@ def duplicate_recipe(recipe_id):
         connection.close()
 
 
-def update_tag(tag_id, name=None, color=None, shape=None):
+def update_tag(tag_id, name=None, color=None, shape=None, needs_nutrition=None, needs_price=None):
     '''Patch a tag's name, color, and/or shape (any combination). Kind is
     intentionally NOT editable — moving a tag between kinds would orphan
     all its existing mappings.'''
@@ -1765,6 +1775,10 @@ def update_tag(tag_id, name=None, color=None, shape=None):
     if shape is not None:
         fields.append('shape=?')
         params.append(shape)
+    for col, value in (('needs_nutrition', needs_nutrition), ('needs_price', needs_price)):
+        if value is not None:
+            fields.append(f'{col}=?')
+            params.append(1 if value else 0)
     if not fields:
         return None
     params.append(tag_id)
@@ -1784,6 +1798,73 @@ def delete_tag(tag_id):
     query('DELETE FROM recipe_tags_mapping WHERE tag_id=?;', (tag_id,))
     query('DELETE FROM ingredient_tags_mapping WHERE tag_id=?;', (tag_id,))
     return query('DELETE FROM tags WHERE id=?;', (tag_id,))['rowcount']
+
+def get_tag_usage(kind):
+    '''Tags of one kind in order, each with how many ingredients (for
+    categories) or recipes (for recipe tags and formats) carry it.'''
+    table, col = (('ingredient_tags_mapping', 'ingredient_id') if kind == 'ingredient'
+                  else ('recipe_tags_mapping', 'recipe_id'))
+    return query(f'''
+        SELECT t.*, (SELECT COUNT(DISTINCT m.{col}) FROM {table} m WHERE m.tag_id = t.id) AS used
+        FROM tags t WHERE t.kind = ? ORDER BY COALESCE(t.sortOrder, 999), t.id;''', (kind,))['data']
+
+
+def reorder_tags(ids):
+    '''Set sortOrder to the position in `ids` (one kind's tags, in order).'''
+    con = sqlite3.connect(config.DATABASE)
+    try:
+        con.executemany('UPDATE tags SET sortOrder = ? WHERE id = ?;', [(i + 1, tid) for i, tid in enumerate(ids)])
+        con.commit()
+    finally:
+        con.close()
+
+
+def get_supplier_overview():
+    '''Every supplier with what the library knows about it:
+    {..supplier columns, prices (entries), last_price (date),
+     current: [{Id, Name, Unit, unit_price, effective_date}] ingredients
+     whose current price is from it, aliases: [names in purchase files],
+     vendor_items (count)}.'''
+    import json
+    from utilities import purchase_import as pi
+    suppliers = query('SELECT * FROM suppliers ORDER BY name COLLATE NOCASE;')['data']
+    counts = {r['supplier_id']: r for r in query('''
+        SELECT supplier_id, COUNT(*) AS n, MAX(effective_date) AS last
+        FROM ingredient_prices WHERE supplier_id IS NOT NULL GROUP BY supplier_id;''')['data']}
+    current = query('''
+        SELECT i.Id, i.Name, i.Unit, p.unit_price, p.effective_date, p.supplier_id
+        FROM Ingredients i JOIN (
+            SELECT ingredient_id, supplier_id, unit_price, effective_date,
+                   ROW_NUMBER() OVER (PARTITION BY ingredient_id ORDER BY effective_date DESC, id DESC) AS rn
+            FROM ingredient_prices WHERE effective_date <= date('now')
+        ) p ON p.ingredient_id = i.Id AND p.rn = 1
+        WHERE p.supplier_id IS NOT NULL
+        ORDER BY i.Name COLLATE NOCASE;''')['data']
+    aliases = {}
+    for f in query('SELECT settings FROM import_formats;')['data']:
+        try:
+            aliases.update(json.loads(f['settings'] or '{}').get('vendor_suppliers') or {})
+        except (TypeError, ValueError):
+            pass
+    plain = [{'id': s['id'], 'name': s['name'] or ''} for s in suppliers]
+    vendor_counts = {}
+    for v in query('SELECT vendor_name, COUNT(*) AS n FROM vendor_items GROUP BY vendor_name;')['data']:
+        sid = pi.match_supplier(v['vendor_name'] or '', plain, aliases)
+        if sid is not None:
+            vendor_counts[sid] = vendor_counts.get(sid, 0) + v['n']
+            if v['vendor_name'] and v['vendor_name'] not in aliases:
+                aliases[v['vendor_name']] = sid
+    out = []
+    for s in suppliers:
+        c = counts.get(s['id']) or {}
+        out.append(dict(s, prices=c.get('n', 0), last_price=c.get('last'),
+                        current=[r for r in current if r['supplier_id'] == s['id']],
+                        aliases=sorted((n for n, sid in aliases.items()
+                                        if sid == s['id'] and n.casefold() != (s['name'] or '').casefold()),
+                                       key=str.casefold),
+                        vendor_items=vendor_counts.get(s['id'], 0)))
+    return out
+
 
 def recipe_cost_history_inputs(recipe_id):
     '''What utilities.cost_history needs for one recipe: its ingredients

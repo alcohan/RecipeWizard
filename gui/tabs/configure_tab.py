@@ -9,11 +9,14 @@ are hosted inline. Sections whose editors are still modal dialogs
 show a short description plus a button that opens the dialog; they
 move inline in a later slice.
 '''
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton,
-    QStackedWidget, QVBoxLayout, QWidget,
+    QStackedWidget, QStyledItemDelegate, QVBoxLayout, QWidget,
 )
+
+from gui.widgets.text_fit import text_width
 
 
 # Evergreens tokens.
@@ -21,6 +24,35 @@ _KALE = '#082c00'
 _MUTED = '#55624c'
 _BORDER = '#ebe1cd'
 _SELECTED = '#fff1da'
+_ALERT_BG = '#ffa94d'
+_ALERT_ROLE = Qt.UserRole + 1
+
+
+class _NavDelegate(QStyledItemDelegate):
+    '''Nav rows as usual, plus an orange count pill on the right of a
+    row that needs attention (set_section_alert).'''
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        count = index.data(_ALERT_ROLE)
+        if not count:
+            return
+        font = QFont(option.font)
+        font.setBold(True)
+        font.setPixelSize(11)
+        text = str(count)
+        w, h = max(18, text_width(font, text) + 12), 18
+        r = option.rect
+        pill = QRectF(r.right() - 8 - w, r.center().y() - h / 2 + 1, w, h)
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(_ALERT_BG))
+        painter.drawRoundedRect(pill, h / 2, h / 2)
+        painter.setFont(font)
+        painter.setPen(QColor(_KALE))
+        painter.drawText(pill, Qt.AlignCenter, text)
+        painter.restore()
 
 
 class ConfigureTab(QWidget):
@@ -59,6 +91,7 @@ class ConfigureTab(QWidget):
                 font-weight: 600;
             }}
         ''')
+        self.nav.setItemDelegate(_NavDelegate(self.nav))
         self.nav.currentRowChanged.connect(self._on_row_changed)
 
         self.pages = QStackedWidget()
@@ -101,6 +134,16 @@ class ConfigureTab(QWidget):
             return
         title = item.data(Qt.UserRole)
         item.setText(f'{title}  {count}' if count else title)
+
+    def set_section_alert(self, key, count, tooltip=''):
+        '''An orange count pill on the nav row: this section has things
+        to fix. Zero clears it.'''
+        item = self._items.get(key)
+        if item is None:
+            return
+        item.setText(item.data(Qt.UserRole))
+        item.setData(_ALERT_ROLE, count or None)
+        item.setToolTip(tooltip if count else '')
 
     # --- navigation ----------------------------------------------------
 
