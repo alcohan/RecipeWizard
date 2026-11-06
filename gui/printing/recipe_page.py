@@ -87,13 +87,6 @@ def _mix(color, toward, amount):
                   round(c.blue() + (t.blue() - c.blue()) * amount))
 
 
-def _num(value, unit):
-    value = float(value or 0)
-    if unit == 'mg' or value >= 100:
-        return f'{value:.0f}{unit}'
-    return f'{value:.1f}'.rstrip('0').rstrip('.') + unit
-
-
 class _Page:
     '''Point-based drawing helpers over a painter scaled to tenths of a
     point. Also usable without a painter, for measuring.'''
@@ -218,8 +211,11 @@ class RecipePageLayout:
         self.page_w, self.page_h = page_w, page_h
         self.content_w = page_w - 2 * MARGIN_X
         self.table_w = self.content_w - SIDE_W - GUTTER
-        flex = self.table_w - sum(w for _k, _h, w in _COLUMNS if w)
-        self.widths = {k: (w if w else flex) for k, _h, w in _COLUMNS}
+        # Without portions (recipe_print.without_portions) the Amount and
+        # Portion tool columns go and the ingredient name takes their width.
+        self.columns = [c for c in _COLUMNS if data.get('portions', True) or c[0] not in ('amount', 'tool')]
+        flex = self.table_w - sum(w for _k, _h, w in self.columns if w)
+        self.widths = {k: (w if w else flex) for k, _h, w in self.columns}
         m = _Page()
         self.statement_w = self.table_w - self.widths['n'] - 2 * _CELL_PAD
         self.statement_heights = [self._statement_height(m, row) for row in data['rows']]
@@ -483,7 +479,7 @@ class RecipePagePainter:
         g.text(x0, top, L.table_w, 12, F_SECTION, self.accent, 'INGREDIENTS')
         y = top + g.line_height(F_SECTION) + 6.0
         cx = x0
-        for key, head, _w in _COLUMNS:
+        for key, head, _w in L.columns:
             w = L.widths[key]
             align = Qt.AlignRight if key == 'n' else Qt.AlignLeft
             g.text(cx + _CELL_PAD, y, w - 2 * _CELL_PAD, 10, F_HEAD, MUTED, head.upper(), align | Qt.AlignTop)
@@ -514,9 +510,10 @@ class RecipePagePainter:
             if used + 6 + g.text_width(F_SMALL, tag) <= name_w:
                 g.text(x + _CELL_PAD + used + 5, cy + 1.2, 60, 12, F_SMALL, MUTED, tag, mid)
         x += W['name']
-        g.text(x + _CELL_PAD, cy, W['amount'] - 2 * _CELL_PAD, 14, F_AMOUNT, INK, row['amount'], mid)
-        x += W['amount']
-        use = row['tool']
+        if 'amount' in W:
+            g.text(x + _CELL_PAD, cy, W['amount'] - 2 * _CELL_PAD, 14, F_AMOUNT, INK, row['amount'], mid)
+            x += W['amount']
+        use = row['tool'] if 'tool' in W else None
         if use:
             tx = x + _CELL_PAD
             if use.tool is not None and use.tool.sized:
@@ -525,7 +522,7 @@ class RecipePagePainter:
                 g.text(tx, cy, W['tool'] - (tx - x) - _CELL_PAD, 14, F_TOOL, INK, use.text, mid)
             else:
                 g.text(tx, cy, W['tool'] - 2 * _CELL_PAD, 14, F_TOOL_PLAIN, MUTED, use.text, mid)
-        x += W['tool']
+        x += W.get('tool', 0.0)
         ay = cy + 0.8
         if row['allergens']:
             ay += g.wrapped(x + _CELL_PAD, ay, W['allergens'] - 2 * _CELL_PAD, F_CELL_ALG, DANGER, row['allergens'])
@@ -610,7 +607,7 @@ class RecipePagePainter:
         cy += 7.0
         cal_h = 18.0 if small else 22.0
         g.text(x + pad, cy, inner, cal_h, f_cal, BLACK, 'Calories', Qt.AlignLeft | Qt.AlignBottom)
-        g.text(x + pad, cy, inner, cal_h, f_cal_v, BLACK, f"{float(n['Calories'] or 0):.0f}",
+        g.text(x + pad, cy, inner, cal_h, f_cal_v, BLACK, str(recipe_print.label_calories(n['Calories'])),
                Qt.AlignRight | Qt.AlignBottom)
         cy += cal_h + 1.0
         g.line(x + pad, cy + 1.5, x + w - pad, cy + 1.5, BLACK, 3.0)
@@ -620,9 +617,9 @@ class RecipePagePainter:
             if bold:
                 lw = g.text_width(f_row_b, label + ' ')
                 g.text(ix, cy + 1.5, inner, 11, f_row_b, BLACK, label)
-                g.text(ix + lw, cy + 1.5, inner, 11, f_row, BLACK, _num(n[key], unit))
+                g.text(ix + lw, cy + 1.5, inner, 11, f_row, BLACK, f'{recipe_print.label_amount(key, n[key])}{unit}')
             else:
-                g.text(ix, cy + 1.5, inner, 11, f_row, BLACK, f'{label} {_num(n[key], unit)}')
+                g.text(ix, cy + 1.5, inner, 11, f_row, BLACK, f'{label} {recipe_print.label_amount(key, n[key])}{unit}')
             cy += g.line_height(f_row) + 3.0
             last = i == len(_NUTRIENT_ROWS) - 1
             g.line(x + pad, cy + (3 if last else 0), x + w - pad, cy + (3 if last else 0), BLACK,

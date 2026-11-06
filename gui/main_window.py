@@ -174,6 +174,7 @@ class MainWindow(QMainWindow):
         self.tray_dock.expandRequested.connect(lambda: self._go_to_place('analytics'))
         self.tray_dock.recipeActivated.connect(self._on_recipe_edit_by_id)
         self.tray_dock.printRequested.connect(self._print_recipes)
+        self.tray_dock.printNoPortionsRequested.connect(lambda ids: self._print_recipes(ids, portions=False))
         self._tray_docked = False
 
         self.status_bar = RecipeWizardStatusBar()
@@ -221,6 +222,8 @@ class MainWindow(QMainWindow):
                 ('Add to compare (Space)', self._on_toggle_tray_for_row),
                 ('Duplicate', lambda r: self._duplicate_recipe(self.recipes_model.id_at_row(r))),
                 ('Print…', lambda r: self._print_recipes([self.recipes_model.id_at_row(r)])),
+                ('Print without portions…',
+                 lambda r: self._print_recipes([self.recipes_model.id_at_row(r)], portions=False)),
                 (ARCHIVE_ACTION, None),
                 (None, None),
                 ('Delete…', self._on_recipe_delete),
@@ -607,6 +610,7 @@ class MainWindow(QMainWindow):
         history_action = add(recipe_menu, '&Cost Over Time',
                              lambda: self._with_editor('show_cost_history'))
         add(recipe_menu, 'Pr&int Recipe…', self._on_print_current, 'Ctrl+P')
+        add(recipe_menu, 'Print &Without Portions…', lambda: self._on_print_current(portions=False), 'Ctrl+Shift+P')
         recipe_menu.addSeparator()
         add(recipe_menu, 'D&uplicate Recipe', self._on_duplicate_current, 'Ctrl+D')
         self.archive_action = add(recipe_menu, 'A&rchive Recipe', self._on_toggle_archive_current)
@@ -750,19 +754,19 @@ class MainWindow(QMainWindow):
         if rid is not None and self.stack.currentWidget() is self.recipes_tab:
             self._duplicate_recipe(rid)
 
-    def _on_print_current(self):
+    def _on_print_current(self, portions=True):
         '''Ctrl+P: the recipe in the current tab, or the Library's
         selection.'''
         editor = self._current_editor()
         if editor is not None and self.stack.currentWidget() is self.recipes_tab:
-            self._print_recipes([editor.recipe_id])
+            self._print_recipes([editor.recipe_id], portions)
             return
         rid = self.recipes_tab.selected_recipe_id()
         if rid is not None and self.stack.currentWidget() is self.recipes_tab:
-            self._print_recipes([rid])
+            self._print_recipes([rid], portions)
 
-    def _print_recipes(self, recipe_ids):
-        print_recipes(self, [rid for rid in recipe_ids if rid is not None])
+    def _print_recipes(self, recipe_ids, portions=True):
+        print_recipes(self, [rid for rid in recipe_ids if rid is not None], portions=portions)
 
     def _sync_archive_action(self):
         editor = self._current_editor()

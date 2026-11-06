@@ -19,6 +19,7 @@ links to no tool prints only when the quantity is 1, since the text
 describes one unit ("Half" for ".5 ea").
 '''
 
+import math
 import re
 from dataclasses import dataclass
 from fractions import Fraction
@@ -243,3 +244,35 @@ def prints_row(row, format_name):
     if (format_name or '').casefold() not in FORMATS_SHOWING_FOOD_PACKAGING:
         return False
     return (row.get('UnitCalories') or 0) > 0
+
+
+def without_portions(data):
+    '''A copy of db.recipe_print_data() for the page without portion
+    information: no Amount or Portion tool column and no scoop key.
+    Ingredients, allergens and nutrition stay.'''
+    out = dict(data)
+    out['rows'] = [dict(r, tool=None) for r in data['rows']]
+    out['tools_used'] = []
+    out['portions'] = False
+    return out
+
+
+# --- nutrition label rounding ------------------------------------------------
+# Calories to the nearest 5, sodium to the nearest 10 mg, every other
+# nutrient to a whole gram (or milligram). Halves round up.
+
+def _round_to(value, step):
+    try:
+        v = float(value or 0)
+    except (TypeError, ValueError):
+        v = 0.0
+    return int(math.floor(v / step + 0.5) * step)
+
+
+def label_calories(value):
+    return _round_to(value, 5)
+
+
+def label_amount(key, value):
+    '''A nutrient's amount as the label prints it (a whole number).'''
+    return _round_to(value, 10 if key == 'SodiumMilligrams' else 1)

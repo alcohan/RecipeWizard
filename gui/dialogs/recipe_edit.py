@@ -39,7 +39,7 @@ from PySide6.QtGui import QDoubleValidator, QFont, QKeySequence, QShortcut, QUnd
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QFrame, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy,
-    QSplitter, QTableView, QToolTip, QVBoxLayout, QWidget,
+    QSplitter, QTableView, QToolButton, QToolTip, QVBoxLayout, QWidget,
 )
 
 import config
@@ -374,13 +374,22 @@ class RecipeEditWidget(QWidget):
         self.archive_btn.clicked.connect(self.toggle_archived)
         label_btn = QPushButton('Nutrition label')
         label_btn.clicked.connect(self._on_nutrition_label)
-        print_btn = QPushButton('Print')
-        print_btn.setToolTip('Print this recipe’s page (Ctrl+P)')
-        print_btn.clicked.connect(self.print_recipe)
+        # Print, with the page without portions on the arrow.
+        print_btn = QToolButton()
+        print_btn.setText('Print')
+        print_btn.setToolTip('Ctrl+P')
+        print_btn.setPopupMode(QToolButton.MenuButtonPopup)
+        print_btn.clicked.connect(lambda: self.print_recipe())
+        print_menu = QMenu(print_btn)
+        print_menu.addAction('Print without portions…', lambda: self.print_recipe(portions=False))
+        print_btn.setMenu(print_menu)
+        print_btn.setStyleSheet(_SECONDARY_BTN.replace('QPushButton', 'QToolButton')
+                                + ' QToolButton { padding-right: 22px; }'
+                                  ' QToolButton::menu-button { border: 0; width: 18px; }')
         self.compare_btn = QPushButton('')
         self.compare_btn.clicked.connect(self._toggle_compare)
         self.compare_btn.setVisible(self._compare_tray is not None)
-        for btn in (self.archive_btn, label_btn, print_btn, self.compare_btn):
+        for btn in (self.archive_btn, label_btn, self.compare_btn):
             btn.setStyleSheet(_SECONDARY_BTN)
             btn.setAutoDefault(False)
         self.save_btn = QPushButton('Save   Ctrl+S')
@@ -1137,9 +1146,9 @@ class RecipeEditWidget(QWidget):
             return
         self.undo_stack.push(ReorderComponentsCommand(self.recipe_id, before, after))
 
-    def print_recipe(self):
+    def print_recipe(self, portions=True):
         from gui.printing.print_dialog import print_recipes
-        print_recipes(self, [self.recipe_id])
+        print_recipes(self, [self.recipe_id], portions=portions)
 
     def _on_nutrition_label(self):
         NutritionLabelDialog(self.recipe_id, parent=self).exec()

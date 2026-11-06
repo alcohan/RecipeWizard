@@ -206,3 +206,19 @@ def test_dressing_labels_and_statements(lib):
     assert data['dressings'][0]['nutrition']['Calories'] == 120
     assert data['nutrition']['Calories'] == 240     # the main panel includes the 2 oz on the recipe
 
+
+
+def test_without_portions_drops_tools_and_scoop_key():
+    data = {'rows': [{'name': 'Kale', 'tool': object()}], 'tools_used': [object()]}
+    out = rp.without_portions(data)
+    assert out['rows'][0]['tool'] is None and out['tools_used'] == [] and out['portions'] is False
+    assert data['rows'][0]['tool'] is not None      # the original is untouched
+
+
+def test_label_rounding():
+    assert [rp.label_calories(v) for v in (682, 682.5, 683, 2.4, None)] == [680, 685, 685, 0, 0]
+    assert rp.label_amount('SodiumMilligrams', 2284) == 2280
+    assert rp.label_amount('SodiumMilligrams', 1735) == 1740
+    assert rp.label_amount('TTLFatGrams', 43.8) == 44
+    assert rp.label_amount('SatFatGrams', 0.5) == 1
+    assert rp.label_amount('CholesterolMilligrams', 117.6) == 118

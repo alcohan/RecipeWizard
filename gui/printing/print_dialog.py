@@ -15,6 +15,7 @@ from PySide6.QtPrintSupport import QAbstractPrintDialog, QPrintDialog, QPrinter
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 import db
+from utilities import recipe_print
 from gui.printing.recipe_page import page_layout_for, paint_recipes
 from gui.services import print_branding
 
@@ -38,9 +39,12 @@ def save_pdf(path, datas, branding=None):
     paint_recipes(printer, datas, branding or print_branding.current())
 
 
-def print_recipes(parent, recipe_ids):
-    '''Ask where to print, then print. Returns True if pages were sent.'''
+def print_recipes(parent, recipe_ids, portions=True):
+    '''Ask where to print, then print. Returns True if pages were sent.
+    portions=False prints the page without portion tools or the scoop key.'''
     datas = recipe_pages_data(recipe_ids)
+    if not portions:
+        datas = [recipe_print.without_portions(d) for d in datas]
     if not datas:
         QMessageBox.information(parent, 'Print', 'There’s no recipe to print.')
         return False
