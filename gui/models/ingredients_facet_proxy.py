@@ -18,6 +18,7 @@ category order then name.
 from PySide6.QtCore import QSortFilterProxyModel, Qt
 
 from gui.models.ingredients_model import NO_ALLERGENS, RowRole
+from utilities import fuzzy
 
 
 class IngredientsFacetProxy(QSortFilterProxyModel):
@@ -55,7 +56,7 @@ class IngredientsFacetProxy(QSortFilterProxyModel):
             if not ((NO_ALLERGENS in self._allergens and not has)
                     or any(a in self._allergens for a in has)):
                 return False
-        if self._text and self._text not in row['SearchText']:
+        if self._text and not fuzzy.matches(self._text, row['SearchText']):
             return False
         return True
 

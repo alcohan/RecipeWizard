@@ -6,9 +6,55 @@ from dotenv import load_dotenv
 
 APPNAME = 'RecipeWizard'
 # The one version number. Release builds stamp it from the git tag
-# (vX.Y.Z); update checks compare GitHub release tags against it.
-__version__ = '0.0.2'
+# (vX.Y.Z); update checks compare GitHub release tags against it. Source
+# runs read it from git instead (source_version, below), so this literal
+# only matters when git can't answer.
+__version__ = '0.1.0'
 ORGNAME = 'AdrianCohan'
+
+
+def source_version():
+    '''For a source run in a git checkout: (version of the latest vX.Y.Z
+    tag, commits since it, short commit, uncommitted changes) from
+    `git describe`. None in a release build or without git.'''
+    if getattr(sys, 'frozen', False):
+        return None
+    root = os.path.dirname(os.path.abspath(__file__))
+    if not os.path.exists(os.path.join(root, '.git')):
+        return None
+    import re
+    import subprocess
+    try:
+        out = subprocess.run(
+            ['git', 'describe', '--tags', '--long', '--dirty', '--match', 'v[0-9]*', '--exclude', '*-*'],
+            cwd=root, capture_output=True, text=True, timeout=5,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.fullmatch(r'v(\d+\.\d+\.\d+)-(\d+)-g([0-9a-f]+)(-dirty)?', out)
+    if not m:
+        return None
+    return m.group(1), int(m.group(2)), m.group(3), bool(m.group(4))
+
+
+SOURCE = source_version()
+if SOURCE:
+    __version__ = SOURCE[0]
+
+
+def build_text():
+    '''"Release build", or for a source run e.g. "Source · 3 commits
+    after v0.0.5 · 36aad67 · uncommitted changes".'''
+    if SOURCE is None:
+        return 'Release build' if getattr(sys, 'frozen', False) else 'Source'
+    version, ahead, commit, dirty = SOURCE
+    parts = ['Source']
+    if ahead:
+        parts.append(f"{ahead} commit{'s' if ahead != 1 else ''} after v{version}")
+    parts.append(commit)
+    if dirty:
+        parts.append('uncommitted changes')
+    return ' · '.join(parts)
 
 
 # https://stackoverflow.com/questions/31836104/pyinstaller-and-onefile-how-to-include-an-image-in-the-exe-file

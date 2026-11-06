@@ -121,11 +121,9 @@ class VendorItemEditor(QWidget):
         self._third_values = {'yield': item.get('yield_pct'), 'each': item.get('portions_per_each')}
         self.notes.setText(item.get('notes') or '')
         if pack:
-            self.pack_note.setText(f'Pack size “{item.get("pack_size")}” was read as {pack["reading"]}.'
-                                   ' Change it if the case is packed differently.')
+            self.pack_note.setText(f'Read “{item.get("pack_size")}” as {pack["reading"]}')
         elif item.get('pack_size'):
-            self.pack_note.setText(f'Pack size “{item.get("pack_size")}” couldn’t be read; enter what a case'
-                                   ' holds (for cans, the drained weight).')
+            self.pack_note.setText(f'Couldn’t read “{item.get("pack_size")}”. Enter what a case holds.')
         else:
             self.pack_note.setText('')
         self._show_third()
@@ -190,7 +188,7 @@ class VendorItemEditor(QWidget):
         ing = self._ingredients.get(self.ingredient.currentData())
         if ing is None:
             self.portion.setText('—')
-            self.formula.setText('Pick an ingredient to work out portions per case.')
+            self.formula.setText('Pick an ingredient')
             self.per_portion.setText('')
             return
         grams = ing.get('Weight')

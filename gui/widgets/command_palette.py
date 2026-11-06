@@ -11,9 +11,10 @@ thing to search" stay simple.
 '''
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QVBoxLayout,
 )
+from utilities import fuzzy
 
 
 # How many items per section. Keep each section short so the whole
@@ -166,11 +167,10 @@ class CommandPalette(QDialog):
             return list(items)
         scored = []
         for item_id_or_key, label in items:
-            lab = (label or '').lower()
-            pos = lab.find(needle)
-            if pos < 0:
+            s = fuzzy.score(needle, label or '')
+            if s is None:
                 continue
-            scored.append(((pos, len(lab)), item_id_or_key, label))
+            scored.append((s, item_id_or_key, label))
         scored.sort(key=lambda t: t[0])
         return [(t[1], t[2]) for t in scored]
 

@@ -97,20 +97,11 @@ class PortionToolsPage(QWidget):
         layout.setContentsMargins(28, 20, 28, 28)
         layout.setSpacing(12)
         layout.addLayout(head)
-        layout.addWidget(kit.note(
-            'Printed recipe pages name the tool for each ingredient. A sized tool is worked out again from the'
-            ' calculated amount, within its family only: half of an 8 fl oz unit on Grey prints “1 Grey”, and a'
-            ' slotted Red never becomes a plain Red. Tools with no size (tongs, bottle) print by name. An'
-            ' ingredient uses a tool when its Portion text is the tool’s name. Double-click to edit;'
-            ' double-click a color to pick one.'))
         layout.addWidget(self.table)
         layout.addLayout(foot)
         layout.addSpacing(8)
         layout.addLayout(review_head)
-        layout.addWidget(kit.note(
-            'Portion text that names no tool, or whose tool doesn’t fit the unit. Linking sets those'
-            ' ingredients’ Portion text to the tool’s name. Text left unlinked prints only when the recipe'
-            ' uses exactly one unit.'))
+        layout.addWidget(kit.note('Portion text that matches no tool'))
         layout.addWidget(self.review)
 
         scroll = QScrollArea()

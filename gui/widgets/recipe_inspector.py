@@ -109,7 +109,7 @@ class RecipeInspector(QScrollArea):
         self.meta = QLabel('')
         self.meta.setWordWrap(True)
         self.meta.setStyleSheet(f'color: {_MUTED};')
-        self.archived_note = QLabel('Archived · off the menu, hidden from the Library and analytics')
+        self.archived_note = QLabel('Archived')
         self.archived_note.setWordWrap(True)
         self.archived_note.setMinimumWidth(1)
         self.archived_note.setStyleSheet(f'color: {_MUTED}; background: #f3ece0; border-radius: 6px;'
@@ -179,7 +179,7 @@ class RecipeInspector(QScrollArea):
         self.archive_btn.clicked.connect(self._on_archive_clicked)
         self.archive_btn.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
 
-        self.empty = QLabel('Select a recipe to see its cost, components, diets and allergens.')
+        self.empty = QLabel('Select a recipe')
         self.empty.setWordWrap(True)
         self.empty.setStyleSheet(f'color: {_MUTED};')
 
@@ -259,7 +259,7 @@ class RecipeInspector(QScrollArea):
         reasons = row.get('ReviewReasons') or []
         self.review_note.setText('Needs review · ' + ' · '.join(reasons))
         self.review_note.setVisible(bool(reasons) and not self._archived)
-        self.archive_btn.setText('Restore to the menu' if self._archived else 'Archive (take off the menu)')
+        self.archive_btn.setText('Restore to menu' if self._archived else 'Archive')
 
         self._stats['cost'].setText(f'${float(row.get("CostRaw") or 0):.2f}')
         pct = row.get('FoodCostPct')

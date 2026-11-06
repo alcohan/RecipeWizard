@@ -9,7 +9,7 @@ underlying data doesn't include daily-value targets.'''
 import os
 import re
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QStandardPaths, Qt, QTimer
 from PySide6.QtGui import QFont, QFontMetrics, QGuiApplication, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QDialog, QFileDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 
 import config
 import db
+from utilities import recipe_print
 
 
 LABEL_WIDTH = 400
@@ -82,7 +83,9 @@ class NutritionLabelDialog(QDialog):
         self._flash_status('✓ Copied to clipboard')
 
     def _on_save(self):
-        default_name = _slugify(self._recipe_name) + '_nutrition.png'
+        # A full path: a bare name would open in the working directory.
+        folder = QStandardPaths.writableLocation(QStandardPaths.PicturesLocation) or os.path.expanduser('~')
+        default_name = os.path.join(folder, _slugify(self._recipe_name) + '_nutrition.png')
         path, _selected = QFileDialog.getSaveFileName(
             self, 'Save Nutrition Label', default_name,
             'PNG Image (*.png);;JPEG Image (*.jpg *.jpeg)',
@@ -161,13 +164,13 @@ def render_nutrition_label(recipe, ingredients_str, width=LABEL_WIDTH):
 
     draw_text(bold_font, 'Amount Per Serving')
     gap(2)
-    draw_text(cal_font, 'Calories', str(_format_int(recipe.get('Calories'))))
+    draw_text(cal_font, 'Calories', str(recipe_print.label_calories(recipe.get('Calories'))))
     rule('med')
 
     for name, key, unit, top_level in NUTRIENT_ROWS:
         font = row_bold if top_level else row_font
         indent = 0 if top_level else 14
-        value_str = f'{_format_num(recipe.get(key))} {unit}'
+        value_str = f'{recipe_print.label_amount(key, recipe.get(key))} {unit}'
         draw_text(font, name, value_str, indent=indent)
         rule('thin')
 
@@ -201,13 +204,6 @@ def _format_num(value):
     if n == int(n):
         return str(int(n))
     return f'{n:.1f}'
-
-
-def _format_int(value):
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return 0
 
 
 def _slugify(name):

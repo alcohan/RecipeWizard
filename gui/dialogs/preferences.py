@@ -44,10 +44,9 @@ class PreferencesPage(QWidget):
         card.setMaximumWidth(720)
         cl.addWidget(kit.subheading('USDA FoodData Central'))
         intro = QLabel(
-            'New ingredient looks up nutrition with the USDA FoodData Central API. Without a key it uses a'
-            ' shared demo key capped at 30 searches an hour. Get a free key at '
+            'Without a key, a shared demo key allows 30 searches an hour. Get a free key at '
             f'<a href="https://fdc.nal.usda.gov/api-key-signup.html" style="color: {kit.ROMAINE}">'
-            'fdc.nal.usda.gov/api-key-signup.html</a> and paste it below.')
+            'fdc.nal.usda.gov</a>.')
         intro.setWordWrap(True)
         intro.setOpenExternalLinks(True)
         intro.setTextInteractionFlags(Qt.TextBrowserInteraction)
@@ -59,7 +58,6 @@ class PreferencesPage(QWidget):
         self.key_edit.setText(QSettings().value(_KEY, '', type=str))
         self.key_edit.editingFinished.connect(self.save)
         self.test_btn = kit.button('Test')
-        self.test_btn.setToolTip('Run a quick USDA search with the key above (doesn’t save it)')
         self.test_btn.clicked.connect(self.test)
         row = QHBoxLayout()
         row.setSpacing(8)
@@ -78,7 +76,6 @@ class PreferencesPage(QWidget):
         layout.setContentsMargins(28, 20, 28, 28)
         layout.setSpacing(12)
         layout.addWidget(kit.heading('Preferences'))
-        layout.addWidget(kit.note('Settings for this computer. Changes save as you make them.'))
         layout.addWidget(self._food_cost_card())
         layout.addWidget(card)
         layout.addWidget(self._updates_card())
@@ -89,9 +86,7 @@ class PreferencesPage(QWidget):
         card, cl = kit.card()
         card.setMaximumWidth(720)
         cl.addWidget(kit.subheading('Food cost target'))
-        cl.addWidget(kit.note('Recipes over the target are marked ▲ in amber on Library cards, in the inspector,'
-                              ' Analytics and the recipe editor, and land in Needs review. Turn it off to show'
-                              ' food cost without judging it.'))
+        cl.addWidget(kit.note('Recipes over target get ▲ and appear in Needs review'))
         self.fc_enabled = QCheckBox('Flag recipes over a food-cost target')
         self.fc_enabled.setStyleSheet(f'color: {kit.KALE};')
         self.fc_enabled.setChecked(food_cost.enabled())
@@ -125,8 +120,7 @@ class PreferencesPage(QWidget):
         card, cl = kit.card()
         card.setMaximumWidth(720)
         cl.addWidget(kit.subheading('Updates'))
-        cl.addWidget(kit.note(f'This is RecipeWizard v{config.__version__}. '
-                              'Help › Check for Updates… checks any time.'))
+        cl.addWidget(kit.note(f'Version {config.__version__}'))
         self.auto_check = QCheckBox('Check for updates once a day when RecipeWizard starts')
         self.auto_check.setChecked(update_prefs.check_automatically())
         self.auto_check.toggled.connect(
@@ -171,7 +165,7 @@ class PreferencesPage(QWidget):
         except Exception as exc:
             self._say(f'USDA didn’t accept it: {exc}', kit.WARN)
         else:
-            self._say('The shared demo key works. Paste your own for more searches.' if not candidate
+            self._say('Demo key works' if not candidate
                       else 'Key works: USDA responded.', _OK)
         finally:
             QApplication.restoreOverrideCursor()

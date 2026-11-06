@@ -1,4 +1,5 @@
 from PySide6.QtCore import QSortFilterProxyModel, Qt
+from utilities import fuzzy
 
 
 class MultiColumnFilterProxy(QSortFilterProxyModel):
@@ -18,8 +19,6 @@ class MultiColumnFilterProxy(QSortFilterProxyModel):
         if not self._needle:
             return True
         model = self.sourceModel()
-        for col in range(model.columnCount()):
-            value = model.data(model.index(source_row, col, source_parent), Qt.DisplayRole)
-            if value is not None and self._needle in str(value).lower():
-                return True
-        return False
+        text = ' '.join(str(model.data(model.index(source_row, col, source_parent), Qt.DisplayRole) or '')
+                        for col in range(model.columnCount()))
+        return fuzzy.matches(self._needle, text)

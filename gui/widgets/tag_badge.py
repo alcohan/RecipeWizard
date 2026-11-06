@@ -12,6 +12,7 @@ Two pieces:
 from PySide6.QtCore import QRect, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate
+from gui.widgets.text_fit import text_width
 
 
 # Custom role for the tag's hex color string; sibling to Qt.DisplayRole on
@@ -40,7 +41,7 @@ def paint_tag_badge(painter, available_rect, text, color_hex, base_font):
     painter.setFont(bf)
     fm = QFontMetrics(bf)
     text = text or ''
-    badge_w = fm.horizontalAdvance(text) + _BADGE_PAD_X * 2
+    badge_w = text_width(bf, text) + _BADGE_PAD_X * 2
     badge_h = fm.height() + _BADGE_PAD_Y * 2
     badge_x = available_rect.x()
     badge_y = available_rect.y() + (available_rect.height() - badge_h) // 2
@@ -63,7 +64,7 @@ def tag_badge_size(text, base_font, cell_padding=16):
     bf = _badge_font(base_font)
     fm = QFontMetrics(bf)
     text = text or ''
-    w = fm.horizontalAdvance(text) + _BADGE_PAD_X * 2 + cell_padding
+    w = text_width(bf, text) + _BADGE_PAD_X * 2 + cell_padding
     h = fm.height() + _BADGE_PAD_Y * 2 + 8
     return QSize(w, h)
 

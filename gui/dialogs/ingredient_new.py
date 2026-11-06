@@ -177,13 +177,10 @@ class IngredientNewDialog(QDialog):
         bar.setStyleSheet(f'QFrame#Header {{ background: #ffffff; border-bottom: 1px solid {_BORDER}; }}')
         title = QLabel('New ingredient')
         title.setStyleSheet(f'color: {_KALE}; font-size: 20px; font-weight: 650;')
-        sub = QLabel('Look it up in USDA, check the numbers, then save')
-        sub.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
         hl = QHBoxLayout(bar)
         hl.setContentsMargins(20, 14, 20, 14)
         hl.setSpacing(12)
         hl.addWidget(title)
-        hl.addWidget(sub)
         hl.addStretch()
         return bar
 
@@ -270,7 +267,7 @@ class IngredientNewDialog(QDialog):
         prow.addWidget(self.unit_price, alignment=Qt.AlignBottom)
         prow.addStretch()
         pl.addLayout(prow)
-        hint = QLabel('Optional. Skip it and the ingredient shows up in Library health under "No price".')
+        hint = QLabel('Optional')
         hint.setWordWrap(True)
         hint.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
         pl.addWidget(hint)
@@ -383,7 +380,7 @@ class IngredientNewDialog(QDialog):
             if current > 0:
                 note += ' Weight per unit updated to match.'
             self.weight_edit.setText(num_text(round(grams, 2)))
-        self.usda_note.setText(note + ' Edit anything before saving.')
+        self.usda_note.setText(note.strip())
         self.usda_note.show()
 
     def _on_photo_file(self, path):

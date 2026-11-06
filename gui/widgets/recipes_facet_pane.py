@@ -6,7 +6,9 @@ category, Free from and Food cost.
   with ReviewReasons: prices changed, no menu price, over the
   food-cost target, missing nutrition) are built in; then the user's
   own, stored in the library (saved_views). A view is the pane's
-  state() — every filter here, not the text filter, Group by or Sort.
+  state() — every filter here, not the text filter — plus the
+  Library's Group by and Sort (set_layout_hooks); built-in views leave
+  Group by and Sort as they are.
   The view matching the current filters is highlighted; when none
   does, "Save view…" saves them, and "Update" overwrites the view you
   last picked. Right-click your own view to update, rename or delete
@@ -30,7 +32,7 @@ category, Free from and Food cost.
   top stop it's off. Disabled, with a note, until any recipe has one.
 
 '''
-from PySide6.QtCore import QSettings, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QInputDialog, QLabel, QMenu, QMessageBox, QPushButton, QSlider, QVBoxLayout,
     QWidget,
@@ -41,7 +43,7 @@ from gui.services import food_cost
 from gui.models.recipes_facet_proxy import matches
 from gui.models.recipes_model import SUB_RECIPES
 from gui.widgets.elided_label import ElidedLabel
-from gui.widgets.facet_pane import BORDER, KALE, MUTED, ROMAINE, WARN, FacetPane, FacetSection
+from gui.widgets.facet_pane import KALE, MUTED, ROMAINE, WARN, FacetPane, FacetSection
 from gui.widgets.toolbar_controls import ToggleSwitch
 from utilities import diets
 
@@ -85,8 +87,6 @@ class RecipesFacetPane(FacetPane):
 
     def _build_archived(self):
         row = QWidget()
-        row.setToolTip('Archived recipes are off the menu. Archive or restore one from its'
-                       ' right-click menu or the inspector.')
         hl = QHBoxLayout(row)
         hl.setContentsMargins(0, 0, 0, 0)
         hl.setSpacing(6)
@@ -192,7 +192,7 @@ class RecipesFacetPane(FacetPane):
 
         self.review_note = QPushButton('Only recipes needing review  ×')
         self.review_note.setCursor(Qt.PointingHandCursor)
-        self.review_note.setToolTip('The Needs review rule is still on. Click to turn it off.')
+        self.review_note.setToolTip('Click to turn off')
         self.review_note.setStyleSheet(f'QPushButton {{ color: {WARN}; background: #fff0dc; border: 0;'
                                        ' border-radius: 8px; padding: 1px 8px; font-size: 11px; font-weight: 600;'
                                        ' text-align: left; }')
@@ -220,10 +220,46 @@ class RecipesFacetPane(FacetPane):
         return ([('all', 'All recipes', default, None), ('review', 'Needs review', review, None)]
                 + [(f'user:{v["id"]}', v['name'], v['state'], v['id']) for v in self._user_views])
 
+    def set_layout_hooks(self, get, put):
+        '''Group by and Sort live in the Library toolbar: get() returns
+        {'group': …, 'sort': …}; put(dict) applies a view's.'''
+        self._layout_get = get
+        self._layout_put = put
+
+    def full_state(self):
+        '''state() plus Group by and Sort: what a saved view stores.'''
+        st = self.state()
+        get = getattr(self, '_layout_get', None)
+        if get is not None:
+            st.update(get())
+        return st
+
+    def _view_matches(self, st, current=None):
+        '''Filters match, and Group by / Sort too where the view has them.'''
+        current = current or self.full_state()
+        filters = {k: v for k, v in st.items() if k not in LAYOUT_KEYS}
+        if not _same(filters, {k: v for k, v in current.items() if k not in LAYOUT_KEYS}):
+            return False
+        return all(st[k] == current.get(k) for k in LAYOUT_KEYS if k in st)
+
     def active_view(self):
-        '''Key of the first view matching the current filters, or None.'''
-        current = self.state()
-        return next((key for key, _n, st, _id in self.views() if _same(st, current)), None)
+        '''Key of the view matching the current filters, or None. Your
+        own views come first: they also pin Group by and Sort, so they're
+        the more specific match.'''
+        current = self.full_state()
+        views = self.views()
+        picked = getattr(self, '_picked', None)
+        ordered = ([v for v in views if v[0] == picked]
+                   + [v for v in views if v[3] is not None] + [v for v in views if v[3] is None])
+        return next((key for key, _n, st, _id in ordered if self._view_matches(st, current)), None)
+
+    def _pick_view(self, key, state, view_id):
+        self._picked = key      # the view you clicked stays highlighted while it still matches
+        self.apply_state(state, view_id=view_id)
+
+    def refresh_views(self):
+        if hasattr(self, '_rows'):
+            self._sync_views()
 
     def _sync_views(self):
         while self._view_rows.count():
@@ -238,7 +274,7 @@ class RecipesFacetPane(FacetPane):
             if key == 'review':
                 row.setToolTip('Prices changed since last save, no menu price, food cost over target,'
                                ' or missing nutrition')
-            row.clicked.connect(lambda st=st, vid=view_id: self.apply_state(st, view_id=vid))
+            row.clicked.connect(lambda st=st, vid=view_id, k=key: self._pick_view(k, st, vid))
             if view_id is not None:
                 row.menuRequested.connect(lambda pos, vid=view_id: self._view_menu(vid, pos))
             self._view_rows.addWidget(row)
@@ -258,7 +294,7 @@ class RecipesFacetPane(FacetPane):
         view = next(v for v in self._user_views if v['id'] == view_id)
         menu = QMenu(self)
         upd = menu.addAction('Update to current filters', lambda: self.update_view(view_id))
-        upd.setEnabled(not _same(view['state'], self.state()))
+        upd.setEnabled(not self._view_matches(view['state']))
         menu.addAction('Rename…', lambda: self.rename_view(view_id))
         menu.addSeparator()
         menu.addAction('Delete…', lambda: self.delete_view(view_id))
@@ -282,7 +318,7 @@ class RecipesFacetPane(FacetPane):
         name = name or self._ask_name('Save view')
         if name is None:
             return None
-        view_id = db.create_saved_view(name, self.state())
+        view_id = db.create_saved_view(name, self.full_state())
         self._user_views = db.get_saved_views()
         self._last_view = view_id
         self._sync_views()
@@ -291,7 +327,7 @@ class RecipesFacetPane(FacetPane):
     def update_view(self, view_id):
         if view_id is None:
             return
-        db.update_saved_view(view_id, state=self.state())
+        db.update_saved_view(view_id, state=self.full_state())
         self._user_views = db.get_saved_views()
         self._last_view = view_id
         self._sync_views()
@@ -357,6 +393,10 @@ class RecipesFacetPane(FacetPane):
         self.include_archived.blockSignals(False)
         self._needs_review = bool(state.get('needs_review'))
         self._last_view = view_id
+        put = getattr(self, '_layout_put', None)
+        layout = {k: state[k] for k in LAYOUT_KEYS if state.get(k)}
+        if put is not None and layout:
+            put(layout)
         self._refill()
         self.changed.emit()
 
@@ -371,7 +411,7 @@ class RecipesFacetPane(FacetPane):
         self.food_cost.setEnabled(bool(priced))
         value = self.food_cost.value()
         if not priced:
-            self.food_cost_label.setText('Set menu prices on recipes to filter by food cost.')
+            self.food_cost_label.setText('No menu prices yet')
         elif value >= FOOD_COST_OFF:
             self.food_cost_label.setText(f'Any{_target_text()} · {priced} priced')
         else:
@@ -412,6 +452,9 @@ def _keys(keys):
     if keys is None:
         return None
     return sorted(keys, key=lambda k: (k is not None, str(k)))
+
+
+LAYOUT_KEYS = ('group', 'sort')
 
 
 def _same(a, b):

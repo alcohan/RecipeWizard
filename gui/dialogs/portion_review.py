@@ -60,11 +60,8 @@ class PortionReviewDialog(QDialog):
         layout.setContentsMargins(24, 20, 24, 16)
         layout.setSpacing(12)
         layout.addWidget(kit.heading('Check recipes against portion rules'))
-        intro = ('Portion multipliers are now portion rules. These recipes have ingredients sized by hand'
-                 ' that differ from their format’s rule; nothing has changed yet.') if first_run else \
-                ('These recipes have ingredients sized by hand in a category their format has a rule for.')
-        layout.addWidget(kit.note(intro + ' Tick the ones to bring onto the rules; the rest stay as they'
-                                  ' are. A base keeps its current split.'))
+        layout.addWidget(kit.note('These recipes size some ingredients by hand where their format has a rule.'
+                                  ' Tick the ones to bring onto the rules.'))
 
         self.banner = QFrame()
         self.banner.setObjectName('ReviewBanner')
@@ -166,8 +163,7 @@ class PortionReviewDialog(QDialog):
                 for u in g['unsizable']:
                     child = QTreeWidgetItem([f'    {u["name"]}', u['unit'] or '', '', 'can’t size'])
                     child.setFlags(Qt.ItemIsEnabled)
-                    child.setToolTip(3, 'Its unit isn’t a volume, so the rule can’t size it. Give it a unit'
-                                        ' like “3 cups” or move it to another category.')
+                    child.setToolTip(3, 'Not a volume unit; size by hand')
                     for col in range(4):
                         child.setForeground(col, QColor(kit.WARN))
                     item.addChild(child)

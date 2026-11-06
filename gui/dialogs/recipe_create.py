@@ -124,10 +124,7 @@ class RecipeCreateDialog(QDialog):
         head.setSpacing(12)
         title = QLabel('New recipe')
         title.setStyleSheet(f'color: {_KALE}; font-size: 20px; font-weight: 650;')
-        sub = QLabel('Opens in a new tab beside Library')
-        sub.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
         head.addWidget(title)
-        head.addWidget(sub)
         head.addStretch()
         head_wrap = QFrame()
         head_wrap.setObjectName('NRHead')
@@ -223,8 +220,6 @@ class RecipeCreateDialog(QDialog):
         body.addStretch()
 
         # footer
-        hint = QLabel('Add components next with Ctrl+Enter')
-        hint.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
         cancel = QPushButton('Cancel')
         cancel.setAutoDefault(False)
         cancel.setStyleSheet(f'QPushButton {{ min-height: 34px; padding: 0 14px; border: 1px solid {_FIELD_BORDER};'
@@ -243,7 +238,6 @@ class RecipeCreateDialog(QDialog):
         foot = QHBoxLayout()
         foot.setContentsMargins(20, 14, 20, 14)
         foot.setSpacing(8)
-        foot.addWidget(hint)
         foot.addStretch()
         foot.addWidget(cancel)
         foot.addWidget(self.create_btn)
@@ -275,7 +269,7 @@ class RecipeCreateDialog(QDialog):
         cards = [_FormatCard(tid, t['name'], _silhouette(t.get('shape'), t.get('color')))
                  for tid, t in self._formats.items()]
         cards.append(_FormatCard(_NONE, 'None · sub-recipe', _dashed_circle(), dashed=True))
-        cards[-1].setToolTip('No format: no template items, e.g. a dressing or sauce used in other recipes')
+        cards[-1].setToolTip('For sub-recipes like dressings')
         cols = 5
         for c in range(cols):
             self._card_grid.setColumnStretch(c, 1)
@@ -301,8 +295,7 @@ class RecipeCreateDialog(QDialog):
             self.unit_edit.setText(tag['name'].lower() if tag else 'batch')
         self.start_template.setText('Template items only' if tag else 'Empty')
         if tag is None:
-            self.template_note.setText('No template: starts empty. For sub-recipes like dressings and sauces,'
-                                       ' which other recipes use.')
+            self.template_note.setText('Starts empty')
             return
         items = db.get_tag_components(tag['id'])
         rules = db.get_portion_rules(tag['id'])
@@ -354,8 +347,7 @@ class RecipeCreateDialog(QDialog):
     def _validate(self, *_args):
         name, _qty, _price, problem = self._parsed()
         dup = name.lower() in self._names
-        self.name_note.setText(f'There is already a recipe called “{name}”. You can still create this one.'
-                               if dup else '')
+        self.name_note.setText(f'A recipe called “{name}” already exists' if dup else '')
         self.name_note.setVisible(dup)
         self.create_btn.setEnabled(not problem)
         self.create_btn.setToolTip(problem)

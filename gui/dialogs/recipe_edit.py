@@ -2,9 +2,9 @@
 
 RecipeEditWidget is an embeddable QWidget laid out per the Framework
 canvas's editor artboard: an action bar (breadcrumb, unsaved count,
-Nutrition label, Price history, Add to compare, Save), a build area
-(name, format, yield, menu price, a row of status chips and the
-components grid) and a live results column (wedge, cost and food cost,
+Nutrition label, Print, Add to compare, Save), a build area
+(name, format, yield, menu price, a row of status chips, then the
+components grid or the Cost over time view) and a live results column (wedge, cost and food cost,
 nutrition, allergens). It's hosted inside the Recipes place as a
 document tab.
 
@@ -39,14 +39,13 @@ from PySide6.QtGui import QDoubleValidator, QFont, QKeySequence, QShortcut, QUnd
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QFrame, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy,
-    QSplitter, QTableView, QToolTip, QVBoxLayout, QWidget,
+    QSplitter, QTableView, QToolButton, QToolTip, QVBoxLayout, QWidget,
 )
 
 import config
 import db
 from gui.dialogs.archive_confirm import confirm_archive
 from gui.dialogs.nutrition_label import NutritionLabelDialog
-from gui.dialogs.price_history import PriceHistoryDialog
 from gui.dialogs.recipe_component_add import RecipeComponentAddDialog
 from gui.models.components_model import RecipeComponentsModel
 from gui.undo.recipe_commands import (
@@ -57,7 +56,9 @@ from gui.undo.recipe_commands import (
 from gui.widgets.component_delegates import (
     ChangedRowDelegate, NameDelegate, QuantityDelegate, ShareDelegate,
 )
+from gui.widgets.cost_history_view import CostHistoryView
 from gui.widgets.editor_results import EditorResults
+from gui.widgets.toolbar_controls import SegmentedSwitch
 from gui.widgets.undo_keys import pass_undo_keys
 from gui.widgets.format_segments import FormatSegments
 from gui.widgets.template_summary import TemplateSummaryLine
@@ -348,8 +349,8 @@ class RecipeEditWidget(QWidget):
     def show_nutrition_label(self):
         self._on_nutrition_label()
 
-    def show_price_history(self):
-        self._on_price_history()
+    def show_cost_history(self):
+        self._set_view('cost')
 
     def delete_recipe(self):
         self._on_delete()
@@ -373,15 +374,22 @@ class RecipeEditWidget(QWidget):
         self.archive_btn.clicked.connect(self.toggle_archived)
         label_btn = QPushButton('Nutrition label')
         label_btn.clicked.connect(self._on_nutrition_label)
-        history_btn = QPushButton('Price history')
-        history_btn.clicked.connect(self._on_price_history)
-        print_btn = QPushButton('Print')
-        print_btn.setToolTip('Print this recipe’s page (Ctrl+P)')
-        print_btn.clicked.connect(self.print_recipe)
+        # Print, with the page without portions on the arrow.
+        print_btn = QToolButton()
+        print_btn.setText('Print')
+        print_btn.setToolTip('Ctrl+P')
+        print_btn.setPopupMode(QToolButton.MenuButtonPopup)
+        print_btn.clicked.connect(lambda: self.print_recipe())
+        print_menu = QMenu(print_btn)
+        print_menu.addAction('Print without portions…', lambda: self.print_recipe(portions=False))
+        print_btn.setMenu(print_menu)
+        print_btn.setStyleSheet(_SECONDARY_BTN.replace('QPushButton', 'QToolButton')
+                                + ' QToolButton { padding-right: 22px; }'
+                                  ' QToolButton::menu-button { border: 0; width: 18px; }')
         self.compare_btn = QPushButton('')
         self.compare_btn.clicked.connect(self._toggle_compare)
         self.compare_btn.setVisible(self._compare_tray is not None)
-        for btn in (self.archive_btn, label_btn, history_btn, print_btn, self.compare_btn):
+        for btn in (self.archive_btn, label_btn, self.compare_btn):
             btn.setStyleSheet(_SECONDARY_BTN)
             btn.setAutoDefault(False)
         self.save_btn = QPushButton('Save   Ctrl+S')
@@ -398,7 +406,6 @@ class RecipeEditWidget(QWidget):
         row.addStretch()
         row.addWidget(self.archive_btn)
         row.addWidget(label_btn)
-        row.addWidget(history_btn)
         row.addWidget(print_btn)
         row.addWidget(self.compare_btn)
         row.addWidget(self.save_btn)
@@ -496,11 +503,32 @@ class RecipeEditWidget(QWidget):
         layout.setSpacing(16)
         layout.addLayout(fields)
         layout.addLayout(chips)
+        # Components or Cost over time, one at a time.
+        self.view_switch = SegmentedSwitch([('components', 'Components'), ('cost', 'Cost over time')])
+        self.view_switch.set_current('components')
+        self.view_switch.changed.connect(self._set_view)
+        switch_row = QHBoxLayout()
+        switch_row.addWidget(self.view_switch)
+        switch_row.addStretch()
+        layout.addLayout(switch_row)
         # The card sizes to its rows (the table shows them all); spare
         # height goes below it, and the area scrolls when it runs out.
-        layout.addWidget(self._build_components_card())
+        self.components_card = self._build_components_card()
+        layout.addWidget(self.components_card)
+        self.cost_view = CostHistoryView(self.recipe_id)
+        self.cost_view.ingredientRequested.connect(self._edit_ingredient)
+        self.cost_view.hide()
+        layout.addWidget(self.cost_view)
         layout.addStretch(1)
         return area
+
+    def _set_view(self, key):
+        cost = key == 'cost'
+        self.view_switch.set_current(key)
+        self.components_card.setVisible(not cost)
+        self.cost_view.setVisible(cost)
+        if cost:
+            self.cost_view.refresh()
 
     def _build_photo_box(self):
         '''The wedge (or the recipe's photo) with "Add photo" /
@@ -524,11 +552,10 @@ class RecipeEditWidget(QWidget):
         if recipe_photo(self.recipe_id):
             self.photo_links.setText(f'<a href="change" style="{link}">Change photo</a>'
                                      f' &nbsp;·&nbsp; <a href="remove" style="{link}">Remove</a>')
-            self.photo_links.setToolTip('The photo shows in place of the wedge everywhere.')
+            self.photo_links.setToolTip('')
         else:
             self.photo_links.setText(f'<a href="change" style="{link}">Add photo</a>')
-            self.photo_links.setToolTip('A photo shows in place of the wedge everywhere,'
-                                        ' printed pages included. You can also drop an image here.')
+            self.photo_links.setToolTip('Or drop an image here')
 
     def _on_photo_link(self, href):
         if href == 'remove':
@@ -574,6 +601,10 @@ class RecipeEditWidget(QWidget):
         table = QTableView()
         self.components_table = table
         table.setModel(self.components_model)
+        # Delete removes the selected row (undoable, so it doesn't ask).
+        # Widget-only: not while a quantity is being typed.
+        delete = QShortcut(QKeySequence.Delete, table, activated=self._on_delete_key)
+        delete.setContext(Qt.WidgetShortcut)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.setSelectionMode(QAbstractItemView.SingleSelection)
         table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed)
@@ -699,6 +730,8 @@ class RecipeEditWidget(QWidget):
             return
         recipe = db.recipe_info(self.recipe_id)
         self._recipe_snapshot = self._snapshot(recipe)
+        if hasattr(self, 'cost_view') and not self.cost_view.isHidden():
+            self.cost_view.refresh()
 
         self.components_model.refresh()
         try:
@@ -782,7 +815,6 @@ class RecipeEditWidget(QWidget):
                 pill = QPushButton(name)
                 pill.setCheckable(True)
                 pill.setCursor(Qt.PointingHandCursor)
-                pill.setToolTip(f'Tag this recipe {name}. Manage tags in Configure › Recipe tags.')
                 dot = color or _MUTED
                 pill.setStyleSheet(
                     f'QPushButton {{ border: 1px dashed {_FIELD_BORDER}; border-radius: 10px; padding: 1px 10px;'
@@ -810,19 +842,15 @@ class RecipeEditWidget(QWidget):
     def _refresh_chips(self, recipe):
         self._archived = recipe.get('Status') == 'archived'
         self.archive_btn.setText('Restore to menu' if self._archived else 'Archive')
-        self.archive_btn.setToolTip('Put it back on the menu' if self._archived else
-                                    'Take it off the menu: hidden from the Library and analytics, kept for later')
+        self.archive_btn.setToolTip('Put back on the menu' if self._archived else 'Take off the menu')
         if self._archived:
-            self.menu_chip.configure('Archived · off the menu', 'neutral',
-                                     'Hidden from the Library and analytics. Click to restore it.',
-                                     clickable=True)
+            self.menu_chip.configure('Archived', 'neutral', 'Click to restore', clickable=True)
         elif _coerce_menu_price(recipe.get('MenuPrice')):
             self.menu_chip.configure('On the menu', 'positive',
-                                     'Click to archive it (take it off the menu).', clickable=True)
+                                     'Click to take off the menu', clickable=True)
         else:
             self.menu_chip.configure('On the menu · no price', 'neutral',
-                                     'Set a menu price to see its food cost. Click to archive it'
-                                     ' (take it off the menu).', clickable=True)
+                                     'Click to take off the menu', clickable=True)
 
         self._parents = db.get_parent_recipes(self.recipe_id)
         n = len(self._parents)
@@ -831,7 +859,7 @@ class RecipeEditWidget(QWidget):
                               for p in self._parents)
             self.used_in_chip.configure(
                 f"Used in {n} recipe{'s' if n != 1 else ''}", 'neutral',
-                f'Used as a sub-recipe in {names}. Click to open one.', clickable=True)
+                f'Used in {names}', clickable=True)
         self.used_in_chip.setVisible(bool(n))
 
         # Prices moved since the last save (not caused by this session's
@@ -845,7 +873,7 @@ class RecipeEditWidget(QWidget):
             sign = '+' if drift > 0 else '−'
             self.prices_chip.configure(
                 f'Prices changed {sign}${abs(drift):.2f} since last save', 'warn',
-                'Supplier prices moved since this recipe was last saved. Save to confirm the new cost.')
+                'Save to confirm the new cost')
         self.prices_chip.setVisible(abs(drift) >= 0.01)
 
     def toggle_archived(self):
@@ -1019,7 +1047,7 @@ class RecipeEditWidget(QWidget):
         is_template = row_dict.get('FromTemplateTagId') is not None
         menu = QMenu(self.components_table)
         edit_action = menu.addAction('Edit Quantity')
-        remove_action = menu.addAction('Remove')
+        remove_action = menu.addAction('Remove	Del')
         portion = None if is_template else row_dict.get('Portion')
         follow_action = pin_action = even_action = None
         if portion:
@@ -1028,7 +1056,7 @@ class RecipeEditWidget(QWidget):
                 follow_action = menu.addAction('Follow format rule')
                 follow_action.setEnabled(portion['sizable'])
                 if not portion['sizable']:
-                    follow_action.setToolTip('Its unit isn’t a volume, so the rule can’t size it.')
+                    follow_action.setToolTip('Not a volume unit; size by hand')
             else:
                 pin_action = menu.addAction('Size by hand')
                 if portion['state'] == 'base' and portion['siblings'] >= 2:
@@ -1085,10 +1113,18 @@ class RecipeEditWidget(QWidget):
         else:
             self.undo_stack.push(PortionCommand(rid, 'Split base evenly', lambda: db.split_base_evenly(rid, iid)))
 
-    def _remove_component(self, row):
+    def _on_delete_key(self):
+        index = self.components_table.currentIndex()
+        if not index.isValid():
+            return
+        if self.components_model.row_dict(index.row()).get('FromTemplateTagId') is not None:
+            return   # template rows belong to the format
+        self._remove_component(index.row(), ask=False)
+
+    def _remove_component(self, row, ask=True):
         row_dict = self.components_model.row_dict(row)
         name = row_dict['Name']
-        if QMessageBox.question(
+        if ask and QMessageBox.question(
             self, 'Remove', f"Remove '{name}' from this recipe?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         ) != QMessageBox.Yes:
@@ -1110,16 +1146,13 @@ class RecipeEditWidget(QWidget):
             return
         self.undo_stack.push(ReorderComponentsCommand(self.recipe_id, before, after))
 
-    def print_recipe(self):
+    def print_recipe(self, portions=True):
         from gui.printing.print_dialog import print_recipes
-        print_recipes(self, [self.recipe_id])
+        print_recipes(self, [self.recipe_id], portions=portions)
 
     def _on_nutrition_label(self):
         NutritionLabelDialog(self.recipe_id, parent=self).exec()
 
-    def _on_price_history(self):
-        dlg = PriceHistoryDialog(self.recipe_id, self.name_edit.text(), recipe_mode=True, parent=self)
-        dlg.exec()
 
     def _on_delete(self):
         name = self.name_edit.text()

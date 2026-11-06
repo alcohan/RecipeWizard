@@ -30,6 +30,8 @@ from PySide6.QtWidgets import (
 import config
 import db
 from gui.widgets.wedge_view import WedgeView
+from utilities import fuzzy
+from gui.widgets.text_fit import elide, text_width
 
 
 _KALE = '#082c00'
@@ -92,10 +94,9 @@ class _MatchDelegate(QStyledItemDelegate):
 
         # Pill.
         painter.setFont(small)
-        fm = painter.fontMetrics()
         if mode == 'recipe':
             text = 'Sub-recipe'
-            w = fm.horizontalAdvance(text) + 18
+            w = text_width(small, text) + 18
             pill = QRectF(x, cy - 10, w, 20)
             painter.setPen(QColor(_ROMAINE))
             painter.setBrush(Qt.NoBrush)
@@ -103,7 +104,7 @@ class _MatchDelegate(QStyledItemDelegate):
             painter.drawText(pill, Qt.AlignCenter, text)
         else:
             text = tag_name or 'Uncategorized'
-            w = fm.horizontalAdvance(text) + 30
+            w = text_width(small, text) + 30
             pill = QRectF(x, cy - 10, w, 20)
             painter.setPen(Qt.NoPen)
             painter.setBrush(_tint(tag_color))
@@ -136,7 +137,7 @@ class _MatchDelegate(QStyledItemDelegate):
         painter.setFont(base)
         painter.setPen(QColor(_MUTED if existing is not None else _KALE))
         name_w = rect.right() - self.PAD_X - meta_w - 12 - x
-        elided = painter.fontMetrics().elidedText(name, Qt.ElideRight, max(0, name_w))
+        elided = elide(painter.font(), name, max(0, name_w))
         painter.drawText(x, rect.y(), name_w, rect.height(), Qt.AlignVCenter | Qt.AlignLeft, elided)
         painter.restore()
 
@@ -402,24 +403,28 @@ class RecipeComponentAddDialog(QDialog):
         self._apply_filter()
 
     def _apply_filter(self, *_):
-        needle = self.filter_edit.text().strip().lower()
+        needle = self.filter_edit.text().strip()
         shown = 0
+        best = None
         for i in range(self.results.count()):
             item = self.results.item(i)
             mode = item.data(_ROW_ROLE)[1]
-            hide = (bool(needle) and needle not in item.text().lower()) or \
-                   (self._kind != 'all' and mode != self._kind)
+            score = fuzzy.score(needle, item.text()) if needle else 0
+            hide = score is None or (self._kind != 'all' and mode != self._kind)
             item.setHidden(hide)
             shown += not hide
+            if not hide and needle and item.flags() & Qt.ItemIsEnabled and (best is None or score < best[0]):
+                best = (score, i)
         self.match_label.setText(f"{shown} match{'es' if shown != 1 else ''}" if needle else '')
         current = self.results.currentItem()
-        if current is None or current.isHidden() or not (current.flags() & Qt.ItemIsEnabled):
+        if best is not None:
+            self.results.setCurrentRow(best[1])     # Enter adds the closest match
+        elif current is None or current.isHidden() or not (current.flags() & Qt.ItemIsEnabled):
             self._select_first()
         if self._can_create and needle:
             text = self.filter_edit.text().strip().replace('<', '&lt;')
             self.create_link.setText(
-                f'Not here? <a href="create" style="color: {_ROMAINE}">Create "{text}" as a new'
-                f' ingredient</a> (Ctrl+Shift+N)')
+                f'<a href="create" style="color: {_ROMAINE}">Create “{text}” as a new ingredient</a>')
             self.create_link.show()
         else:
             self.create_link.hide()

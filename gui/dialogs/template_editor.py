@@ -164,8 +164,6 @@ class TemplatesEditor(QWidget):
         self.tag_list.currentItemChanged.connect(self._on_tag_selected)
 
         layout.addLayout(head)
-        layout.addWidget(kit.note('A format is a recipe tag with a shape, a color and a template.'
-                                  ' Changes save as you make them.'))
         layout.addWidget(self.tag_list, stretch=1)
         return wrap
 
@@ -328,7 +326,7 @@ class TemplatesEditor(QWidget):
         self.items_table.setItemDelegateForColumn(1, _QuantityDelegate(self.items_table))
         self.items_table.itemChanged.connect(self._on_item_changed)
         ic.addWidget(self.items_table)
-        self.items_empty = kit.note('No items yet. Add packaging or anything every recipe of this format includes.')
+        self.items_empty = kit.note('No items yet')
         self.items_empty.setContentsMargins(16, 10, 16, 12)
         ic.addWidget(self.items_empty)
         layout.addWidget(items_card)
@@ -338,11 +336,9 @@ class TemplatesEditor(QWidget):
         rh = QHBoxLayout()
         rh.setSpacing(12)
         rh.addWidget(kit.subheading('Portion rules'))
-        rh.addWidget(kit.note('How this format sizes a category. Shared base: the category’s ingredients'
-                              ' split one amount. Each: every ingredient gets the amount. Categories'
-                              ' without a rule are sized by hand.'), stretch=1)
+        rh.addWidget(kit.note('Shared base: ingredients split one amount. Each: every ingredient gets it.'),
+                     stretch=1)
         self.review_btn = kit.button('Check recipes…')
-        self.review_btn.setToolTip('Recipes with portions sized by hand where a format has a rule')
         self.review_btn.clicked.connect(self.open_review)
         rh.addWidget(self.review_btn, alignment=Qt.AlignTop)
         rl.addLayout(rh)
@@ -482,8 +478,7 @@ class TemplatesEditor(QWidget):
             self.items_note.setText('')
             return
         n = len(db.get_format_recipe_ids(tag['id']))
-        self.items_note.setText(f'Added to every recipe tagged {tag["name"]}; changes apply to its'
-                                f' {n} recipe{"" if n == 1 else "s"} right away.')
+        self.items_note.setText(f'Added to {n} recipe{"" if n == 1 else "s"}')
 
     def _refresh_items(self):
         self._sync_items_note()
@@ -579,7 +574,7 @@ class TemplatesEditor(QWidget):
         for rule in rules:
             self.rules_layout.addWidget(self._rule_row(rule))
         if not rules and self.current_tag_id:
-            empty = kit.note('No rules: every category in this format is sized by hand.')
+            empty = kit.note('No rules')
             self.rules_layout.addWidget(empty)
         self.add_rule_btn.setVisible(self.current_tag_id is not None)
 

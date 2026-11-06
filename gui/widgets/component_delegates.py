@@ -11,12 +11,13 @@
   share of the recipe's cost.
 '''
 from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QColor, QDoubleValidator, QFont, QFontMetrics, QPainter, QPen
+from PySide6.QtGui import QColor, QDoubleValidator, QFont, QPainter, QPen
 from PySide6.QtWidgets import QLineEdit, QStyle, QStyledItemDelegate
 
 from gui.models.components_model import ChangedRole, KindRole, PortionRole, ShareRole, WasRole
 from gui.widgets.tag_badge import TagColorRole
 from gui.widgets.undo_keys import pass_undo_keys
+from gui.widgets.text_fit import elide, text_width
 
 
 _KALE = '#082c00'
@@ -115,7 +116,7 @@ class NameDelegate(QStyledItemDelegate):
             pill_font.setPointSizeF(max(7.0, option.font.pointSizeF() * 0.8))
             pill_w = _text_width(pill_font, pill) + 12
         name_w = rect.right() - x - (pill_w + 8 if pill else 0) - 4
-        name = fm.elidedText(str(index.data(Qt.DisplayRole) or ''), Qt.ElideRight, name_w)
+        name = elide(painter.font(), str(index.data(Qt.DisplayRole) or ''), name_w)
         painter.drawText(x, rect.y(), name_w, rect.height(), Qt.AlignVCenter | Qt.AlignLeft, name)
 
         if pill:
@@ -190,4 +191,4 @@ class ShareDelegate(QStyledItemDelegate):
 
 
 def _text_width(font, text):
-    return QFontMetrics(font).horizontalAdvance(text)
+    return text_width(font, text)

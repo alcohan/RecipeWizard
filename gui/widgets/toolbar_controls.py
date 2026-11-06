@@ -11,7 +11,7 @@ same field border.
   and knob) for settings like the Library's Include archived.
 '''
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QPainter, QPainterPath, QPen, QColor
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QAbstractButton, QButtonGroup, QComboBox, QFrame, QHBoxLayout, QPushButton
 
 
@@ -93,6 +93,10 @@ class SegmentedSwitch(QFrame):
                 btn.setProperty('edge', 'first')
             if i == len(options) - 1:
                 btn.setProperty('edge', 'last')
+            # Wide enough for the label in bold (the checked look).
+            bold = QFont(btn.font())
+            bold.setBold(True)
+            btn.setMinimumWidth(QFontMetrics(bold).horizontalAdvance(label) + 30)
             btn.clicked.connect(lambda _c=False, k=key: self.changed.emit(k))
             self._group.addButton(btn)
             self.buttons[key] = btn

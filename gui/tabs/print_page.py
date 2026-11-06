@@ -2,7 +2,9 @@
 label and footer line on printed recipe pages, with a live preview.
 Kept in the library via gui.services.print_branding.
 '''
-from PySide6.QtCore import QEvent, QRectF, Qt, QTimer
+import os
+
+from PySide6.QtCore import QEvent, QRectF, QStandardPaths, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QColorDialog, QFileDialog, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit, QScrollArea, QVBoxLayout,
@@ -37,9 +39,7 @@ class PrintPage(QWidget):
             row.addWidget(b)
         row.addStretch()
         logo_l.addLayout(row)
-        logo_l.addWidget(kit.note('SVG or PNG, printed about 20 pt tall at the top left. It’s kept in the data'
-                                  ' folder beside the ingredient photos, and goes into a backup when the'
-                                  ' photos do.'))
+        logo_l.addWidget(kit.note('SVG or PNG'))
 
         # text + color
         text_card, text_l = kit.card()
@@ -47,8 +47,6 @@ class PrintPage(QWidget):
         self.accent_btn = kit.button('')
         self.accent_btn.clicked.connect(self._choose_accent)
         text_l.addWidget(self.accent_btn, alignment=Qt.AlignLeft)
-        text_l.addWidget(kit.note('Colors the recipe name, the rule under the header and section labels.'
-                                  ' The allergen box always stays red.'))
         text_l.addWidget(kit.eyebrow('Header label'))
         self.header_edit = kit.field(320)
         self.header_edit.editingFinished.connect(
@@ -71,14 +69,11 @@ class PrintPage(QWidget):
         reset = kit.button('Use the standard wording')
         reset.clicked.connect(lambda: (brand.set_disclaimer(None), self._changed()))
         text_l.addWidget(reset, alignment=Qt.AlignLeft)
-        text_l.addWidget(kit.note('Printed in small italics above the footer on every page. Leave it blank'
-                                  ' to print none.'))
+        text_l.addWidget(kit.note('Leave blank for none'))
 
         left = QVBoxLayout()
         left.setSpacing(12)
         left.addWidget(kit.heading('Print & branding'))
-        left.addWidget(kit.note('How printed recipe pages look. Print a recipe from its tab, the Library’s'
-                                ' right-click menu, Recipe › Print Recipe (Ctrl+P), or the compare tray.'))
         left.addWidget(logo_card)
         left.addWidget(text_card)
         left.addStretch()
@@ -165,7 +160,9 @@ class PrintPage(QWidget):
 
     def _choose_logo(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, 'Choose logo', '', 'Images (' + ' '.join('*' + e for e in brand.LOGO_EXTENSIONS) + ')')
+            self, 'Choose logo',
+            QStandardPaths.writableLocation(QStandardPaths.PicturesLocation) or os.path.expanduser('~'),
+            'Images (' + ' '.join('*' + e for e in brand.LOGO_EXTENSIONS) + ')')
         if path:
             try:
                 brand.set_logo_file(path)

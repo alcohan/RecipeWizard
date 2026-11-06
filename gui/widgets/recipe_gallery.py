@@ -171,7 +171,6 @@ class RecipeCard(QFrame):
         self.drift_chip.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.drift_chip.setStyleSheet(f'background: {_WARN_BG}; color: {_WARN_FG}; font-size: 10px;'
                                       ' font-weight: 600; padding: 2px 6px; border-radius: 4px;')
-        self.drift_chip.setToolTip('Costs have changed since this recipe was last saved.')
         self.drift_chip.adjustSize()
         self.drift_chip.move(self.WIDTH - self.drift_chip.width() - 10, 10)
         self.set_row(row)

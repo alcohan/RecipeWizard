@@ -59,7 +59,7 @@ class RecipeWizardStatusBar(QFrame):
         self._tray_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
         self._tray_label.setProperty('role', 'link')
         self._tray_label.setCursor(Qt.PointingHandCursor)
-        self._tray_label.setToolTip('Show / hide the compare tray (Ctrl+Shift+C)')
+        self._tray_label.setToolTip('Ctrl+Shift+C')
         self._tray_label.mousePressEvent = self._on_tray_click
         # Fixed width (see _TrayChip), centred text: the count and the
         # ▴/▾ change, but the chip never shifts, so collapsing is a click
@@ -135,7 +135,6 @@ class RecipeWizardStatusBar(QFrame):
         None hides it.'''
         if release is not None:
             self._update_label.setText(f'Update available · {release.tag}')
-            self._update_label.setToolTip('See what’s new and download it')
         self._update_label.setVisible(release is not None)
 
     def _update_tray_chip(self):

@@ -1,7 +1,6 @@
-import datetime
 import os
 
-from PySide6.QtCore import Qt, QSettings, QUrl
+from PySide6.QtCore import QSettings, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QDialog, QFileDialog, QMainWindow, QMessageBox,
@@ -174,6 +173,7 @@ class MainWindow(QMainWindow):
         self.tray_dock.expandRequested.connect(lambda: self._go_to_place('analytics'))
         self.tray_dock.recipeActivated.connect(self._on_recipe_edit_by_id)
         self.tray_dock.printRequested.connect(self._print_recipes)
+        self.tray_dock.printNoPortionsRequested.connect(lambda ids: self._print_recipes(ids, portions=False))
         self._tray_docked = False
 
         self.status_bar = RecipeWizardStatusBar()
@@ -221,6 +221,8 @@ class MainWindow(QMainWindow):
                 ('Add to compare (Space)', self._on_toggle_tray_for_row),
                 ('Duplicate', lambda r: self._duplicate_recipe(self.recipes_model.id_at_row(r))),
                 ('Print…', lambda r: self._print_recipes([self.recipes_model.id_at_row(r)])),
+                ('Print without portions…',
+                 lambda r: self._print_recipes([self.recipes_model.id_at_row(r)], portions=False)),
                 (ARCHIVE_ACTION, None),
                 (None, None),
                 ('Delete…', self._on_recipe_delete),
@@ -277,6 +279,7 @@ class MainWindow(QMainWindow):
         self.refresh()
         self.vendor_items_page.refresh()
         self.import_formats_page.refresh()
+        self.suppliers_page.refresh()
         self._refresh_configure_counts()
 
     def _analytics_place(self):
@@ -302,16 +305,14 @@ class MainWindow(QMainWindow):
         cfg.add_section('formats', 'Formats & templates', self.templates_page)
         self.categories_page = TagsPage(
             'Ingredient categories', 'ingredient',
-            'Categories color the wedge slices and group components in a recipe tab. Their order is the wedge'
-            ' order. Double-click a name to rename; click the swatch to pick a color. Changes save as you make them.')
+            'Order sets the wedge order. Nutrition and Price set what Library health checks')
+        self.categories_page.changed.connect(self._on_config_changed)
         cfg.add_section('categories', 'Ingredient categories', self.categories_page)
         self.allergens_page = AllergensPage()
         self.allergens_page.changed.connect(self._on_config_changed)
         cfg.add_section('allergens', 'Allergens', self.allergens_page)
-        self.recipe_tags_page = TagsPage(
-            'Recipe tags', 'recipe_tag',
-            'Labels such as Core or Seasonal. A recipe can have several; assign them in a recipe tab. The Library'
-            ' filters and groups by them. Double-click a name to rename; click the swatch to pick a color.')
+        self.recipe_tags_page = TagsPage('Recipe tags', 'recipe_tag')
+        self.recipe_tags_page.changed.connect(self._on_config_changed)
         cfg.add_section('recipe_tags', 'Recipe tags', self.recipe_tags_page)
         self.diets_page = DietsPage(self.recipes_model)
         self.diets_page.changed.connect(self._on_config_changed)
@@ -322,7 +323,10 @@ class MainWindow(QMainWindow):
         # Library picks them up when you move on.
         cfg.sectionChanged.connect(self._on_config_section_changed)
         cfg.add_group('Purchasing')
-        cfg.add_section('suppliers', 'Suppliers', SuppliersTab())
+        self.suppliers_page = SuppliersTab()
+        self.suppliers_page.changed.connect(self._on_config_changed)
+        self.suppliers_page.ingredientRequested.connect(self._edit_ingredient_from_suppliers)
+        cfg.add_section('suppliers', 'Suppliers', self.suppliers_page)
         self.vendor_items_page = VendorItemsPage()
         self.vendor_items_page.changed.connect(self._on_prices_imported)
         self.vendor_items_page.importRequested.connect(self._on_import_purchases)
@@ -333,12 +337,13 @@ class MainWindow(QMainWindow):
         cfg.add_section('import_formats', 'Import formats & history', self.import_formats_page)
         cfg.add_group('Upkeep')
         self.library_health_tab = LibraryHealthTab()
+        self.library_health_tab.ingredientRequested.connect(self._on_ingredient_edit_by_id)
+        self.library_health_tab.newPriceRequested.connect(self._on_ingredient_new_price)
+        self.library_health_tab.changed.connect(self._refresh_health_count)
         cfg.add_section('health', 'Library health', self.library_health_tab)
         cfg.add_section('data', 'Data & backups', LauncherPage(
             'Data & backups',
-            'Back up the whole library to a single file, restore from one, '
-            'or open the data folder. A backup is the way to move all your '
-            'data to another computer.',
+            '',
             [
                 ('Back up now', self._on_backup_now),
                 ('Back up to…', self._on_backup_database),
@@ -348,8 +353,7 @@ class MainWindow(QMainWindow):
         ))
         cfg.add_section('images', 'Images', LauncherPage(
             'Images',
-            'Match ingredient photos in the data folder to ingredients by '
-            'name, or assign them by hand.',
+            '',
             [
                 ('Auto-assign images', self._on_auto_assign_images),
                 ('Bulk assign…', self._on_bulk_assign_images),
@@ -378,6 +382,11 @@ class MainWindow(QMainWindow):
             page.refresh()
         if key == 'formats':
             self.templates_page._refresh_list()
+
+    def _edit_ingredient_from_suppliers(self, ingredient_id):
+        dlg = self._on_ingredient_edit_by_id(ingredient_id)
+        if dlg is not None and getattr(dlg, 'modified', False):
+            self.suppliers_page.refresh()
 
     def _on_config_changed(self):
         '''A Configure page saved a change the Library depends on
@@ -424,12 +433,12 @@ class MainWindow(QMainWindow):
 
     def _refresh_health_count(self):
         try:
-            report = db.library_health_report()
-            n = sum(count for count, _sample in report.values())
+            n = db.library_health()['issues']
         except Exception:
             n = 0
-        self.app_header.set_badge(self._PLACES.index('configure'), n)
-        self.configure_tab.set_section_count('health', n)
+        tip = f"{n} thing{'s' if n != 1 else ''} to fix in Library health"
+        self.app_header.set_badge(self._PLACES.index('configure'), n, tip)
+        self.configure_tab.set_section_alert('health', n, tip)
 
     def _refresh_configure_counts(self):
         cfg = self.configure_tab
@@ -609,9 +618,10 @@ class MainWindow(QMainWindow):
         recipe_menu.addSeparator()
         label_action = add(recipe_menu, 'Nutrition &Label…',
                            lambda: self._with_editor('show_nutrition_label'))
-        history_action = add(recipe_menu, '&Price History…',
-                             lambda: self._with_editor('show_price_history'))
+        history_action = add(recipe_menu, '&Cost Over Time',
+                             lambda: self._with_editor('show_cost_history'))
         add(recipe_menu, 'Pr&int Recipe…', self._on_print_current, 'Ctrl+P')
+        add(recipe_menu, 'Print &Without Portions…', lambda: self._on_print_current(portions=False), 'Ctrl+Shift+P')
         recipe_menu.addSeparator()
         add(recipe_menu, 'D&uplicate Recipe', self._on_duplicate_current, 'Ctrl+D')
         self.archive_action = add(recipe_menu, 'A&rchive Recipe', self._on_toggle_archive_current)
@@ -755,19 +765,19 @@ class MainWindow(QMainWindow):
         if rid is not None and self.stack.currentWidget() is self.recipes_tab:
             self._duplicate_recipe(rid)
 
-    def _on_print_current(self):
+    def _on_print_current(self, portions=True):
         '''Ctrl+P: the recipe in the current tab, or the Library's
         selection.'''
         editor = self._current_editor()
         if editor is not None and self.stack.currentWidget() is self.recipes_tab:
-            self._print_recipes([editor.recipe_id])
+            self._print_recipes([editor.recipe_id], portions)
             return
         rid = self.recipes_tab.selected_recipe_id()
         if rid is not None and self.stack.currentWidget() is self.recipes_tab:
-            self._print_recipes([rid])
+            self._print_recipes([rid], portions)
 
-    def _print_recipes(self, recipe_ids):
-        print_recipes(self, [rid for rid in recipe_ids if rid is not None])
+    def _print_recipes(self, recipe_ids, portions=True):
+        print_recipes(self, [rid for rid in recipe_ids if rid is not None], portions=portions)
 
     def _sync_archive_action(self):
         editor = self._current_editor()
@@ -832,9 +842,13 @@ class MainWindow(QMainWindow):
         include_images = backup_restore.ask_backup_options(self)
         if include_images is None:
             return
-        default_name = f'RecipeWizard_backup_{datetime.date.today().isoformat()}{backup.EXTENSION}'
+        # Start in the data folder, where Back Up Now saves and where the
+        # status bar and Library health look. A bare file name would open
+        # the dialog in the working directory (the project folder when
+        # run from source).
+        default_path = os.path.join(backup.default_backup_dir(), backup.timestamped_name())
         path, _ = QFileDialog.getSaveFileName(
-            self, 'Back Up Library', default_name, f'RecipeWizard backup (*{backup.EXTENSION})',
+            self, 'Back Up Library', default_path, f'RecipeWizard backup (*{backup.EXTENSION})',
         )
         if not path:
             return
@@ -962,7 +976,7 @@ class MainWindow(QMainWindow):
         self.refresh()
 
     def _on_about(self):
-        AboutDialog(parent=self).exec()
+        AboutDialog(parent=self, on_check_updates=self._on_check_updates).exec()
 
     # --- updates ---
 

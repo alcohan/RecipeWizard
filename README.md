@@ -1,47 +1,90 @@
 # RecipeWizard
 
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+Recipe costing and nutrition for restaurant kitchens. Build recipes from your ingredients, keep prices current from your purchase history, and print recipe pages with nutrition labels, allergens and portion guides.
 
-## Description
-RecipeWizard is a tool designed to help chefs manage recipes and track nutrition & costing.
+Windows desktop app · Python 3.12 · PySide6 · SQLite
 
-## Table of Contents
-- [Installation](#installation)
-- [Usage](#usage)
-- [Features](#features)
-- [Todo](#todo)
-- [Contact](#contact)
+## Download
 
-## Installation
-Unpack dist.zip into a folder of your choice, then run RecipeWizard.exe.
-In order to use the Nutrition Label feature, ensure you have Google Chrome installed on the system.
+Get **RecipeWizard.exe** from the [latest release](https://github.com/alcohan/RecipeWizard/releases) and run it. There's no installer. Your library is created on first run, and **Help › Check for Updates** installs new versions in place.
 
-## Usage
-RecipeWizard considers two main types of objects: Ingredients and Recipes.
-### Ingredients
-Are the core building blocks of information.
-Ingredients have a **unit** which represents the portion you might use this ingredient in. Nutrition and costing are entered on a per-unit basis, and ingredients are added to recipes in multiples of this unit.
+## What it does
 
-Price history is tracked on each ingredient. Each price update may have a Supplier, Case Price, and Yield which represents the number of [unit]s that a case yields. 
-Calculating this manually means we can easily update pricing using the Case Price.
+**Recipes**
+- A library of every recipe, as a gallery or a table, with filters by format, tag, allergen and diet. You can save views, including their grouping and sort order.
+- Open recipes in tabs side by side. Each recipe shows its live cost, food-cost % against the menu price, nutrition and allergens.
+- Recipes can include other recipes (dressings, sauces, bases), nested as deep as you like.
+- **Formats** (Salad, Wrap, Bowl…) add their packaging and other standard items automatically and set portion rules.
+- **Cost over time** charts how a recipe's cost moved with ingredient prices and shows which ingredients drove the change.
 
-### Recipes
-Are collections of **components** which may be ingredients or other recipes. 
+**Ingredients and prices**
+- Nutrition comes from a USDA FoodData Central lookup or is entered by hand. Ingredients also carry allergens, a package ingredient statement and a photo.
+- Prices are entered as case price × what a case yields, so updating one is a single number.
+- **Import purchases** reads your distributor's purchase-history CSV. It matches vendor items to ingredients and turns purchases into dated prices.
 
-A recipe also has a unit and a yield quantity, e.g. a recipe for simple syrup may yield 3 Cups, or a recipe for a salad may yield 1 meal.
-Recipes reflect the nutritional and costing totals from all of their components.
+**Output**
+- A Nutrition Facts label for any recipe, to copy or save as an image. Values are rounded the way labels round them.
+- Printed recipe pages with ingredients, nutrition, allergens and a portion-scoop key, plus your logo and colors. A second version leaves out portions and amounts.
+- **Analytics** compares recipes side by side by cost, calories or any macro, per serving, per 100 g or per dollar of menu price. Comparisons can be saved and exported to CSV.
 
-## Features
-- Infinite nesting: Create as many sub-recipes as you like!
-- Label Generator: with one button, create a nutrition label for your product. [Link to package](https://github.com/nutritionix/nutrition-label)
-- Natural Language Search: quickly get nutrition data for any ingredient from the web
-- Price tracking: Quickly update the prices of ingredients using the case price of wholesale items.
-- Charts & breakdowns: View costing trends by ingredient or by recipe. View component breakdown to see what's contributing to the cost of a recipe.
+**Upkeep**
+- **Library health** lists what needs fixing: missing nutrition, stale prices and duplicate names. It only checks ingredients used in active recipes, and each ingredient category decides which checks apply.
+- Back up and restore the whole library, photos included, in one file.
+- **Ctrl+K** jumps to any recipe, ingredient or command. Search ignores accents and forgives small typos.
 
-## Todo
-- Improved Unit system with conversion factors between common measures
-- CSV import/export tools
-- Scalable / printable export for multi-batching, e.g. 2x, 5x, 10x
+## How costing works
+
+Every ingredient has a **unit**: the portion you use it in (1 oz, 1 each, 1/6 wedge). Nutrition and cost are per unit, and recipes use ingredients in multiples of that unit.
+
+A **price** is a case price and how many units a case yields:
+
+```
+$42.00 case ÷ 120 portions = $0.350 per unit
+```
+
+A **recipe** has a yield (3 cups of syrup, 1 salad) and adds up the cost and nutrition of its components, including those inside any sub-recipes.
+
+## Your data
+
+Everything lives in one folder:
+
+```
+%APPDATA%\AdrianCohan\RecipeWizard\
+  builder.db      the library (SQLite)
+  ingredients\    ingredient photos
+  recipes\        recipe photos
+  branding\       print logo
+```
+
+**Tools › Open Data Folder** opens it. Backups (`.rwbackup`) are saved there by default.
+
+## Run from source
+
+```bash
+git clone https://github.com/alcohan/RecipeWizard.git
+cd RecipeWizard
+pip install -r requirements.txt
+python app.py
+```
+
+Optional settings, as environment variables or in a `.env` file next to `app.py`:
+
+| Variable | Use |
+|---|---|
+| `USDA_API_KEY` | Your [FoodData Central key](https://fdc.nal.usda.gov/api-key-signup). Without one the shared demo key is used. A key can also be set in Configure › Preferences. |
+| `RECIPEWIZARD_DB` | Use a different library file, for example a scratch copy |
+
+Run the tests with:
+
+```bash
+pip install pytest
+python -m pytest
+```
+
+## Releases
+
+Pushing a `vX.Y.Z` tag runs the [release workflow](.github/workflows/release.yml). It sets the version, builds `RecipeWizard.exe` with PyInstaller, and publishes it with its SHA-256 checksum as a GitHub pre-release.
 
 ## Contact
+
 adu.cohan@gmail.com

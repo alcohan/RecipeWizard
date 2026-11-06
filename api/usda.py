@@ -268,11 +268,9 @@ def portions(food):
             label, amount = desc, q
         else:
             if unit_name.lower() in ('', 'undetermined'):
-                word = modifier
                 q, key, _w = parse_unit(modifier)
                 label = f'{_fmt(amount)} {modifier}'.strip()
             else:
-                word = unit_name
                 key = _ALIASES.get(unit_name.lower())
                 label = f'{_fmt(amount)} {unit_name}' + (f', {modifier}' if modifier else '')
         if key is None and unit_name.upper() == 'RACC':

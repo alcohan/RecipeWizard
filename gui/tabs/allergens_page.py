@@ -48,8 +48,7 @@ class AllergensPage(QWidget):
         layout.setContentsMargins(28, 20, 28, 28)
         layout.setSpacing(12)
         layout.addLayout(head)
-        layout.addWidget(kit.note('The order here is the order allergens appear everywhere. Drag to reorder;'
-                                  ' double-click to rename. Diets use them in Configure › Diets.'))
+        layout.addWidget(kit.note('Drag to reorder'))
         layout.addWidget(self.list, stretch=1)
         layout.addLayout(foot)
 

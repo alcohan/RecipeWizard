@@ -24,11 +24,11 @@ from PySide6.QtGui import QColor, QDoubleValidator, QFont, QPainter
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QPushButton, QStyle, QStyledItemDelegate,
-    QVBoxLayout, QWidget,
-)
+    QVBoxLayout, )
 
 import api.usda as usda
 from gui.workers import run_async
+from gui.widgets.text_fit import elide, text_width
 
 
 _KALE = '#082c00'
@@ -83,8 +83,7 @@ class _ResultDelegate(QStyledItemDelegate):
         small = QFont(option.font)
         small.setPointSizeF(max(7.0, option.font.pointSizeF() * 0.85))
         painter.setFont(small)
-        fm = painter.fontMetrics()
-        pw = fm.horizontalAdvance(label) + 14
+        pw = text_width(small, label) + 14
         pill = QRectF(rect.right() - pw - 6, rect.center().y() - 9, pw, 18)
         fg, bg = _TYPE_STYLE.get(dtype, (_MUTED, '#efe9de'))
         painter.setPen(Qt.NoPen)
@@ -99,7 +98,7 @@ class _ResultDelegate(QStyledItemDelegate):
         painter.setPen(QColor(_KALE))
         text_rect = rect.adjusted(10, 0, -(pw + 16), 0)
         painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft,
-                         painter.fontMetrics().elidedText(usda.describe(food), Qt.ElideRight, text_rect.width()))
+                         elide(painter.font(), usda.describe(food), text_rect.width()))
         painter.restore()
 
     def sizeHint(self, option, index):
@@ -297,15 +296,14 @@ class UsdaLookupPanel(QFrame):
                             + (f' · {food.get("foodCategory")}' if food.get('foodCategory') else ''))
             self.results.addItem(item)
         n = len(foods)
-        self.status.setText(f'{n} result{"s" if n != 1 else ""} for "{text}" — '
-                            'lab-measured foods first, then branded products.')
+        self.status.setText(f'{n} result{"s" if n != 1 else ""} for “{text}”')
         if foods:
             self.results.setCurrentRow(0)
 
     def _on_search_error(self, token, message):
         if token != self._search_token:
             return
-        self.status.setText(message if message != 'No results' else 'No USDA matches — try fewer or different words.')
+        self.status.setText(message if message != 'No results' else 'No matches')
 
     # --- detail --------------------------------------------------------
 
@@ -410,7 +408,7 @@ class UsdaLookupPanel(QFrame):
         if self._per_100 is None:
             return
         if grams is None:
-            self.basis.setText(f'Per 100 g (USDA basis). Enter the weight of 1 × {unit} to scale.')
+            self.basis.setText(f'Per 100 g. Enter the weight of 1 × {unit} to scale.')
             values = self._per_100
             self.use_btn.setEnabled(False)
         else:

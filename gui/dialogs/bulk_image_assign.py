@@ -1,7 +1,7 @@
 '''Bulk image-assignment dialog. One row per ingredient (label + combo box).
 Unassigned rows sort first; combo changes auto-save to the DB.'''
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel, QPushButton,
+    QComboBox, QDialog, QFormLayout, QHBoxLayout, QPushButton,
     QScrollArea, QVBoxLayout, QWidget,
 )
 
@@ -36,11 +36,8 @@ class BulkImageAssignDialog(QDialog):
         btn_row.addStretch()
         btn_row.addWidget(close_btn)
 
-        hint = QLabel('Unassigned ingredients are listed first. Selections save immediately.')
-        hint.setEnabled(False)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(hint)
         layout.addWidget(scroll, stretch=1)
         layout.addLayout(btn_row)
 

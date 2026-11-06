@@ -274,7 +274,7 @@ class IngredientEditDialog(QDialog):
             hdr.setSectionResizeMode(c, QHeaderView.ResizeToContents)
         hdr.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         pl.addWidget(self.price_table)
-        self.no_price = QLabel('No price yet. It shows up in Library health under "No price" until you add one.')
+        self.no_price = QLabel('No price yet')
         self.no_price.setWordWrap(True)
         self.no_price.setStyleSheet(f'color: {_MUTED};')
         pl.addWidget(self.no_price)
@@ -289,8 +289,6 @@ class IngredientEditDialog(QDialog):
         lookup.setCursor(Qt.PointingHandCursor)
         lookup.setStyleSheet(f'QPushButton {{ color: {_ROMAINE}; border: 0; padding: 0 4px; }}'
                              ' QPushButton:hover { text-decoration: underline; }')
-        lookup.setToolTip('Find this ingredient in USDA FoodData Central and fill in its nutrition, '
-                          'scaled to this unit')
         lookup.clicked.connect(self._on_usda_lookup)
         nhead.addWidget(lookup)
         self.nutrition = NutritionGrid({key: row.get(key) for key in config.nutrition_fields})
@@ -386,10 +384,9 @@ class IngredientEditDialog(QDialog):
             f' QPushButton:disabled {{ border-color: #d8ccb4; color: #a7ad9c; }}')
         self.delete_btn.clicked.connect(self._on_delete)
         n = len(self._usage)
-        hint = QLabel(f"Used in {n} recipe{'s' if n != 1 else ''} — remove it from "
-                      f"{'them' if n != 1 else 'it'} to delete" if n else '')
-        hint.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
         self.delete_btn.setEnabled(not n)
+        if n:
+            self.delete_btn.setToolTip(f"Used in {n} recipe{'s' if n != 1 else ''}")
         cancel = QPushButton('Cancel')
         cancel.setAutoDefault(False)
         cancel.setStyleSheet(_SECONDARY.replace('min-height: 32px', 'min-height: 34px'))
@@ -405,7 +402,6 @@ class IngredientEditDialog(QDialog):
         hl.setContentsMargins(20, 12, 20, 12)
         hl.setSpacing(8)
         hl.addWidget(self.delete_btn)
-        hl.addWidget(hint)
         hl.addStretch()
         hl.addWidget(cancel)
         hl.addWidget(save)
@@ -492,14 +488,13 @@ class IngredientEditDialog(QDialog):
         if not formats:
             self.portion_hint.hide()
             return
-        ok, text = portions.describe_unit(self.unit_edit.text())
+        ok, _desc = portions.describe_unit(self.unit_edit.text())
         sized_by = ', '.join(formats)
         if ok:
-            self.portion_hint.setText(f'Portion rules: {text}. {sized_by} size this category by rule.')
+            self.portion_hint.setText(f'Sized by rule in {sized_by}')
             self.portion_hint.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
         else:
-            self.portion_hint.setText(f'{text}, so {sized_by} can’t size it by portion rule.'
-                                      ' Use a volume unit such as “3 cups” or “8 f.oz”.')
+            self.portion_hint.setText('Portion rules need a volume unit, like “3 cups”')
             self.portion_hint.setStyleSheet(f'color: {_UP_FG}; font-size: 12px;')
         self.portion_hint.show()
 
@@ -521,7 +516,7 @@ class IngredientEditDialog(QDialog):
             if current > 0:
                 note += f' Weight per unit changed from {_num_text(current)} g to match.'
             self.weight_edit.setText(_num_text(round(grams, 2)))
-        self.usda_note.setText(note + ' Save to keep these values.')
+        self.usda_note.setText(note.strip())
         self.usda_note.show()
 
     def _set_photo(self, filename):
@@ -564,7 +559,6 @@ class IngredientEditDialog(QDialog):
             archived = u.get('Status') == 'archived'
             name = QLabel(f'<a href="{u["Id"]}" style="color: {_MUTED if archived else _KALE}">{u["Name"]}</a>'
                           + (f'<span style="color: {_MUTED}"> · archived</span>' if archived else ''))
-            name.setToolTip('Close and open this recipe in a tab')
             # Long recipe names wrap instead of widening the side panel.
             name.setWordWrap(True)
             name.setMinimumWidth(1)
@@ -577,8 +571,7 @@ class IngredientEditDialog(QDialog):
         extra = len(self._usage) - _USED_PREVIEW
         if extra > 0:
             more = QLabel(f'<a href="more" style="color: {_ROMAINE}">'
-                          f'{"Show fewer" if self._show_all_used else f"{extra} more"}</a>'
-                          f'<span style="color: {_MUTED}"> · links open the recipe in a tab</span>')
+                          f'{"Show fewer" if self._show_all_used else f"{extra} more"}</a>')
             more.setStyleSheet(f'padding: 6px 10px; border-top: 1px solid {_RULE};')
             more.linkActivated.connect(self._toggle_used)
             self._used_layout.addWidget(more)

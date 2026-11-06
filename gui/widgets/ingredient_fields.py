@@ -10,7 +10,7 @@ read their values on Save.
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QButtonGroup, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QMenu, QPlainTextEdit, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
@@ -109,8 +109,7 @@ class AllergenChecks(QWidget):
         # The chip's look carries the state, so its text stays just the
         # name and three chips fit the editor's narrow side panel.
         legend = QLabel(f'<span style="color:{_ALERT}; font-weight:600">Red</span> = contains,'
-                        f' <span style="color:{_FAC}">dashed amber</span> = facility.'
-                        ' Click to cycle; right-click to choose.')
+                        f' <span style="color:{_FAC}">dashed amber</span> = facility')
         legend.setTextFormat(Qt.RichText)
         legend.setWordWrap(True)
         legend.setMinimumWidth(1)
@@ -236,9 +235,7 @@ class AllergenChecks(QWidget):
         if out:
             listed = out[0] if len(out) == 1 else ', '.join(out[:-1]) + ' or ' + out[-1]
             self.diet_hint.setText(f'Recipes with this don’t fit {listed}.')
-        elif facility:
-            self.diet_hint.setText('Facility warnings only: no diet rules these out.')
-        self.diet_hint.setVisible(bool(out) or bool(facility))
+        self.diet_hint.setVisible(bool(out))
 
 
 class NutritionGrid(QWidget):
@@ -287,12 +284,12 @@ class StatementBox(QWidget):
         title = QLabel('INGREDIENT STATEMENT')
         title.setStyleSheet(f'color: {_MUTED}; font-size: 11px; font-weight: 600; letter-spacing: 1px;')
         self.edit = QPlainTextEdit(text or '')
-        self.edit.setPlaceholderText('Paste the ingredients list from the manufacturer’s label')
+        self.edit.setPlaceholderText('From the manufacturer’s label')
         self.edit.setFixedHeight(72)
         self.edit.setStyleSheet(f'QPlainTextEdit {{ border: 1px solid {_FIELD_BORDER}; border-radius: 4px;'
                                 f' background: #ffffff; color: {_KALE}; padding: 4px 6px; }}'
                                 f' QPlainTextEdit:focus {{ border: 2px solid {_ROMAINE}; }}')
-        hint = QLabel('Printed in small type under this ingredient on recipe pages.')
+        hint = QLabel('Printed in small type on recipe print-out')
         hint.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 4, 0, 0)
