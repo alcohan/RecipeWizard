@@ -2,6 +2,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QCheckBox, QGridLayout, QGroupBox
 
 import db
+from gui.widgets.text_fit import literal
 
 
 class AllergenCheckboxGrid(QGroupBox):
@@ -15,7 +16,7 @@ class AllergenCheckboxGrid(QGroupBox):
         self.ingredient_id = ingredient_id
         layout = QGridLayout(self)
         for i, row in enumerate(db.get_ingredient_allergens(ingredient_id)):
-            cb = QCheckBox(row['name'])
+            cb = QCheckBox(literal(row['name']))
             cb.setChecked(bool(row['checked']))
             aid = row['id']
             cb.toggled.connect(lambda state, a=aid: self._on_toggle(a, state))

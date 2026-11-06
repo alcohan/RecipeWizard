@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 import config
 import db
+from gui.widgets.text_fit import literal
 from gui.dialogs.recipe_component_add import RecipeComponentAddDialog
 from gui.widgets import config_kit as kit
 from utilities import portions
@@ -665,7 +666,7 @@ class TemplatesEditor(QWidget):
             return
         menu = QMenu(self)
         for t in available:
-            menu.addAction(QIcon(_dot(t.get('color') or '#a7ad9c')), t['name'],
+            menu.addAction(QIcon(_dot(t.get('color') or '#a7ad9c')), literal(t['name']),
                            lambda t=t: self.add_rule(t['id']))
         menu.exec(anchor.mapToGlobal(anchor.rect().bottomLeft()))
 

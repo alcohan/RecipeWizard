@@ -10,6 +10,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QButtonGroup, QFrame, QHBoxLayout, QPushButton
 
 import db
+from gui.widgets.text_fit import literal
 
 
 _ROMAINE = '#347200'
@@ -65,7 +66,7 @@ class FormatSegments(QFrame):
             self._layout.removeWidget(btn)
             btn.deleteLater()
         for tag_id, name in options:
-            btn = QPushButton(name)
+            btn = QPushButton(literal(name))
             btn.setCheckable(True)
             btn.setProperty('tagId', tag_id)
             btn.setToolTip('Sub-recipe' if tag_id is None else '')

@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 import db
+from gui.widgets.text_fit import literal
 from gui.widgets import config_kit as kit
 from gui.widgets.toolbar_controls import ToolbarCombo
 from utilities import diets
@@ -162,7 +163,7 @@ class DietsPage(QWidget):
 
     def _build_allergen_boxes(self):
         allergens = db.get_all_allergen_rows()
-        if [(a['id'], a['name']) for a in allergens] == [(k, b.text()) for k, b in self._boxes.items()]:
+        if [(a['id'], literal(a['name'])) for a in allergens] == [(k, b.text()) for k, b in self._boxes.items()]:
             return
         while self._allergen_grid.count():
             w = self._allergen_grid.takeAt(0).widget()
@@ -170,7 +171,7 @@ class DietsPage(QWidget):
                 w.deleteLater()
         self._boxes = {}
         for i, a in enumerate(allergens):
-            cb = QCheckBox(a['name'])
+            cb = QCheckBox(literal(a['name']))
             cb.setStyleSheet(f'QCheckBox {{ color: {kit.KALE}; spacing: 8px; }}')
             cb.toggled.connect(lambda _on: self._on_allergens())
             self._allergen_grid.addWidget(cb, i // 3, i % 3)

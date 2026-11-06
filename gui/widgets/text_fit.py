@@ -30,3 +30,10 @@ def elide(font, text, width):
 
 def overflows(font, text, width):
     return QFontMetricsF(font).horizontalAdvance(text or '') > width + 0.5
+
+
+def literal(text):
+    '''`text` for a tab, menu item, button, checkbox or radio label, which
+    read & as a shortcut marker and hide it ("Plane & Simple" showed as
+    "Plane  Simple"). Use it for anything a user typed.'''
+    return (text or '').replace('&', '&&')

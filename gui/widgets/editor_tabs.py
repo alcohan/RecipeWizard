@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QRectF, QSize
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
 
-from gui.widgets.text_fit import elide
+from gui.widgets.text_fit import elide, literal
 
 from gui.dialogs.recipe_edit import RecipeEditWidget
 from gui.widgets.wedge_view import WedgeView
@@ -202,7 +202,7 @@ class EditorTabs(QTabWidget):
         for i in range(1, self.count()):
             w = self.widget(i)
             dirty = getattr(self.tabBar().tabButton(i, QTabBar.RightSide), 'unsaved', False)
-            act = menu.addAction(w.title() + ('  •' if dirty else ''))
+            act = menu.addAction(literal(w.title()) + ('  •' if dirty else ''))
             act.setCheckable(True)
             act.setChecked(i == current)
             act.triggered.connect(lambda _c=False, w=w: self.setCurrentWidget(w))
@@ -326,7 +326,7 @@ def _tab_text(title):
     font = QFont()
     font.setPixelSize(14)
     font.setBold(True)
-    return elide(font, title or '', _TAB_TEXT_MAX)
+    return literal(elide(font, title or '', _TAB_TEXT_MAX))
 
 
 _ICON = 24   # same as the wedge on a recipe tab

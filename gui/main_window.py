@@ -60,14 +60,18 @@ class MainWindow(QMainWindow):
 
     _PLACES = ('recipes', 'ingredients', 'analytics', 'configure')
 
-    def __init__(self):
+    def __init__(self, progress=None):
+        '''`progress(message, fraction)` reports each stage of building
+        the window to the startup splash.'''
         super().__init__()
+        self._progress = progress or (lambda _message, _fraction: None)
         self.setWindowTitle(config.APPNAME)
         self.resize(1200, 820)
         # Push the user's saved USDA API key into the API client before any
         # USDA-dependent dialog can open. Empty string = use DEMO_KEY fallback.
         api.usda.set_api_key(QSettings().value('usda/apiKey', '', type=str))
         self._build_places()
+        self._progress('Setting up menus…', 0.86)
         self._build_menus()
         self._restore_state()
         self.updates = UpdateService(self)
@@ -96,9 +100,10 @@ class MainWindow(QMainWindow):
         # Reopen the recipe tabs from last session, skipping any recipe
         # that's been deleted since (e.g. by a restore).
         existing = {r['Id'] for r in db.recipe_info()}
-        for rid in _parse_id_list(settings.value('recipes/openTabs', '')):
-            if rid in existing:
-                self.recipes_tab.open_in_editor(rid)
+        reopen = [rid for rid in _parse_id_list(settings.value('recipes/openTabs', '')) if rid in existing]
+        for i, rid in enumerate(reopen):
+            self._progress(f'Reopening recipes ({i + 1} of {len(reopen)})…', 0.95 + 0.04 * i / len(reopen))
+            self.recipes_tab.open_in_editor(rid)
         tab_idx = settings.value('recipes/currentTab', 0)
         try:
             self.recipes_tab.editor_tabs.setCurrentIndex(int(tab_idx))
@@ -137,7 +142,9 @@ class MainWindow(QMainWindow):
         '''App bar + stacked places + docked compare tray + status bar.
         One place per app-bar slot; indices follow _PLACES. Model refs
         are stashed on self so handlers can call refresh() on them.'''
+        self._progress('Loading ingredients…', 0.42)
         self.ingredients_model = IngredientsModel(self)
+        self._progress('Loading recipes…', 0.46)
         self.recipes_model = RecipesModel(self)
 
         # Session-only staging set for side-by-side comparison. Lives
@@ -160,14 +167,19 @@ class MainWindow(QMainWindow):
         self.app_header.placeChanged.connect(self.stack.setCurrentIndex)
         self.app_header.placeChanged.connect(lambda _i: self._sync_tray_visibility())
 
+        self._progress('Building the recipe library…', 0.5)
         self.app_header.add_place('Recipes')
         self.stack.addWidget(self._recipes_place())
+        self._progress('Building Ingredients…', 0.66)
         self.app_header.add_place('Ingredients')
         self.stack.addWidget(self._ingredients_place())
+        self._progress('Building Analytics…', 0.69)
         self.app_header.add_place('Analytics')
         self.stack.addWidget(self._analytics_place())
+        self._progress('Building Configure…', 0.71)
         self.app_header.add_place('Configure')
         self.stack.addWidget(self._configure_place())
+        self._progress('Checking library health…', 0.82)
 
         self.tray_dock = CompareTrayDock(self.compare_tray)
         self.tray_dock.expandRequested.connect(lambda: self._go_to_place('analytics'))

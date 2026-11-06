@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
 
 import config
 import db
+from gui.widgets.text_fit import literal
 from gui.dialogs.archive_confirm import confirm_archive
 from gui.dialogs.nutrition_label import NutritionLabelDialog
 from gui.dialogs.recipe_component_add import RecipeComponentAddDialog
@@ -812,7 +813,7 @@ class RecipeEditWidget(QWidget):
                     item.widget().deleteLater()
             self._tag_pills = {}
             for tid, name, color in key:
-                pill = QPushButton(name)
+                pill = QPushButton(literal(name))
                 pill.setCheckable(True)
                 pill.setCursor(Qt.PointingHandCursor)
                 dot = color or _MUTED
@@ -932,7 +933,7 @@ class RecipeEditWidget(QWidget):
             return
         menu = QMenu(self)
         for p in self._parents:
-            action = menu.addAction(p['Name'] + ('  · archived' if p.get('Status') == 'archived' else ''))
+            action = menu.addAction(literal(p['Name']) + ('  · archived' if p.get('Status') == 'archived' else ''))
             action.triggered.connect(lambda _c=False, rid=p['Id']: self.openRecipeRequested.emit(rid))
         menu.exec(self.used_in_chip.mapToGlobal(self.used_in_chip.rect().bottomLeft()))
 
@@ -1065,7 +1066,7 @@ class RecipeEditWidget(QWidget):
         open_action = edit_ing_action = None
         if row_dict['Type'] == 'recipe':
             menu.addSeparator()
-            open_action = menu.addAction(f"Open {row_dict['Name']}")
+            open_action = menu.addAction(f"Open {literal(row_dict['Name'])}")
         else:
             menu.addSeparator()
             edit_ing_action = menu.addAction('Edit ingredient…')
