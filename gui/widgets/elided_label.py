@@ -10,6 +10,8 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import QLabel, QSizePolicy
 
+from gui.widgets.text_fit import elide, overflows
+
 
 class ElidedLabel(QLabel):
     def __init__(self, text='', parent=None):
@@ -34,12 +36,12 @@ class ElidedLabel(QLabel):
         self._sync_tooltip()
 
     def _sync_tooltip(self):
-        cut = self.fontMetrics().horizontalAdvance(self._full) > self.contentsRect().width()
+        cut = overflows(self.font(), self._full, self.contentsRect().width())
         self.setToolTip(self._full if cut else '')
 
     def paintEvent(self, _event):
         painter = QPainter(self)
         rect = self.contentsRect()
-        text = self.fontMetrics().elidedText(self._full, Qt.ElideRight, rect.width())
+        text = elide(self.font(), self._full, rect.width())
         painter.setPen(self.palette().color(self.foregroundRole()))
         painter.drawText(rect, int(self.alignment() | Qt.TextSingleLine), text)

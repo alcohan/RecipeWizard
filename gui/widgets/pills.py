@@ -14,6 +14,8 @@ from PySide6.QtCore import QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
+from gui.widgets.text_fit import elide, text_width
+
 
 _KALE = '#082c00'
 _MUTED = '#55624c'
@@ -50,7 +52,7 @@ def pill_height():
 
 
 def pill_width(text):
-    return _metrics().horizontalAdvance(text) + PAD_X * 2
+    return text_width(pill_font(), text) + PAD_X * 2
 
 
 def paint_pill(painter, rect, text, fg, bg, border=None):
@@ -68,7 +70,7 @@ def paint_pill(painter, rect, text, fg, bg, border=None):
     painter.setFont(font)
     painter.setPen(QColor(fg))
     inner = rect.adjusted(PAD_X, 0, -PAD_X, 0)
-    shown = QFontMetrics(font).elidedText(text, Qt.ElideRight, int(inner.width()))
+    shown = elide(font, text, inner.width())
     painter.drawText(inner, Qt.AlignCenter, shown)
 
 
@@ -88,7 +90,7 @@ class Pill(QWidget):
         return QSize(pill_width(self.text), pill_height())
 
     def resizeEvent(self, event):
-        self.setToolTip(self.text if self.width() < pill_width(self.text) else '')
+        self.setToolTip(self.text if self.width() < pill_width(self.text) - 1 else '')
         super().resizeEvent(event)
 
     def paintEvent(self, event):

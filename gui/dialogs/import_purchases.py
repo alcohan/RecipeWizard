@@ -11,7 +11,7 @@ from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout,
     QHBoxLayout, QHeaderView, QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QRadioButton,
-    QScrollArea, QSplitter, QStackedWidget, QStyledItemDelegate, QTableWidget, QTableWidgetItem,
+    QScrollArea, QStackedWidget, QStyledItemDelegate, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
@@ -19,6 +19,7 @@ import config
 from gui.widgets import config_kit as kit
 from gui.widgets.vendor_item_editor import VendorItemEditor
 from utilities import purchase_import as pi
+from gui.widgets.text_fit import elide
 
 _LAST_DIR = 'imports/lastDir'
 _RED = '#a3261b'
@@ -152,11 +153,11 @@ class QueueCardDelegate(QStyledItemDelegate):
         bold.setBold(True)
         painter.setFont(bold)
         painter.setPen(QColor(kit.MUTED if d.get('done') else kit.KALE))
-        name = painter.fontMetrics().elidedText(d.get('name', ''), Qt.ElideRight, inner.width() - mark_w)
+        name = elide(painter.font(), d.get('name', ''), inner.width() - mark_w)
         painter.drawText(inner.adjusted(0, 0, -mark_w, 0), Qt.AlignLeft | Qt.AlignTop, name)
         painter.setFont(font)
         painter.setPen(QColor(kit.MUTED))
-        detail = painter.fontMetrics().elidedText(d.get('detail', ''), Qt.ElideRight, inner.width())
+        detail = elide(painter.font(), d.get('detail', ''), inner.width())
         painter.drawText(inner, Qt.AlignLeft | Qt.AlignBottom, detail)
         if mark:
             painter.setPen(QColor(_GREEN if d.get('mark_kind') == 'mapped' else kit.MUTED))

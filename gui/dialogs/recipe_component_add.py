@@ -31,6 +31,7 @@ import config
 import db
 from gui.widgets.wedge_view import WedgeView
 from utilities import fuzzy
+from gui.widgets.text_fit import elide, text_width
 
 
 _KALE = '#082c00'
@@ -93,10 +94,9 @@ class _MatchDelegate(QStyledItemDelegate):
 
         # Pill.
         painter.setFont(small)
-        fm = painter.fontMetrics()
         if mode == 'recipe':
             text = 'Sub-recipe'
-            w = fm.horizontalAdvance(text) + 18
+            w = text_width(small, text) + 18
             pill = QRectF(x, cy - 10, w, 20)
             painter.setPen(QColor(_ROMAINE))
             painter.setBrush(Qt.NoBrush)
@@ -104,7 +104,7 @@ class _MatchDelegate(QStyledItemDelegate):
             painter.drawText(pill, Qt.AlignCenter, text)
         else:
             text = tag_name or 'Uncategorized'
-            w = fm.horizontalAdvance(text) + 30
+            w = text_width(small, text) + 30
             pill = QRectF(x, cy - 10, w, 20)
             painter.setPen(Qt.NoPen)
             painter.setBrush(_tint(tag_color))
@@ -137,7 +137,7 @@ class _MatchDelegate(QStyledItemDelegate):
         painter.setFont(base)
         painter.setPen(QColor(_MUTED if existing is not None else _KALE))
         name_w = rect.right() - self.PAD_X - meta_w - 12 - x
-        elided = painter.fontMetrics().elidedText(name, Qt.ElideRight, max(0, name_w))
+        elided = elide(painter.font(), name, max(0, name_w))
         painter.drawText(x, rect.y(), name_w, rect.height(), Qt.AlignVCenter | Qt.AlignLeft, elided)
         painter.restore()
 

@@ -20,6 +20,7 @@ from gui.models.ingredients_model import (
     ChangeRole, PRICE_UP_THRESHOLD, RowRole, SubTextRole, format_change,
 )
 from gui.widgets.tag_badge import TagColorRole
+from gui.widgets.text_fit import elide, text_width
 
 
 _KALE = '#082c00'
@@ -81,7 +82,7 @@ class NameDelegate(QStyledItemDelegate):
         w = rect.right() - x - 8
         top = QRectF(x, rect.y() + 4, w, rect.height() / 2 - 2)
         painter.drawText(top, Qt.AlignLeft | Qt.AlignBottom,
-                         painter.fontMetrics().elidedText(name, Qt.ElideRight, w))
+                         elide(painter.font(), name, w))
         small = _small(option.font)
         painter.setFont(small)
         cy = rect.y() + rect.height() * 0.72
@@ -135,7 +136,7 @@ class ChangeDelegate(QStyledItemDelegate):
         bold = QFont(font)
         bold.setWeight(QFont.DemiBold)
         painter.setFont(bold)
-        w = painter.fontMetrics().horizontalAdvance(text) + 14
+        w = text_width(bold, text) + 14
         pill = QRectF(rect.x(), rect.center().y() - 9, w, 18)
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor(bg))
@@ -166,5 +167,5 @@ class PlainDelegate(QStyledItemDelegate):
         align = index.data(Qt.TextAlignmentRole) or int(Qt.AlignLeft | Qt.AlignVCenter)
         rect = option.rect.adjusted(8, 0, -12, 0)
         painter.drawText(rect, Qt.AlignmentFlag(align),
-                         painter.fontMetrics().elidedText(text, Qt.ElideRight, rect.width()))
+                         elide(painter.font(), text, rect.width()))
         painter.restore()
