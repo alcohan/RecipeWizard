@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 
 import config
 import db
+from gui.widgets.text_fit import literal
 from gui.widgets.flow_layout import FlowLayout
 from gui.widgets.ingredient_table import tint
 from utilities import diets
@@ -51,7 +52,7 @@ class CategoryPills(QWidget):
         flow = FlowLayout(self, spacing=6)
         flow.setContentsMargins(0, 0, 0, 0)
         for tag in db.get_tags('ingredient') + [{'id': None, 'name': 'None', 'color': None}]:
-            btn = QPushButton(tag['name'] if tag['id'] is None else f'●  {tag["name"]}')
+            btn = QPushButton(tag['name'] if tag['id'] is None else f'●  {literal(tag["name"])}')
             btn.setCheckable(True)
             btn.setChecked(tag['id'] == selected_id)
             btn.setAutoDefault(False)
@@ -143,7 +144,7 @@ class AllergenChecks(QWidget):
         outer.addWidget(self.diet_hint)
         # Id 0 matches no ingredient, so a new one starts with every chip off.
         for i, a in enumerate(db.get_ingredient_allergens(ingredient_id or 0)):
-            chip = QPushButton(a['name'])
+            chip = QPushButton(literal(a['name']))
             chip.setProperty('allergen', a['name'])
             # Never let a chip widen the panel; columns share the width.
             chip.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)

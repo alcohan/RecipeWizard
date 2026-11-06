@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 import db
+from gui.widgets.text_fit import literal
 
 
 _DEFAULT_COLOR = '#64748b'
@@ -92,7 +93,7 @@ class TagSelector(QGroupBox):
             swatch.setPixmap(_swatch_pixmap(tag.get('color')))
             swatch.setFixedWidth(18)
 
-            radio = QRadioButton(tag['name'])
+            radio = QRadioButton(literal(tag['name']))
             tid = tag['id']
             radio.setChecked(self._current_id == tid)
             radio.toggled.connect(
