@@ -120,6 +120,10 @@ class RecipesTab(QWidget):
         toolbar = self._build_toolbar()
         self.facet_pane = RecipesFacetPane()
         self.facet_pane.changed.connect(self._apply_facets)
+        self.facet_pane.set_layout_hooks(
+            lambda: {'group': self.group_combo.currentData() or _DEFAULT_GROUP,
+                     'sort': self.sort_combo.currentData() or _DEFAULT_SORT},
+            self._apply_view_layout)
 
         self.gallery = RecipeGallery(self.source_model, compare_tray=self._compare_tray)
         self.gallery.recipeClicked.connect(self._on_gallery_clicked)
@@ -372,12 +376,21 @@ class RecipesTab(QWidget):
         if self._selected_id is not None:
             self._select_id(self._selected_id)
 
+    def _apply_view_layout(self, layout):
+        '''A saved view's Group by and Sort.'''
+        if layout.get('group') in dict(GROUP_BY):
+            self._set_group(layout['group'])
+        if layout.get('sort') in SORTS:
+            self._set_sort(layout['sort'])
+
     def _set_group(self, key, persist=True):
         self.group_combo.setCurrentIndex(self.group_combo.findData(key))
         self.gallery.set_group_by(key)
         if persist:
             QSettings().setValue(_GROUP_KEY, key)
         self._after_filter()
+        if hasattr(self, 'facet_pane'):
+            self.facet_pane.refresh_views()
 
     def _set_sort(self, key, persist=True):
         self.sort_combo.setCurrentIndex(self.sort_combo.findData(key))
@@ -389,6 +402,8 @@ class RecipesTab(QWidget):
         if persist:
             QSettings().setValue(_SORT_KEY, key)
         self._after_filter()
+        if hasattr(self, 'facet_pane'):
+            self.facet_pane.refresh_views()
 
     def _on_text(self, text):
         self.proxy.setFilterText(text)

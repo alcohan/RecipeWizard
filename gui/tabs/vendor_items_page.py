@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 from gui.widgets import config_kit as kit
 from gui.widgets.vendor_item_editor import VendorItemEditor
 from utilities import purchase_import as pi
+from utilities import fuzzy
 
 _RED = '#a3261b'
 _RED_BG = '#fde8e4'
@@ -206,7 +207,7 @@ class VendorItemsPage(QWidget):
         self._fill()
 
     def _visible(self):
-        text = self.search.text().strip().casefold()
+        text = self.search.text().strip()
         vendor = self.vendor.currentData()
         out = []
         for v in self._items:
@@ -217,8 +218,8 @@ class VendorItemsPage(QWidget):
                 continue
             if vendor and v['vendor_name'] != vendor:
                 continue
-            if text and text not in ' '.join(str(v.get(k) or '') for k in (
-                    'description', 'item_code', 'ingredient_name', 'inventory_item', 'pack_size')).casefold():
+            if text and not fuzzy.matches(text, ' '.join(str(v.get(k) or '') for k in (
+                    'description', 'item_code', 'ingredient_name', 'inventory_item', 'pack_size'))):
                 continue
             out.append(v)
         return out

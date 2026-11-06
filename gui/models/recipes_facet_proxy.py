@@ -25,6 +25,7 @@ recipes.
 from PySide6.QtCore import QSortFilterProxyModel, Qt
 
 from gui.models.recipes_model import SORTS, SUB_RECIPES
+from utilities import fuzzy
 
 
 def matches(row, state):
@@ -111,7 +112,7 @@ class RecipesFacetProxy(QSortFilterProxyModel):
     def accepts_row(self, row):
         if not matches(row, self._state):
             return False
-        if self._text and self._text not in row['SearchText']:
+        if self._text and not fuzzy.matches(self._text, row['SearchText']):
             return False
         return True
 

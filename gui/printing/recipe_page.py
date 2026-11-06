@@ -43,8 +43,8 @@ BLACK = QColor('#000000')
 MARGIN_X = 43.0
 MARGIN_TOP = 34.0
 MARGIN_BOTTOM = 30.0
-WEDGE = 112.0
 SIDE_W = 150.0          # nutrition + scoop key column
+WEDGE = SIDE_W          # the photo or wedge sits over that column
 GUTTER = 16.0
 FAMILY = 'Segoe UI'
 
@@ -264,7 +264,7 @@ class RecipePageLayout:
         return m.line_height(F_SECTION) + 6.0 + m.line_height(F_HEAD) + 7.0
 
     def title_block_bottom(self, m):
-        left_w = self.content_w - WEDGE - GUTTER
+        left_w = self.table_w     # title, pills and allergen box line up with the table
         y = MARGIN_TOP + 24.0 + 12.0
         y += m.wrapped_height(F_TITLE, self.data['name'], left_w) + 5.0
         y += self._meta_height(m, left_w) + 10.0
@@ -415,7 +415,7 @@ class RecipePagePainter:
         g, L = self.g, self.layout
         x = MARGIN_X
         y = MARGIN_TOP + 24.0 + 12.0
-        left_w = L.content_w - WEDGE - GUTTER
+        left_w = L.table_w        # same width as the ingredients table
         self._wedge(x + L.content_w - WEDGE, y)
         y += g.wrapped(x, y, left_w, F_TITLE, self.accent, self.data['name']) + 5.0
         # format / tags / diets, then yield and serving on their own line

@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 import config
 import db
 from gui.widgets.wedge_view import WedgeView
+from utilities import fuzzy
 
 
 _KALE = '#082c00'
@@ -402,18 +403,23 @@ class RecipeComponentAddDialog(QDialog):
         self._apply_filter()
 
     def _apply_filter(self, *_):
-        needle = self.filter_edit.text().strip().lower()
+        needle = self.filter_edit.text().strip()
         shown = 0
+        best = None
         for i in range(self.results.count()):
             item = self.results.item(i)
             mode = item.data(_ROW_ROLE)[1]
-            hide = (bool(needle) and needle not in item.text().lower()) or \
-                   (self._kind != 'all' and mode != self._kind)
+            score = fuzzy.score(needle, item.text()) if needle else 0
+            hide = score is None or (self._kind != 'all' and mode != self._kind)
             item.setHidden(hide)
             shown += not hide
+            if not hide and needle and item.flags() & Qt.ItemIsEnabled and (best is None or score < best[0]):
+                best = (score, i)
         self.match_label.setText(f"{shown} match{'es' if shown != 1 else ''}" if needle else '')
         current = self.results.currentItem()
-        if current is None or current.isHidden() or not (current.flags() & Qt.ItemIsEnabled):
+        if best is not None:
+            self.results.setCurrentRow(best[1])     # Enter adds the closest match
+        elif current is None or current.isHidden() or not (current.flags() & Qt.ItemIsEnabled):
             self._select_first()
         if self._can_create and needle:
             text = self.filter_edit.text().strip().replace('<', '&lt;')
