@@ -220,7 +220,95 @@ def create_ingredient( values):
         values.get('ImageFilename') or None,
     )
     result = query_from_file('sql\\create_ingredient.sql',params)
+    from utilities.portions import portioned_by_weight
+    set_ingredient_basis(result['lastrowid'],
+                         values.get('basis') or ('g' if portioned_by_weight(values['Unit'], values['Weight']) else 'each'))
     return result['lastrowid']
+
+
+def set_ingredient_basis(ingredient_id, basis):
+    '''"g" (portioned by weight: nutrition and prices kept per gram) or
+    "each". Per-portion values stay as they are.'''
+    query('UPDATE Ingredients SET basis = ? WHERE Id = ?;', (basis, ingredient_id))
+
+
+def rescale_portion(ingredient_id, weight):
+    '''The portion itself changed to `weight` grams. Nutrition, every
+    price in the history and vendor items bought by the each scale with
+    it, from their per-gram values, so recipes and Cost over time read as
+    if the portion had always been this size. A typo fix is a plain save
+    instead, which keeps the per-portion numbers. Returns False (and
+    changes nothing) for an ingredient that isn't portioned by weight.'''
+    from setup import NUTRITION
+    weight = float(weight)
+    con = _connect()
+    try:
+        row = con.execute(f"SELECT basis, {', '.join(c + '_g' for c in NUTRITION)}"
+                          ' FROM Ingredients WHERE Id = ?;', (ingredient_id,)).fetchone()
+        if row is None or row[0] != 'g' or weight <= 0:
+            return False
+        per_gram = row[1:]
+        prices = con.execute('SELECT id, grams_per_case FROM ingredient_prices'
+                             ' WHERE ingredient_id = ? AND grams_per_case IS NOT NULL;',
+                             (ingredient_id,)).fetchall()
+        each = con.execute('SELECT id, grams_per_each FROM vendor_items'
+                           ' WHERE ingredient_id = ? AND grams_per_each IS NOT NULL;',
+                           (ingredient_id,)).fetchall()
+        sets = ', '.join(f'{c} = ?' for c in NUTRITION)
+        con.execute(f'UPDATE Ingredients SET Weight = ?, {sets} WHERE Id = ?;',
+                    (weight, *[None if g is None else g * weight for g in per_gram], ingredient_id))
+        # The triggers just re-derived grams from the old per-portion
+        # counts; put the grams back and derive the counts from them.
+        for price_id, grams in prices:
+            con.execute('UPDATE ingredient_prices SET units_per_case = ?, grams_per_case = ? WHERE id = ?;',
+                        (grams / weight, grams, price_id))
+        for item_id, grams in each:
+            con.execute('UPDATE vendor_items SET portions_per_each = ? WHERE id = ?;', (grams / weight, item_id))
+        con.execute('''UPDATE Ingredients SET Cost = COALESCE((
+            SELECT unit_price FROM ingredient_prices
+            WHERE ingredient_id = ? AND effective_date <= date('now')
+            ORDER BY effective_date DESC, id DESC LIMIT 1), Cost) WHERE Id = ?;''', (ingredient_id, ingredient_id))
+        con.commit()
+    finally:
+        con.close()
+    return True
+
+
+def scale_portion(ingredient_id, ratio):
+    '''The portion is now `ratio` times its size (.5 ea -> 1 ea is 2).
+    By weight, that's rescale_portion at the scaled weight. Per each,
+    nutrition, weight and every price in the history scale directly, as
+    do vendor items: a case yields 1/ratio as many portions.'''
+    from setup import NUTRITION
+    ratio = float(ratio)
+    row = query('SELECT basis, Weight FROM Ingredients WHERE Id = ?;', (ingredient_id,), one=True)
+    if row is None or ratio <= 0:
+        return False
+    try:
+        weight = float(row['Weight'] or 0)
+    except (TypeError, ValueError):
+        weight = 0.0
+    if row['basis'] == 'g' and weight > 0:
+        return rescale_portion(ingredient_id, weight * ratio)
+    con = _connect()
+    try:
+        sets = ', '.join(f"{c} = NULLIF({c}, '') * :r" for c in NUTRITION)
+        con.execute(f'UPDATE Ingredients SET {sets} WHERE Id = :id;', {'r': ratio, 'id': ingredient_id})
+        if weight > 0:
+            con.execute('UPDATE Ingredients SET Weight = ? WHERE Id = ?;', (weight * ratio, ingredient_id))
+        con.execute('UPDATE ingredient_prices SET units_per_case = units_per_case / ? WHERE ingredient_id = ?;',
+                    (ratio, ingredient_id))
+        con.execute("UPDATE vendor_items SET portions_per_each = portions_per_each / ?"
+                    " WHERE ingredient_id = ? AND portions_per_each IS NOT NULL;", (ratio, ingredient_id))
+        con.execute('''UPDATE Ingredients SET Cost = COALESCE((
+            SELECT unit_price FROM ingredient_prices
+            WHERE ingredient_id = ? AND effective_date <= date('now')
+            ORDER BY effective_date DESC, id DESC LIMIT 1), Cost) WHERE Id = ?;''', (ingredient_id, ingredient_id))
+        con.commit()
+    finally:
+        con.close()
+    return True
+
 
 def ingredient_price_latest(id):
     return query('''SELECT * FROM ingredient_prices WHERE ingredient_id=? AND effective_date<=Date('now') ORDER BY effective_date DESC, id DESC;''', (id,), one=True)

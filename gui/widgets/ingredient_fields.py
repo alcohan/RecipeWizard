@@ -28,6 +28,9 @@ _BORDER = '#ebe1cd'
 _FIELD_BORDER = '#7d8771'
 _MUTED = '#55624c'
 
+# Unit field tooltip, in the ingredient editor and New ingredient.
+UNIT_TIP = 'The serving amount, for display and reference. Portion rules also read cups and f.oz from it.'
+
 
 def num_text(value):
     '''Display a stored number without float noise ("2.2", not "2.2000").'''
@@ -239,18 +242,49 @@ class AllergenChecks(QWidget):
         self.diet_hint.setVisible(bool(out))
 
 
+def info_icon(tip):
+    '''A small circled "i" that shows `tip` on hover.'''
+    icon = QLabel('i')
+    icon.setFixedSize(13, 13)
+    icon.setAlignment(Qt.AlignCenter)
+    icon.setCursor(Qt.WhatsThisCursor)
+    icon.setToolTip(tip)
+    icon.setStyleSheet(f'color: {_MUTED}; border: 1px solid {_MUTED}; border-radius: 6px;'
+                       ' font-size: 9px; font-weight: 700; font-family: Georgia, serif;')
+    return icon
+
+
+def nutrient_text(key, value):
+    '''A nutrient for display: calories and milligrams to a whole
+    number, grams to a tenth. Stored values keep full precision.'''
+    if value is None or value == '':
+        return ''
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if key == 'Calories' or key.endswith('Milligrams'):
+        return f'{n:.0f}'
+    return f'{n:.1f}'.rstrip('0').rstrip('.')
+
+
 class NutritionGrid(QWidget):
+    '''Nutrient fields, shown rounded (nutrient_text). A field left as
+    shown gives back its stored value unrounded, so saving doesn't
+    round what's stored.'''
     changed = Signal()
 
     def __init__(self, values=None, parent=None):
         super().__init__(parent)
         self._edits = {}
+        self._shown = {}   # key -> (text shown, stored value)
+        self._previous = {}
         grid = QGridLayout(self)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(10)
         for i, (key, label) in enumerate(config.nutrition_fields.items()):
-            edit = QLineEdit(num_text((values or {}).get(key)))
+            edit = QLineEdit()
             edit.setValidator(QDoubleValidator(0.0, 1_000_000.0, 4))
             edit.setAlignment(Qt.AlignRight)
             edit.setFixedWidth(80)
@@ -260,17 +294,48 @@ class NutritionGrid(QWidget):
             name.setStyleSheet(f'color: {_KALE};')
             cell.addWidget(name)
             cell.addStretch()
+            previous = QLabel('')
+            previous.setStyleSheet(f'color: {_MUTED};')
+            previous.hide()
+            cell.addWidget(previous)
             cell.addWidget(edit)
             grid.addLayout(cell, i // 3, i % 3)
             self._edits[key] = edit
+            self._previous[key] = previous
+        self.set_values(values or {key: None for key in self._edits})
 
     def values(self):
-        return {key: edit.text() for key, edit in self._edits.items()}
+        out = {}
+        for key, edit in self._edits.items():
+            shown, stored = self._shown.get(key, (None, None))
+            out[key] = str(stored) if edit.text() == shown and stored not in (None, '') else edit.text()
+        return out
 
     def set_values(self, values):
         for key, edit in self._edits.items():
             if key in values:
-                edit.setText(num_text(values[key]))
+                text = nutrient_text(key, values[key])
+                self._shown[key] = (text, values[key])
+                edit.setText(text)
+
+    def scale(self, ratio):
+        '''Multiply every value by `ratio` (a portion change).'''
+        scaled = {}
+        for key, text in self.values().items():
+            try:
+                scaled[key] = float(text) * ratio
+            except (TypeError, ValueError):
+                scaled[key] = text
+        self.set_values(scaled)
+
+    def set_previous(self, values):
+        '''Show `values` in gray beside the fields that now differ from
+        them; None clears them.'''
+        for key, label in self._previous.items():
+            before = nutrient_text(key, (values or {}).get(key))
+            show = values is not None and before != self._edits[key].text()
+            label.setText(f'({before or "—"})' if show else '')
+            label.setVisible(show)
 
     def is_empty(self):
         return not any(e.text().strip() not in ('', '0') for e in self._edits.values())

@@ -95,6 +95,24 @@ def parse_unit(text):
     return ParsedUnit(amount, measure, amount * _FLOZ_PER[measure])
 
 
+# Weight measures an ingredient can be portioned in, besides volumes.
+_WEIGHT_WORDS = {'w.oz', 'wt.oz', 'wt oz', 'g', 'gram', 'grams', 'lb', 'lbs', 'kg'}
+
+
+def portioned_by_weight(unit_text, weight):
+    '''True for an ingredient portioned by an amount ("3 f.oz", "1 cup",
+    "1 w.oz") that has a weight: its nutrition and prices are kept per
+    gram. Eggs, avocados, lemon wedges and packaging ("1 ea",
+    "1/6th wedge", blank) are portioned per each.'''
+    try:
+        if not weight or float(weight) <= 0:
+            return False
+    except (TypeError, ValueError):
+        return False
+    unit = parse_unit(unit_text)
+    return unit is not None and (unit.floz is not None or unit.measure in _WEIGHT_WORDS)
+
+
 def to_floz(amount, measure):
     '''A rule amount in fluid ounces, or None for an unknown measure.'''
     per = _FLOZ_PER.get(_ALIASES.get((measure or '').lower(), measure))

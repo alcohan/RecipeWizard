@@ -261,15 +261,14 @@ class IngredientInspector(QScrollArea):
         for u in shown:
             archived = u.get('Status') == 'archived'
             color = _MUTED if archived else _KALE
-            qty = _fmt(u['Quantity'])
             if changed:
                 delta = float(u['Quantity'] or 0) * (cur - prev)
                 value = f'{"+" if delta >= 0 else "−"}${abs(delta):.2f}'
             else:
                 value = f'${float(u["LineCost"] or 0):.2f}'
             line = QLabel(f'<a href="{u["Id"]}" style="color: {color}; text-decoration: none">'
-                          f'{u["Name"]}</a> <span style="color: {_MUTED}">· {qty} {u["Unit"] or ""}'
-                          f'{" · archived" if archived else ""}</span>')
+                          f'{u["Name"]}</a>'
+                          + (f' <span style="color: {_MUTED}">· archived</span>' if archived else ''))
             line.setTextFormat(Qt.RichText)
             line.setWordWrap(True)   # long recipe names wrap instead of widening the panel
             line.setToolTip('Open in a tab')

@@ -31,9 +31,11 @@ import db
 from gui.dialogs.ingredient_price_edit import IngredientPriceEditDialog
 from gui.images import choose_photo
 from gui.models.ingredients_model import format_change, format_unit_price
-from gui.widgets.ingredient_fields import AllergenChecks, CategoryPills, NutritionGrid, StatementBox
+from gui.widgets.ingredient_fields import UNIT_TIP, info_icon, AllergenChecks, CategoryPills, NutritionGrid, StatementBox
 from gui.widgets.ingredient_thumb import IngredientThumb
 from gui.widgets.portion_tool_field import attach_tool_picker
+from gui.widgets.toolbar_controls import ToolbarCombo
+from utilities import portions as portion_units
 from gui.widgets.price_chart import PriceStepChart
 from gui.widgets.usda_panel import UsdaLookupPanel
 from gui.widgets.wedge_view import WedgeView
@@ -53,6 +55,7 @@ _UP_FG, _UP_BG = '#8a4a00', '#fff0dc'
 _DOWN_FG, _DOWN_BG = '#24502A', '#E6EFE3'
 _MONO = "ui-monospace, 'Cascadia Mono', Consolas, monospace"
 _USED_PREVIEW = 3
+_PRICE_PREVIEW = 3   # latest prices shown until All prices is clicked
 
 _FIELD = f'''
     QLineEdit {{ height: 32px; padding: 0 10px; border: 1px solid {_FIELD_BORDER};
@@ -72,10 +75,45 @@ def _eyebrow(text):
     return lbl
 
 
-def _labelled(label, widget, width=None):
+BASIS_TIP = 'By weight: nutrition and prices scale with Weight. Each: eggs, avocados, lemon wedges, packaging.'
+
+
+def _float(text):
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _unit_ratio(old, new):
+    '''new / old when both units are volumes ("3 f.oz" -> "1 cup" is
+    8/3) or amounts of the same measure (".5 ea" -> "1 ea" is 2), else
+    None.'''
+    a, b = portion_units.parse_unit(old), portion_units.parse_unit(new)
+    if a is None or b is None:
+        return None
+    if a.floz and b.floz:
+        ratio = b.floz / a.floz
+    elif a.measure == b.measure:
+        ratio = b.amount / a.amount
+    else:
+        return None
+    return None if abs(ratio - 1) < 1e-9 else ratio
+
+
+def _labelled(label, widget, width=None, tip=''):
     col = QVBoxLayout()
     col.setSpacing(4)
-    col.addWidget(_eyebrow(label))
+    eyebrow = _eyebrow(label)
+    if tip:
+        head = QHBoxLayout()
+        head.setSpacing(5)
+        head.addWidget(eyebrow)
+        head.addWidget(info_icon(tip))
+        head.addStretch()
+        col.addLayout(head)
+    else:
+        col.addWidget(eyebrow)
     if width:
         widget.setFixedWidth(width)
     col.addWidget(widget)
@@ -198,8 +236,8 @@ class IngredientEditDialog(QDialog):
         area.setObjectName('Facts')
         area.setStyleSheet('QWidget#Facts { background: #ffffff; }' + _FIELD)
         layout = QVBoxLayout(area)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(18)
+        layout.setContentsMargins(20, 14, 20, 14)
+        layout.setSpacing(12)
 
         self.name_edit = QLineEdit(row.get('Name') or '')
         self.name_edit.textChanged.connect(lambda t: self.title.setText(t or ' '))
@@ -207,14 +245,36 @@ class IngredientEditDialog(QDialog):
         self.weight_edit = QLineEdit(_num_text(row.get('Weight')))
         self.weight_edit.setValidator(QDoubleValidator(0.0, 1_000_000.0, 4))
         self.weight_edit.setAlignment(Qt.AlignRight)
+        self.basis_combo = ToolbarCombo()
+        self.basis_combo.addItem('By weight', 'g')
+        self.basis_combo.addItem('Each', 'each')
+        self.basis_combo.setCurrentIndex(0 if row.get('basis') == 'g' else 1)
+        # How nutrition and costing follow the portion; tracks Portioned.
+        self.basis_note = QLabel('')
+        self.basis_note.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
+        self.basis_combo.currentIndexChanged.connect(lambda _i: self._sync_basis_note())
+        self._sync_basis_note()
         self.portion_edit = QLineEdit(row.get('Portion') or '')
         attach_tool_picker(self.portion_edit)
         self.unit_edit.textChanged.connect(lambda _t: self._sync_unit_labels())
         fields = QHBoxLayout()
         fields.setSpacing(12)
         fields.addLayout(_labelled('Name', self.name_edit), stretch=1)
-        fields.addLayout(_labelled('Unit', self.unit_edit, 90))
-        fields.addLayout(_labelled('Weight (g)', self.weight_edit, 90))
+        fields.addLayout(_labelled('Unit', self.unit_edit, 90, UNIT_TIP))
+        weight_col = _labelled('Weight (g)', self.weight_edit, 90)
+        self.weight_label = weight_col.itemAt(0).widget()
+        fields.addLayout(weight_col)
+        # Weight and Unit ask about a portion change as soon as they're
+        # edited; the form previews it, previous values in gray, and Save
+        # applies it.
+        self._saved_weight = _float(row.get('Weight'))
+        self._form_weight = self._saved_weight
+        self._form_unit = row.get('Unit') or ''
+        self._portion_ratio = None   # scale the portion by this on Save
+        self._asking = False
+        self.weight_edit.editingFinished.connect(self._on_weight_edited)
+        self.unit_edit.editingFinished.connect(self._on_unit_edited)
+        fields.addLayout(_labelled('Portioned', self.basis_combo, 110, BASIS_TIP))
         fields.addLayout(_labelled('Portion tool', self.portion_edit, 160))
         # How portion rules read the unit; shown only for a category some
         # format sizes by rule (Greens, Grains…).
@@ -223,6 +283,7 @@ class IngredientEditDialog(QDialog):
         self.portion_hint.hide()
         facts_col = QVBoxLayout()
         facts_col.setSpacing(6)
+        facts_col.addWidget(self.basis_note)
         facts_col.addLayout(fields)
         facts_col.addWidget(self.portion_hint)
         layout.addLayout(facts_col)
@@ -232,6 +293,12 @@ class IngredientEditDialog(QDialog):
         self.price_chip = QLabel('')
         head.addWidget(self.price_chip)
         head.addStretch()
+        self._show_all_prices = False
+        self.all_prices = QLabel('')
+        self.all_prices.setStyleSheet(f'color: {_ROMAINE};')
+        self.all_prices.linkActivated.connect(self._toggle_prices)
+        head.addWidget(self.all_prices)
+        head.addSpacing(8)
         new_price = QPushButton('+ New price')
         new_price.setStyleSheet(_SECONDARY)
         new_price.setAutoDefault(False)
@@ -240,10 +307,18 @@ class IngredientEditDialog(QDialog):
         self.per_unit_label = _eyebrow('Per unit')
         self.per_unit_value = QLabel('')
         self.per_unit_value.setStyleSheet(f'color: {_KALE}; font-size: 28px; font-weight: 650;')
+        self.per_unit_prev = QLabel('')
+        self.per_unit_prev.setStyleSheet(f'color: {_MUTED}; font-size: 14px;')
+        self.per_unit_prev.hide()
+        value_line = QHBoxLayout()
+        value_line.setSpacing(8)
+        value_line.addWidget(self.per_unit_value)
+        value_line.addWidget(self.per_unit_prev, alignment=Qt.AlignBottom)
+        value_line.addStretch()
         value_col = QVBoxLayout()
         value_col.setSpacing(2)
         value_col.addWidget(self.per_unit_label)
-        value_col.addWidget(self.per_unit_value)
+        value_col.addLayout(value_line)
         self.chart = PriceStepChart(height=64)
         self.chart.setMaximumWidth(380)
         value_row = QHBoxLayout()
@@ -292,6 +367,7 @@ class IngredientEditDialog(QDialog):
         lookup.clicked.connect(self._on_usda_lookup)
         nhead.addWidget(lookup)
         self.nutrition = NutritionGrid({key: row.get(key) for key in config.nutrition_fields})
+        self.nutrition.changed.connect(self._show_previous)
         nl.addWidget(self.nutrition)
         self.usda_note = QLabel('')
         self.usda_note.setWordWrap(True)
@@ -417,9 +493,13 @@ class IngredientEditDialog(QDialog):
         self.price_table.setVisible(has)
         self.chart.setVisible(len(prices) > 1)
         self.no_price.setVisible(not has)
-        self.chart.set_prices([(p['effective_date'], p['unit_price']) for p in prices])
+        # A pending portion change previews every price at the new size.
+        k = self._price_scale()
+        self.chart.set_prices([(p['effective_date'], (p['unit_price'] or 0) * k) for p in prices])
         cost = (db.get_ingredients(self.ingredient_id) or {}).get('Cost')
-        self.per_unit_value.setText(format_unit_price(cost) if cost else '—')
+        self.per_unit_value.setText(format_unit_price(cost * k) if cost else '—')
+        self.per_unit_prev.setText(f'({format_unit_price(cost)})' if cost and k != 1 else '')
+        self.per_unit_prev.setVisible(bool(cost) and k != 1)
 
         older = [p for p in prices if current and p is not current
                  and str(p['effective_date']) <= today]
@@ -437,6 +517,14 @@ class IngredientEditDialog(QDialog):
             self.price_chip.hide()
 
         unit = self.unit_edit.text() or 'unit'
+        n_all = len(prices)
+        more = n_all > _PRICE_PREVIEW
+        self.all_prices.setText(f'<a href="toggle" style="color: {_ROMAINE}; text-decoration: none;">'
+                                f"{'Latest only' if self._show_all_prices else f'All {n_all} prices'}</a>"
+                                if more else '')
+        self.all_prices.setVisible(more)
+        if not self._show_all_prices:
+            prices = prices[:_PRICE_PREVIEW]
         self.price_table.setRowCount(len(prices))
         for r, p in enumerate(prices):
             is_current = p is current
@@ -444,8 +532,10 @@ class IngredientEditDialog(QDialog):
                 _short_date(p['effective_date'], year=True) + (' · current' if is_current else ''),
                 p.get('supplier') or '—',
                 f'${float(p["case_price"] or 0):.2f}',
-                f'{_num_text(p["units_per_case"])} {unit}',
-                format_unit_price(p['unit_price']),
+                f'{_num_text(round(float(p["units_per_case"] or 0) / k, 2))} {unit}'
+                + (f' ({_num_text(round(float(p["units_per_case"] or 0), 2))})' if k != 1 else ''),
+                format_unit_price((p['unit_price'] or 0) * k)
+                + (f' ({format_unit_price(p["unit_price"])})' if k != 1 else ''),
             ]
             for c, text in enumerate(cells):
                 item = QTableWidgetItem(text)
@@ -461,7 +551,7 @@ class IngredientEditDialog(QDialog):
                     item.setForeground(Qt.GlobalColor.darkGray)
                     item.setToolTip('Takes effect on this date')
                 self.price_table.setItem(r, c, item)
-        rows_h = self.price_table.verticalHeader().defaultSectionSize() * min(len(prices), 6)
+        rows_h = self.price_table.verticalHeader().defaultSectionSize() * len(prices)
         self.price_table.setFixedHeight(self.price_table.horizontalHeader().height() + rows_h + 4)
 
         bits = [f"Used in {len(self._usage)} recipe{'s' if len(self._usage) != 1 else ''}"
@@ -469,6 +559,10 @@ class IngredientEditDialog(QDialog):
         if current:
             bits.append(f'last price {_short_date(current["effective_date"])}')
         self.subtitle.setText(' · '.join(bits))
+
+    def _toggle_prices(self, _href):
+        self._show_all_prices = not self._show_all_prices
+        self._refresh_prices()
 
     def _on_new_price(self):
         if IngredientPriceEditDialog(self.ingredient_id, parent=self).exec() == QDialog.Accepted:
@@ -516,6 +610,9 @@ class IngredientEditDialog(QDialog):
             if current > 0:
                 note += f' Weight per unit changed from {_num_text(current)} g to match.'
             self.weight_edit.setText(_num_text(round(grams, 2)))
+            # USDA's weight for this unit: a correction, not a new portion.
+            self._form_weight = _float(self.weight_edit.text())
+            self._show_previous()
         self.usda_note.setText(note.strip())
         self.usda_note.show()
 
@@ -526,7 +623,7 @@ class IngredientEditDialog(QDialog):
             if w is not None:
                 w.deleteLater()
         self.photo_host.addWidget(IngredientThumb(
-            self.ingredient_id, 96, name=self.name_edit.text() or '?',
+            self.ingredient_id, 72, name=self.name_edit.text() or '?',
             image_filename=self._image, tag_color=self._row.get('TagColor') or '',
             radius=8, tint=True))
         self.photo_name.setText(self._image or 'No photo')
@@ -541,6 +638,7 @@ class IngredientEditDialog(QDialog):
         while self._used_layout.count():
             w = self._used_layout.takeAt(0).widget()
             if w is not None:
+                w.hide()
                 w.deleteLater()
         shown = self._usage if self._show_all_used else self._usage[:_USED_PREVIEW]
         for i, u in enumerate(shown):
@@ -564,7 +662,10 @@ class IngredientEditDialog(QDialog):
             name.setMinimumWidth(1)
             name.linkActivated.connect(lambda href: self._open_recipe(int(href)))
             hl.addWidget(name, stretch=1)
-            meta = QLabel(f'{_num_text(u["Quantity"])} {u["Unit"] or ""} · ${float(u["LineCost"] or 0):.2f}')
+            # Previews a pending portion change, like the prices.
+            unit = self.unit_edit.text().strip() if hasattr(self, 'unit_edit') else u['Unit']
+            meta = QLabel(f'{_num_text(u["Quantity"])} {unit or ""}'
+                          f' · ${float(u["LineCost"] or 0) * self._price_scale():.2f}')
             meta.setStyleSheet(f'color: {_MUTED};')
             hl.addWidget(meta)
             self._used_layout.addWidget(row)
@@ -591,7 +692,7 @@ class IngredientEditDialog(QDialog):
     def _collect_state(self):
         return (
             self.name_edit.text().strip(), self.unit_edit.text(), self.weight_edit.text(),
-            self.portion_edit.text(),
+            self.basis_combo.currentData(), self.portion_edit.text(),
             tuple(sorted(self.nutrition.values().items())), self.statement.text(),
             self.category.selected(), self._image,
             tuple(self.allergens.checked_ids()), tuple(self.allergens.facility_ids()),
@@ -626,7 +727,14 @@ class IngredientEditDialog(QDialog):
             QMessageBox.warning(self, 'Name needed', 'An ingredient needs a name.')
             self.name_edit.setFocus()
             return False
+        if self._on_weight_edited() is False:
+            return False   # Cancel on the portion question
+        self._on_unit_edited()
         values = self.nutrition.values()
+        if self._portion_ratio is not None:
+            # Prices and history scale from their per-gram values; the
+            # form's nutrition (already scaled) is saved below.
+            db.scale_portion(self.ingredient_id, self._portion_ratio)
         # Cost comes from the price history (a trigger keeps it current);
         # re-read it so Save never overwrites a price added just now.
         current_cost = (db.get_ingredients(self.ingredient_id) or {}).get('Cost') or 0
@@ -636,6 +744,16 @@ class IngredientEditDialog(QDialog):
             'ImageFilename': self._image or None,
         })
         db.update_ingredient(self.ingredient_id, values)
+        if self.basis_combo.currentData() != self._row.get('basis'):
+            db.set_ingredient_basis(self.ingredient_id, self.basis_combo.currentData())
+        self._row = db.get_ingredients(self.ingredient_id) or self._row
+        self._saved_weight = self._form_weight = _float(self._row.get('Weight'))
+        self._form_unit = self._row.get('Unit') or ''
+        self._portion_ratio = None
+        self._usage = db.get_ingredient_usage(self.ingredient_id)
+        self._show_previous()
+        self._refresh_prices()
+        self._fill_used_in()
         db.set_ingredient_statement(self.ingredient_id, self.statement.text())
         db.set_ingredient_tag(self.ingredient_id, self.category.selected())
         db.set_ingredient_allergens(self.ingredient_id, self.allergens.checked_ids(),
@@ -644,6 +762,113 @@ class IngredientEditDialog(QDialog):
         self.status_message = f"Saved '{name}'"
         self._baseline = self._collect_state()
         return True
+
+    def _sync_basis_note(self):
+        if self.basis_combo.currentData() == 'g':
+            self.basis_note.setText('Calculating portion by weight. Change the gram weight to update nutrition & costing.')
+        else:
+            self.basis_note.setText('Calculating portion per each. Change the unit amount to update nutrition & costing.')
+
+    def _can_scale(self):
+        # Not while Portioned is being switched: Save does that first.
+        return self._row.get('basis') == self.basis_combo.currentData()
+
+    def _price_scale(self):
+        return self._portion_ratio or 1.0
+
+    def _on_weight_edited(self):
+        '''Weight was edited: for an ingredient portioned by weight, ask
+        whether the portion changed (scale nutrition and prices) or a typo
+        was fixed (keep them). False if the user cancelled.'''
+        if self._asking:
+            return
+        old, new = self._form_weight, _float(self.weight_edit.text())
+        if abs(new - old) < 0.005:
+            return
+        if not self._can_scale() or old <= 0 or new <= 0:
+            self._form_weight = new
+            self._show_previous()
+            return
+        n = len(self._usage)
+        where = f" in {n} recipe{'s' if n != 1 else ''}" if n else ''
+        box = QMessageBox(QMessageBox.Question, 'Portion size',
+                          f'Weight changed from {_num_text(old)} g to {_num_text(new)} g.', parent=self)
+        box.setInformativeText(
+            f'Portion changed: nutrition and prices, history included, scale {new / old:.2f}×{where}.\n'
+            'Fixing a typo: they stay as entered.')
+        portion = box.addButton('Portion changed', QMessageBox.AcceptRole)
+        box.addButton('Fixing a typo', QMessageBox.RejectRole)
+        cancel = box.addButton(QMessageBox.Cancel)
+        box.setDefaultButton(portion)
+        self._asking = True
+        try:
+            box.exec()
+        finally:
+            self._asking = False
+        if box.clickedButton() is cancel:
+            self.weight_edit.setText(_num_text(old))
+            return False
+        if box.clickedButton() is portion:
+            self._scale_portion(new / old, new)
+        else:
+            self._form_weight = new
+            self._show_previous()
+
+    def _on_unit_edited(self):
+        '''A new amount in Unit (3 f.oz -> 4 f.oz, .5 ea -> 1 ea) offers
+        to scale the portion to match: nutrition, prices and, if the
+        weight was left alone, the weight.'''
+        if self._asking:
+            return
+        old_unit, new_unit = self._form_unit, self.unit_edit.text().strip()
+        if new_unit == old_unit.strip():
+            return
+        self._form_unit = new_unit
+        ratio = _unit_ratio(old_unit, new_unit)
+        if ratio is None or not self._can_scale():
+            return
+        old = self._form_weight
+        weight_kept = old > 0 and abs(_float(self.weight_edit.text()) - old) < 0.005
+        by_weight = self._row.get('basis') == 'g'
+        if by_weight and not weight_kept:
+            return   # the weight already says how big the portion is
+        new = round(old * ratio, 1) if weight_kept else None
+        question = (f'Scale the weight to {_num_text(new)} g?' if by_weight
+                    else f'Scale the portion {ratio:.2f}×?')
+        box = QMessageBox(QMessageBox.Question, 'Portion size',
+                          f'Unit changed from {old_unit} to {new_unit}. {question}', parent=self)
+        what = 'Nutrition, weight and prices' if new is not None else 'Nutrition and prices'
+        box.setInformativeText(f'{what}, history included, scale {ratio:.2f}×.')
+        scale = box.addButton('Scale portion', QMessageBox.AcceptRole)
+        box.addButton('Keep weight' if by_weight else 'Keep numbers', QMessageBox.RejectRole)
+        box.setDefaultButton(scale)
+        self._asking = True
+        try:
+            box.exec()
+        finally:
+            self._asking = False
+        if box.clickedButton() is scale:
+            if new is not None:
+                self.weight_edit.setText(_num_text(new))
+            self._scale_portion(ratio, new)
+
+    def _scale_portion(self, ratio, new_weight=None):
+        '''Preview a portion change in the form; Save applies it.'''
+        self.nutrition.scale(ratio)
+        if new_weight is not None:
+            self._form_weight = new_weight
+        # Scales compound: a later typo fix keeps what this change made.
+        self._portion_ratio = self._price_scale() * ratio
+        self._show_previous()
+        self._refresh_prices()
+        self._fill_used_in()
+
+    def _show_previous(self):
+        '''Saved values in gray beside anything changed since Save.'''
+        changed = abs(_float(self.weight_edit.text()) - self._saved_weight) >= 0.005
+        self.weight_label.setText(f'WEIGHT (G)  ({_num_text(self._saved_weight)})' if changed else 'WEIGHT (G)')
+        saved = {key: self._row.get(key) for key in config.nutrition_fields}
+        self.nutrition.set_previous(saved if self._portion_ratio is not None else None)
 
     def _on_save(self):
         if self._save():

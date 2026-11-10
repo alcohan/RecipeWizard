@@ -299,6 +299,16 @@ def migrateDB(path=None):
         cursor.execute('ALTER TABLE Ingredients ADD COLUMN nutrition_confirmed INTEGER NOT NULL DEFAULT 0')
         cursor.execute('ALTER TABLE Ingredients ADD COLUMN price_checked TEXT')
 
+    # Per-gram storage (see _per_gram_triggers). basis is 'g' for an
+    # ingredient portioned by weight, 'each' for eggs, avocados, lemon
+    # wedges and packaging; NULL until _fill_basis decides.
+    if not column_exists('Ingredients', 'basis'):
+        print('Migrating: adding per-gram nutrition and prices')
+        cursor.execute('ALTER TABLE Ingredients ADD COLUMN basis TEXT')
+        for col in NUTRITION:
+            cursor.execute(f'ALTER TABLE Ingredients ADD COLUMN {col}_g REAL')
+        cursor.execute('ALTER TABLE ingredient_prices ADD COLUMN grams_per_case REAL')
+
     # Trigger set is rebuilt on every migration so changes to the bump
     # logic propagate without bespoke migration steps. The WHEN guard on
     # the row-self-update triggers prevents infinite recursion.
@@ -604,8 +614,88 @@ WHERE NOT EXISTS (SELECT 1 FROM RecipeAllergens ra
             cursor.execute('DELETE FROM tags WHERE id = ?;', (tag_id,))
         cursor.execute("INSERT INTO app_meta (key, value) VALUES ('archived_tag_to_status', '1');")
 
+    if not column_exists('vendor_items', 'grams_per_each'):
+        cursor.execute('ALTER TABLE vendor_items ADD COLUMN grams_per_each REAL')
+    cursor.executescript(_per_gram_triggers())
+    _fill_basis(cursor)
+
     connection.commit()
     connection.close()
+
+
+# Per-portion nutrition columns; each has a per-gram twin, <col>_g.
+NUTRITION = ('Calories', 'TTLFatGrams', 'SatFatGrams', 'CholesterolMilligrams', 'SodiumMilligrams',
+             'CarbGrams', 'FiberGrams', 'SugarGrams', 'ProteinGrams')
+
+
+def _per_gram_triggers():
+    '''For an ingredient portioned by weight, the per-gram values are the
+    record: nutrition per gram, grams per case for each price, grams per
+    each for a vendor item bought by the each. The per-portion columns
+    everything reads stay as they were, and these triggers keep the
+    per-gram values in step whenever a per-portion value is written
+    ("as entered"). db.rescale_portion goes the other way, when a
+    portion's weight really changes.'''
+    ok = "NEW.basis = 'g' AND CAST(NEW.Weight AS REAL) > 0"
+    w = 'CAST(NEW.Weight AS REAL)'
+    nutrition = ', '.join(f"{c}_g = CASE WHEN {ok} THEN NULLIF(NEW.{c}, '') / {w} END" for c in NUTRITION)
+    body = f"""
+        BEGIN
+          UPDATE Ingredients SET {nutrition} WHERE Id = NEW.Id;
+          UPDATE ingredient_prices SET grams_per_case = CASE WHEN {ok} THEN units_per_case * {w} END
+          WHERE ingredient_id = NEW.Id;
+          UPDATE vendor_items SET grams_per_each = CASE WHEN {ok} AND case_unit = 'ea'
+            THEN portions_per_each * {w} END
+          WHERE ingredient_id = NEW.Id;
+        END;"""
+    ing_ok = "i.basis = 'g' AND CAST(i.Weight AS REAL) > 0"
+    return f"""
+        DROP TRIGGER IF EXISTS ingredients_per_gram_insert;
+        CREATE TRIGGER ingredients_per_gram_insert AFTER INSERT ON Ingredients{body}
+        DROP TRIGGER IF EXISTS ingredients_per_gram_update;
+        CREATE TRIGGER ingredients_per_gram_update
+        AFTER UPDATE OF Weight, basis, {', '.join(NUTRITION)} ON Ingredients{body}
+
+        DROP TRIGGER IF EXISTS prices_per_gram;
+        CREATE TRIGGER prices_per_gram AFTER INSERT ON ingredient_prices
+        BEGIN
+          UPDATE ingredient_prices SET grams_per_case = (
+            SELECT CASE WHEN {ing_ok} THEN NEW.units_per_case * CAST(i.Weight AS REAL) END
+            FROM Ingredients i WHERE i.Id = NEW.ingredient_id)
+          WHERE id = NEW.id;
+        END;
+
+        DROP TRIGGER IF EXISTS vendor_items_per_gram_insert;
+        DROP TRIGGER IF EXISTS vendor_items_per_gram_update;
+        CREATE TRIGGER vendor_items_per_gram_insert AFTER INSERT ON vendor_items
+        BEGIN
+          UPDATE vendor_items SET grams_per_each = (
+            SELECT CASE WHEN {ing_ok} AND NEW.case_unit = 'ea' THEN NEW.portions_per_each * CAST(i.Weight AS REAL) END
+            FROM Ingredients i WHERE i.Id = NEW.ingredient_id)
+          WHERE id = NEW.id;
+        END;
+        CREATE TRIGGER vendor_items_per_gram_update
+        AFTER UPDATE OF portions_per_each, ingredient_id, case_unit ON vendor_items
+        BEGIN
+          UPDATE vendor_items SET grams_per_each = (
+            SELECT CASE WHEN {ing_ok} AND NEW.case_unit = 'ea' THEN NEW.portions_per_each * CAST(i.Weight AS REAL) END
+            FROM Ingredients i WHERE i.Id = NEW.ingredient_id)
+          WHERE id = NEW.id;
+        END;
+    """
+
+
+def _fill_basis(cursor):
+    '''Decide basis for ingredients that don't have one yet (all of them
+    on the first migration, and any merged in from an older backup).
+    Setting it fills their per-gram values through the triggers.'''
+    from utilities import portions
+    cursor.execute('SELECT Id, Unit, Weight, updated_at FROM Ingredients WHERE basis IS NULL;')
+    for ingredient_id, unit, weight, updated_at in cursor.fetchall():
+        basis = 'g' if portions.portioned_by_weight(unit, weight) else 'each'
+        cursor.execute('UPDATE Ingredients SET basis = ? WHERE Id = ?;', (basis, ingredient_id))
+        # Not an edit: keep it out of "recently edited".
+        cursor.execute('UPDATE Ingredients SET updated_at = ? WHERE Id = ?;', (updated_at, ingredient_id))
 
 
 def _seed_portion_rules(cursor):

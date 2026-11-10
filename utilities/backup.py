@@ -686,17 +686,27 @@ class _Merger:
         have = collections.Counter((r[0], r[1], r[2], _num(r[3]), _num(r[4])) for r in self.con.execute(
             'SELECT ingredient_id, supplier_id, effective_date, case_price, units_per_case'
             ' FROM main.ingredient_prices;'))
+        # Portion weights here, for ingredients portioned by weight: the
+        # backup's portion may be a different size, so its prices come
+        # across in grams and are counted in this library's portions.
+        grams_basis = {r[0]: float(r[1]) for r in self.con.execute(
+            "SELECT Id, Weight FROM main.Ingredients WHERE basis = 'g' AND CAST(Weight AS REAL) > 0;")}
         for row in self.src_rows('ingredient_prices', 'effective_date, id'):
             ing = ingredients.get(row['ingredient_id'])
             if ing is None:
                 continue
             sup = suppliers.get(row['supplier_id']) if row['supplier_id'] is not None else None
-            key = (ing, sup, row['effective_date'], _num(row['case_price']), _num(row['units_per_case']))
+            units = row['units_per_case']
+            grams = _num(row.get('grams_per_case'))
+            if grams and ing in grams_basis:
+                units = round(grams / grams_basis[ing], 6)
+            key = (ing, sup, row['effective_date'], _num(row['case_price']), _num(units))
             if have[key]:
                 have[key] -= 1
                 continue
             # Import history stays with the library it was made in.
-            self.insert('ingredient_prices', row, ingredient_id=ing, supplier_id=sup, import_batch_id=None)
+            self.insert('ingredient_prices', row, ingredient_id=ing, supplier_id=sup, import_batch_id=None,
+                        units_per_case=units)
             self.report.prices_added += 1
 
     def recipes(self):

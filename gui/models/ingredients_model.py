@@ -157,7 +157,7 @@ def _display(col, row):
     if col == 'Supplier':
         return row.get('SupplierName') or '—'
     if col == 'Calories':
-        return _format_num(row.get('Calories'))
+        return '' if row.get('Calories') in (None, '') else f"{float(row['Calories']):.0f}"
     if col == 'Allergens':
         return row.get('Allergens') or '—'
     if col == 'UsedIn':
@@ -174,16 +174,3 @@ def _sort_key(col, row):
         # Missing values sort below everything.
         return float(value) if value is not None else float('-inf')
     return (_display(col, row) or '').lower()
-
-
-def _format_num(value):
-    '''Display 35 as "35" (not "35.0"), 12.3 as "12.3". Blank for None/empty.'''
-    if value is None or value == '':
-        return ''
-    try:
-        n = float(value)
-    except (TypeError, ValueError):
-        return str(value)
-    if n == int(n):
-        return str(int(n))
-    return f'{n:.1f}'
