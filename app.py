@@ -33,8 +33,12 @@ def _db_initialized(path):
 def _set_windows_app_user_model_id(app_id):
     '''Tell Windows this process has its own taskbar grouping. Without this,
     Windows reuses the python.exe AppUserModelID and our setWindowIcon()
-    call is overridden by the generic Python interpreter icon in the taskbar.'''
-    if sys.platform != 'win32':
+    call is overridden by the generic Python interpreter icon in the taskbar.
+
+    Source runs only: RecipeWizard.exe already has its own identity, and
+    an explicit ID would stop its window grouping with a pinned shortcut
+    to the exe, so a pinned app would open as a second taskbar button.'''
+    if sys.platform != 'win32' or getattr(sys, 'frozen', False):
         return
     try:
         import ctypes
