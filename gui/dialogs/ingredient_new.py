@@ -31,7 +31,7 @@ import config
 import db
 from gui.images import IMAGE_EXTENSIONS
 from gui.thumbs import load_thumbnail
-from gui.widgets.ingredient_fields import AllergenChecks, CategoryPills, NutritionGrid, StatementBox, num_text
+from gui.widgets.ingredient_fields import UNIT_TIP, info_icon, AllergenChecks, CategoryPills, NutritionGrid, StatementBox, num_text
 from gui.widgets.portion_tool_field import attach_tool_picker
 from gui.widgets.usda_panel import UsdaLookupPanel
 
@@ -63,10 +63,19 @@ def _eyebrow(text):
     return lbl
 
 
-def _labelled(label, widget, width=None):
+def _labelled(label, widget, width=None, tip=''):
     col = QVBoxLayout()
     col.setSpacing(4)
-    col.addWidget(_eyebrow(label))
+    eyebrow = _eyebrow(label)
+    if tip:
+        head = QHBoxLayout()
+        head.setSpacing(5)
+        head.addWidget(eyebrow)
+        head.addWidget(info_icon(tip))
+        head.addStretch()
+        col.addLayout(head)
+    else:
+        col.addWidget(eyebrow)
     if width:
         widget.setFixedWidth(width)
     col.addWidget(widget)
@@ -216,7 +225,7 @@ class IngredientNewDialog(QDialog):
             e.textChanged.connect(lambda _t: self._on_unit_changed())
         facts = QHBoxLayout()
         facts.setSpacing(12)
-        facts.addLayout(_labelled('Unit', self.unit_edit, 110))
+        facts.addLayout(_labelled('Unit', self.unit_edit, 110, UNIT_TIP))
         facts.addLayout(_labelled('Weight per unit (g)', self.weight_edit, 130))
         facts.addLayout(_labelled('Portion tool', self.portion_edit, 160))
         facts.addStretch()

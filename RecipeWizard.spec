@@ -9,6 +9,9 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
+        # icon= below only sets the .exe file's icon; the app loads this
+        # copy at runtime for its window, taskbar and dialog icons.
+        ('icon.ico', '.'),
         ('sql/*', 'sql'),
         ('sql/setup/sampledata.sql', 'sql/setup'),
         ('sql/setup/tables.sql', 'sql/setup'),
