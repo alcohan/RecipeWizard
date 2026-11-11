@@ -21,8 +21,8 @@ from PySide6.QtCore import QMimeData, QPoint, QSettings, QStandardPaths, Qt, Sig
 from PySide6.QtGui import QColor, QDrag, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QCompleter, QFileDialog, QFrame, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
-    QLineEdit, QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QTableWidget, QTableWidgetItem,
-    QToolButton, QVBoxLayout, QWidget,
+    QLineEdit, QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QTableWidget,
+    QTableWidgetItem, QToolButton, QVBoxLayout, QWidget,
 )
 
 import db
@@ -32,6 +32,7 @@ from gui.widgets import config_kit as kit
 from gui.widgets.compare_chart import CompareChart
 from gui.widgets.elided_label import ElidedLabel
 from gui.widgets.flow_layout import FlowLayout
+from gui.widgets.scenario_matrix import ScenarioMatrix
 from gui.widgets.toolbar_controls import SegmentedSwitch, ToolbarCombo
 from gui.widgets.wedge_view import WedgeView
 from utilities import compare
@@ -45,6 +46,7 @@ _MIME = 'application/x-recipewizard-tray-id'
 class AnalyticsTab(QWidget):
     recipeActivated = Signal(int)
     dockRequested = Signal()
+    scenarioSetupRequested = Signal()
 
     def __init__(self, recipes_model, compare_tray=None, library_ids=None, parent=None):
         '''library_ids() returns the ids the Library is showing, for the
@@ -78,6 +80,9 @@ class AnalyticsTab(QWidget):
         dock_btn.clicked.connect(self.dockRequested.emit)
         self.save_btn = kit.button('Save comparison', primary=True)
         self.save_btn.clicked.connect(lambda: self.save_comparison())
+        self.dock_btn = dock_btn
+        self.view_switch = SegmentedSwitch([('compare', 'Compare'), ('scenarios', 'Scenarios')])
+        self.view_switch.changed.connect(self.set_view)
         bar = QFrame()
         bar.setObjectName('AnalyticsBar')
         bar.setStyleSheet(f'QFrame#AnalyticsBar {{ background: #ffffff; border-bottom: 1px solid {kit.BORDER}; }}')
@@ -85,6 +90,7 @@ class AnalyticsTab(QWidget):
         bl.setContentsMargins(20, 10, 20, 10)
         bl.setSpacing(16)
         bl.addWidget(kit.heading('Analytics'))
+        bl.addWidget(self.view_switch)
         bl.addWidget(self.subtitle)
         bl.addStretch()
         bl.addWidget(self.export_btn)
@@ -225,16 +231,38 @@ class AnalyticsTab(QWidget):
         self.main_scroll.setStyleSheet(f'QScrollArea {{ background: {kit.BG}; }}'
                                        ' QScrollArea > QWidget > QWidget { background: transparent; }')
 
-        body = QHBoxLayout()
+        compare_view = QWidget()
+        body = QHBoxLayout(compare_view)
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
         body.addWidget(aside_scroll)
         body.addWidget(self.main_scroll, stretch=1)
+
+        # Scenarios: every recipe against the baseline and each scenario.
+        self.scenarios = ScenarioMatrix()
+        self.scenarios.recipeActivated.connect(self.recipeActivated.emit)
+        self.scenarios.setupRequested.connect(self.scenarioSetupRequested.emit)
+        sc_host = QWidget()
+        sl = QVBoxLayout(sc_host)
+        sl.setContentsMargins(28, 20, 28, 28)
+        sl.addWidget(self.scenarios)
+        sc_scroll = QScrollArea()
+        sc_scroll.setWidget(sc_host)
+        sc_scroll.setWidgetResizable(True)
+        sc_scroll.setFrameShape(QFrame.NoFrame)
+        sc_scroll.setStyleSheet(f'QScrollArea {{ background: {kit.BG}; }}'
+                                ' QScrollArea > QWidget > QWidget { background: transparent; }')
+
+        self.views = QStackedWidget()
+        self.views.addWidget(compare_view)
+        self.views.addWidget(sc_scroll)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(bar)
-        layout.addLayout(body, stretch=1)
+        layout.addWidget(self.views, stretch=1)
+        self._view = 'compare'
+        self.set_view(QSettings().value('analytics/view', 'compare', type=str))
 
         self._apply_controls()
         self._tray.changed.connect(self._on_tray_changed)
@@ -250,6 +278,7 @@ class AnalyticsTab(QWidget):
     def _on_model_reset(self):
         self._stale = True
         self._thumbs.clear()
+        self.scenarios.mark_stale()
         if self.isVisible():
             self.refresh()
 
@@ -263,6 +292,31 @@ class AnalyticsTab(QWidget):
         self._completer.model().setStringList(sorted((r['Name'] for r in self._model.rows()), key=str.lower))
         self._rebuild_saved()
         self._rebuild()
+
+    # --- views ---------------------------------------------------------
+
+    def view(self):
+        return self._view
+
+    def set_view(self, key):
+        '''"compare" (the tray) or "scenarios".'''
+        key = key if key in ('compare', 'scenarios') else 'compare'
+        self._view = key
+        QSettings().setValue('analytics/view', key)
+        self.view_switch.set_current(key)
+        self.views.setCurrentIndex(0 if key == 'compare' else 1)
+        compare_view = key == 'compare'
+        for w in (self.dock_btn, self.save_btn, self.subtitle):
+            w.setVisible(compare_view)
+        self._sync_export()
+
+    def _sync_export(self):
+        if self._view == 'scenarios':
+            self.export_btn.setEnabled(True)
+            self.export_btn.setToolTip('Save every recipe × scenario as a CSV file')
+        else:
+            self.export_btn.setEnabled(bool(self.recipe_ids()) if self.data is not None else False)
+            self.export_btn.setToolTip('Save the side-by-side table as a CSV file')
 
     def _on_tray_changed(self):
         if self.isVisible() and not self._stale:
@@ -471,7 +525,7 @@ class AnalyticsTab(QWidget):
         self.tray_list.set_recipes([by_id[i] for i in ids], self._thumb)
         self.subtitle.setText(f"{n} recipe{'s' if n != 1 else ''}")
         has = n > 0
-        self.export_btn.setEnabled(has)
+        self._sync_export()
         self.save_btn.setEnabled(has)
         self.empty_card.setVisible(not has)
         self.chart_card.setVisible(has)
@@ -604,19 +658,26 @@ class AnalyticsTab(QWidget):
     # --- export ------------------------------------------------------
 
     def export_csv(self, path=None):
-        if not self.data or not self.data['recipes']:
+        if self._view == 'scenarios':
+            rows = self.scenarios.csv_rows()
+            name = 'Scenarios'
+        else:
+            if not self.data or not self.data['recipes']:
+                return None
+            rows = compare.csv_rows(self.data)
+            name = next((r['name'] for r in self.saved() if r['id'] == self.active_saved()), 'Comparison')
+        if not rows:
             return None
         if path is None:
             start = QSettings().value('analytics/exportDir', '', type=str) or QStandardPaths.writableLocation(
                 QStandardPaths.DocumentsLocation)
-            name = next((r['name'] for r in self.saved() if r['id'] == self.active_saved()), 'Comparison')
             path, _ = QFileDialog.getSaveFileName(self, 'Export comparison', os.path.join(start, f'{name}.csv'),
                                                   'CSV files (*.csv)')
             if not path:
                 return None
             QSettings().setValue('analytics/exportDir', os.path.dirname(path))
         with open(path, 'w', newline='', encoding='utf-8-sig') as f:
-            csv.writer(f).writerows(compare.csv_rows(self.data))
+            csv.writer(f).writerows(rows)
         return path
 
 

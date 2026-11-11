@@ -645,6 +645,11 @@ WHERE NOT EXISTS (SELECT 1 FROM RecipeAllergens ra
         END;
     ''')
 
+    # Scenarios (Analytics › Scenarios): what-if layers over the baseline,
+    # like an airport store's packaging or take-out vs in-store. Read
+    # only by utilities/scenarios.py, which never writes recipe data.
+    cursor.executescript(SCENARIO_TABLES)
+
     if not column_exists('vendor_items', 'grams_per_each'):
         cursor.execute('ALTER TABLE vendor_items ADD COLUMN grams_per_each REAL')
     cursor.executescript(_per_gram_triggers())
@@ -652,6 +657,66 @@ WHERE NOT EXISTS (SELECT 1 FROM RecipeAllergens ra
 
     connection.commit()
     connection.close()
+
+
+SCENARIO_TABLES = '''
+    CREATE TABLE IF NOT EXISTS scenarios (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        sortOrder INTEGER
+    );
+    -- One change to one format's assumptions (format_tag_id NULL: every
+    -- recipe). action:
+    --   'substitute'   from_ingredient -> to_ingredient, quantity = ratio
+    --                  of the replaced amount (NULL: same amount)
+    --   'add'          to_ingredient x quantity, like a template item
+    --   'remove'       from_ingredient
+    --   'price_adjust' menu price + amount ($)
+    CREATE TABLE IF NOT EXISTS scenario_rules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        scenario_id INTEGER NOT NULL,
+        format_tag_id INTEGER,
+        action TEXT NOT NULL,
+        from_ingredient INTEGER,
+        to_ingredient INTEGER,
+        quantity REAL,
+        amount REAL,
+        sortOrder INTEGER
+    );
+    -- Recipes with this tag (a format or a recipe tag) skip the rule, or
+    -- with rule_id NULL are left out of the scenario.
+    CREATE TABLE IF NOT EXISTS scenario_exclusions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        scenario_id INTEGER NOT NULL,
+        rule_id INTEGER,
+        tag_id INTEGER NOT NULL
+    );
+    -- A recipe's menu price in the scenario; wins over price_adjust.
+    CREATE TABLE IF NOT EXISTS scenario_prices (
+        scenario_id INTEGER NOT NULL,
+        recipe_id INTEGER NOT NULL,
+        menu_price NUMERIC NOT NULL,
+        PRIMARY KEY (scenario_id, recipe_id)
+    );
+    CREATE TRIGGER IF NOT EXISTS scenarios_deleted AFTER DELETE ON scenarios BEGIN
+        DELETE FROM scenario_rules WHERE scenario_id = OLD.id;
+        DELETE FROM scenario_exclusions WHERE scenario_id = OLD.id;
+        DELETE FROM scenario_prices WHERE scenario_id = OLD.id;
+    END;
+    CREATE TRIGGER IF NOT EXISTS scenario_rules_deleted AFTER DELETE ON scenario_rules BEGIN
+        DELETE FROM scenario_exclusions WHERE rule_id = OLD.id;
+    END;
+    CREATE TRIGGER IF NOT EXISTS scenario_ingredient_deleted AFTER DELETE ON Ingredients BEGIN
+        DELETE FROM scenario_rules WHERE from_ingredient = OLD.Id OR to_ingredient = OLD.Id;
+    END;
+    CREATE TRIGGER IF NOT EXISTS scenario_recipe_deleted AFTER DELETE ON Recipes BEGIN
+        DELETE FROM scenario_prices WHERE recipe_id = OLD.Id;
+    END;
+    CREATE TRIGGER IF NOT EXISTS scenario_tag_deleted AFTER DELETE ON tags BEGIN
+        DELETE FROM scenario_rules WHERE format_tag_id = OLD.id;
+        DELETE FROM scenario_exclusions WHERE tag_id = OLD.id;
+    END;
+'''
 
 
 # Per-portion nutrition columns; each has a per-gram twin, <col>_g.
