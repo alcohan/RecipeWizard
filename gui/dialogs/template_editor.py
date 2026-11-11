@@ -28,7 +28,7 @@ import db
 from gui.widgets.text_fit import literal
 from gui.dialogs.recipe_component_add import RecipeComponentAddDialog
 from gui.widgets import config_kit as kit
-from utilities import portions
+from utilities import portions, scenarios
 from utilities.wedge_renderer import render_recipe
 
 
@@ -812,6 +812,9 @@ class TemplatesEditor(QWidget):
         if used_by:
             msg += (f' {used_by} recipe{"" if used_by == 1 else "s"} use it: they become sub-recipes'
                     ' (no format) and keep their items.')
+        uses = scenarios.tag_uses(self.current_tag_id)
+        if uses:
+            msg += f' The {scenarios.names_text(uses)} scenario rules for it go too.'
         if confirm and QMessageBox.question(self, 'Delete format', msg, QMessageBox.Yes | QMessageBox.No,
                                             QMessageBox.No) != QMessageBox.Yes:
             return

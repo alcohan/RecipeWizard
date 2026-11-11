@@ -31,6 +31,7 @@ from gui.dialogs.tags_manager import TagsPage
 from gui.tabs.allergens_page import AllergensPage
 from gui.tabs.configure_tab import ConfigureTab, LauncherPage
 from gui.tabs.diets_page import DietsPage
+from gui.tabs.scenarios_page import ScenariosPage
 from gui.tabs.ingredients_tab import IngredientsTab
 from gui.tabs.library_health_tab import LibraryHealthTab
 from gui.tabs.portion_tools_page import PortionToolsPage
@@ -301,6 +302,7 @@ class MainWindow(QMainWindow):
                            library_ids=lambda: self.recipes_tab.visible_ids())
         tab.recipeActivated.connect(self._on_recipe_edit_by_id)
         tab.dockRequested.connect(self._on_dock_tray)
+        tab.scenarioSetupRequested.connect(lambda: self._show_configure('scenarios'))
         self.analytics_tab = tab
         return tab
 
@@ -333,6 +335,9 @@ class MainWindow(QMainWindow):
         cfg.add_section('diets', 'Diets', self.diets_page)
         self.portion_tools_page = PortionToolsPage()
         cfg.add_section('portion_tools', 'Portion tools', self.portion_tools_page)
+        self.scenarios_page = ScenariosPage()
+        self.scenarios_page.changed.connect(self.analytics_tab.scenarios.mark_stale)
+        cfg.add_section('scenarios', 'Scenarios', self.scenarios_page)
         # Template, category and tag edits save as they're made; the
         # Library picks them up when you move on.
         cfg.sectionChanged.connect(self._on_config_section_changed)
@@ -512,6 +517,7 @@ class MainWindow(QMainWindow):
             ('place-analytics', 'Go to Analytics'),
             ('place-configure', 'Go to Configure'),
             ('formats', 'Formats & Templates'),
+            ('scenarios', 'Scenarios'),
             ('suppliers', 'Suppliers'),
             ('import-purchases', 'Import Purchases…'),
             ('vendor-items', 'Vendor Items'),
@@ -536,6 +542,7 @@ class MainWindow(QMainWindow):
             'place-analytics': lambda: self._go_to_place('analytics'),
             'place-configure': lambda: self._go_to_place('configure'),
             'formats': lambda: self._show_configure('formats'),
+            'scenarios': lambda: self._show_configure('scenarios'),
             'suppliers': lambda: self._show_configure('suppliers'),
             'import-purchases': self._on_import_purchases,
             'vendor-items': lambda: self._show_configure('vendor_items'),
@@ -915,6 +922,7 @@ class MainWindow(QMainWindow):
         if result is None:
             return
         self.refresh()
+        self.scenarios_page.library_replaced()
         self.status_bar.refresh()
         self.library_health_tab.mark_stale()
         if mode == 'merge':
@@ -943,6 +951,7 @@ class MainWindow(QMainWindow):
             return
         setup.initializeDB(includeSampleData=False)
         self.refresh()
+        self.scenarios_page.library_replaced()
         self._flash_status('Database reset')
 
     def _on_reset_sample(self):
@@ -960,6 +969,7 @@ class MainWindow(QMainWindow):
         setup.initializeDB()
         setup.auto_assign_images()
         self.refresh()
+        self.scenarios_page.library_replaced()
         self._flash_status('Sample data loaded')
 
     def _on_auto_assign_images(self):

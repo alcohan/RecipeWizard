@@ -68,7 +68,7 @@ class IngredientsModel(QAbstractTableModel):
                 'no_price': not r.get('PriceCount'),
                 'no_nutrition': not r.get('Calories'),
                 'no_photo': not r.get('ImageFilename') or r['ImageFilename'] not in photos,
-                'unused': not r.get('UsedIn'),
+                'unused': not r.get('UsedIn') and not r.get('ScenarioUses'),
             }
             r['AllergenList'] = [a.strip() for a in (r.get('Allergens') or '').split(',') if a.strip()]
             r['SearchText'] = ' '.join(str(r.get(k) or '') for k in (
@@ -173,7 +173,9 @@ def _display(col, row):
     if col == 'Allergens':
         return row.get('Allergens') or '—'
     if col == 'UsedIn':
-        return str(row['UsedIn']) if row.get('UsedIn') else 'Unused'
+        if row.get('UsedIn'):
+            return str(row['UsedIn'])
+        return 'Scenario' if row.get('ScenarioUses') else 'Unused'
     return ''
 
 

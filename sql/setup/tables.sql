@@ -15,6 +15,11 @@ DROP TABLE IF EXISTS app_meta;  -- one-time seed markers: a reset library seeds 
 DROP TABLE IF EXISTS allergens;
 DROP TABLE IF EXISTS ingredient_allergens;
 
+DROP TABLE IF EXISTS scenario_prices;
+DROP TABLE IF EXISTS scenario_exclusions;
+DROP TABLE IF EXISTS scenario_rules;
+DROP TABLE IF EXISTS scenarios;
+
 DROP TABLE IF EXISTS ingredient_prices;
 
 DROP TABLE IF EXISTS Connections;

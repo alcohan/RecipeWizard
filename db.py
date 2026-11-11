@@ -71,6 +71,7 @@ def get_ingredient_library(change_days=90):
       "+8.2% since Sep 1"), BasePrice (the price in effect
       `change_days` ago — or the oldest within the window — for the
       table's 90-day change), UsedIn (recipes using it directly),
+      ScenarioUses (scenarios with a rule that uses it),
       Allergens (comma-joined, canonical order) and PriceCount.
 
     Ordered by category order, then name.'''
@@ -104,6 +105,8 @@ def get_ingredient_library(change_days=90):
             , (SELECT COUNT(*) FROM ingredient_prices p WHERE p.ingredient_id = i.Id) AS PriceCount
             , (SELECT COUNT(DISTINCT cn.ParentRecipe) FROM Connections cn
                WHERE cn.ChildIngredient = i.Id) AS UsedIn
+            , (SELECT COUNT(DISTINCT sr.scenario_id) FROM scenario_rules sr
+               WHERE sr.to_ingredient = i.Id OR sr.from_ingredient = i.Id) AS ScenarioUses
             , (SELECT group_concat(name, ', ') FROM (
                  SELECT a.name FROM ingredient_allergens ia
                  JOIN allergens a ON a.id = ia.allergen_id
@@ -378,6 +381,11 @@ def delete_ingredient(id):
     '''
     number_of_references = query(f'SELECT COUNT(*) AS Count FROM Connections WHERE ChildIngredient={id};', one=True)['Count']
 
+    from utilities import scenarios
+    in_scenarios = scenarios.ingredient_uses(id) if number_of_references == 0 else []
+    if in_scenarios:
+        raise Exception(f'Unable to delete. Ingredient used in the {scenarios.names_text(in_scenarios)}'
+                        f' scenario{"s" if len(in_scenarios) != 1 else ""}.')
     if number_of_references==0:
         sql = f'''DELETE FROM Ingredients WHERE Id={id}'''
         return query(sql)
@@ -436,6 +444,8 @@ STALE_PRICE_DAYS = 90
 # ingredient with no category needs both.
 _IN_USE = """EXISTS (SELECT 1 FROM Connections c JOIN Recipes r ON r.Id = c.ParentRecipe
                      WHERE c.ChildIngredient = i.Id AND COALESCE(r.status, 'active') != 'archived')"""
+# A scenario that swaps it in or adds it prices it too.
+_IN_USE_PRICED = f"""({_IN_USE} OR EXISTS (SELECT 1 FROM scenario_rules sr WHERE sr.to_ingredient = i.Id))"""
 _CATEGORY = """(SELECT t.{col} FROM ingredient_tags_mapping m JOIN tags t ON t.id = m.tag_id
                 WHERE m.ingredient_id = i.Id AND t.kind = 'ingredient' LIMIT 1)"""
 
@@ -471,7 +481,7 @@ def library_health(stale_days=STALE_PRICE_DAYS):
                 SELECT p2.id FROM ingredient_prices p2 WHERE p2.ingredient_id = i.Id
                 ORDER BY p2.effective_date DESC, p2.id DESC LIMIT 1)
             LEFT JOIN suppliers s ON s.id = p.supplier_id
-            WHERE {_IN_USE} AND COALESCE({_CATEGORY.format(col='needs_price')}, 1) = 1)
+            WHERE {_IN_USE_PRICED} AND COALESCE({_CATEGORY.format(col='needs_price')}, 1) = 1)
         WHERE MAX(COALESCE(last_price, ''), COALESCE(checked, '')) < date('now', ?)
         ORDER BY MAX(COALESCE(last_price, ''), COALESCE(checked, '')), Name COLLATE NOCASE;''',
         (f'-{int(stale_days)} day',))['data']

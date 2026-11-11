@@ -452,6 +452,7 @@ class MergeReport:
         ('vendor_items', 'Vendor items'),
         ('import_formats', 'Import formats'),
         ('portion_tools', 'Portion tools'),
+        ('scenarios', 'Scenarios'),
     )
 
     def __init__(self):
@@ -884,10 +885,51 @@ class _Merger:
             have[_norm(row['name'])] = self.insert('import_formats', row, settings=text)
             self.report.added['import_formats'].append(row['name'])
 
+    def scenarios(self):
+        '''A new scenario comes with its rules, exclusions and prices,
+        remapped; a rule whose ingredient or format didn't come along is
+        dropped. A scenario already here (by name) keeps its own.'''
+        if 'scenarios' not in self.src_had['tables']:
+            return
+        ingredients, recipes, tags = self.maps['ingredients'], self.maps['recipes'], self.maps['tags']
+
+        def remap(value, m):
+            return None if value is None else m.get(value, False)
+
+        have = self.index('scenarios', 'name')
+        for row in self.src_rows('scenarios', 'COALESCE(sortOrder, id), id'):
+            if _norm(row['name']) in have:
+                self.report.kept['scenarios'].append(row['name'])
+                continue
+            sid = self.insert('scenarios', row, sortOrder=self.next_order('scenarios') + 1)
+            have[_norm(row['name'])] = sid
+            rules = {}
+            for rule in self.src_rows('scenario_rules', 'id'):
+                if rule['scenario_id'] != row['id']:
+                    continue
+                vals = {'format_tag_id': remap(rule['format_tag_id'], tags),
+                        'from_ingredient': remap(rule['from_ingredient'], ingredients),
+                        'to_ingredient': remap(rule['to_ingredient'], ingredients)}
+                if False in vals.values():
+                    continue
+                rules[rule['id']] = self.insert('scenario_rules', rule, scenario_id=sid, **vals)
+            for ex in self.src_rows('scenario_exclusions', 'id'):
+                if ex['scenario_id'] != row['id'] or ex['tag_id'] not in tags:
+                    continue
+                if ex['rule_id'] is not None and ex['rule_id'] not in rules:
+                    continue
+                self.insert('scenario_exclusions', ex, scenario_id=sid, tag_id=tags[ex['tag_id']],
+                            rule_id=rules.get(ex['rule_id']))
+            for p in self.src_rows('scenario_prices', 'rowid'):
+                if p['scenario_id'] == row['id'] and p['recipe_id'] in recipes:
+                    self.insert('scenario_prices', p, skip=(), scenario_id=sid, recipe_id=recipes[p['recipe_id']])
+            self.report.added['scenarios'].append(row['name'])
+
     def run(self):
         for step in (self.suppliers, self.tags, self.allergens, self.ingredients, self.prices,
                      self.recipes, self.templates, self.diets, self.saved_views, self.saved_comparisons,
-                     self.vendor_items, self.import_formats, self.portion_tools, self.print_branding):
+                     self.vendor_items, self.import_formats, self.portion_tools, self.print_branding,
+                     self.scenarios):
             step()
 
 

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 import db
 from gui.widgets import config_kit as kit
+from utilities import scenarios
 
 
 _DEFAULT_COLOR = '#64748b'
@@ -239,6 +240,10 @@ class TagsPage(QWidget):
         msg = f'Delete “{r["name"]}”?'
         if r['used']:
             msg += f" It comes off {r['used']} {self._carrier}{'s' if r['used'] != 1 else ''}."
+        if self.kind != 'ingredient':
+            uses = scenarios.tag_uses(r['id'])
+            if uses:
+                msg += f' The {scenarios.names_text(uses)} scenario rules that use it go too.'
         if confirm and QMessageBox.question(self, f'Delete {self._one}', msg, QMessageBox.Yes | QMessageBox.No,
                                             QMessageBox.No) != QMessageBox.Yes:
             return
