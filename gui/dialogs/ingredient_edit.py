@@ -5,12 +5,12 @@ Left: the facts — name, unit, weight, portion tool; the price section
 (unit price, change since the previous price, step chart, history
 table, + New price); nutrition per unit. Right: the associations —
 category pills, allergens, photo, and the recipes that use it.
-Footer: Delete (only when unused), Cancel, Save.
+Footer: Delete (only when unused), Archive / Restore, Cancel, Save.
 
 Saving is explicit: fields, category, allergens and photo apply on
 Save; Cancel (or closing) with changes asks first. Prices are the
 exception — each is its own history record and goes in as soon as
-it's entered with + New price.
+it's entered with + New price — and so are Archive / Restore and Delete.
 
 Clicking a recipe under "Used in" closes the dialog (asking about
 unsaved changes) and sets `open_recipe_id`, so the caller can open
@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 import config
 import db
+from gui.dialogs.archive_confirm import confirm_archive_ingredient
 from gui.dialogs.ingredient_price_edit import IngredientPriceEditDialog
 from gui.images import choose_photo
 from gui.models.ingredients_model import format_change, format_unit_price
@@ -463,6 +464,12 @@ class IngredientEditDialog(QDialog):
         self.delete_btn.setEnabled(not n)
         if n:
             self.delete_btn.setToolTip(f"Used in {n} recipe{'s' if n != 1 else ''}")
+        self.archive_btn = QPushButton('')
+        self.archive_btn.setAutoDefault(False)
+        self.archive_btn.setStyleSheet(_SECONDARY.replace('min-height: 32px', 'min-height: 34px'))
+        self.archive_btn.clicked.connect(self.toggle_archived)
+        self._archived = self._status() == 'archived'
+        self._sync_archive_btn()
         cancel = QPushButton('Cancel')
         cancel.setAutoDefault(False)
         cancel.setStyleSheet(_SECONDARY.replace('min-height: 32px', 'min-height: 34px'))
@@ -478,6 +485,7 @@ class IngredientEditDialog(QDialog):
         hl.setContentsMargins(20, 12, 20, 12)
         hl.setSpacing(8)
         hl.addWidget(self.delete_btn)
+        hl.addWidget(self.archive_btn)
         hl.addStretch()
         hl.addWidget(cancel)
         hl.addWidget(save)
@@ -873,6 +881,31 @@ class IngredientEditDialog(QDialog):
     def _on_save(self):
         if self._save():
             self.accept()
+
+    # --- archive -------------------------------------------------------
+
+    def _status(self):
+        row = db.query('SELECT status FROM Ingredients WHERE Id = ?;', (self.ingredient_id,), one=True)
+        return (row or {}).get('status') or 'active'
+
+    def _sync_archive_btn(self):
+        self.archive_btn.setText('Restore' if self._archived else 'Archive')
+        self.archive_btn.setToolTip('Back in the library and pickers' if self._archived
+                                    else 'Hide from the library and pickers; recipes keep it')
+
+    def toggle_archived(self):
+        '''Archive (asking first when active recipes use it) or restore,
+        right away, like a price. The dialog stays open.'''
+        name = self.name_edit.text() or self._row['Name']
+        archive = not self._archived
+        if archive and not confirm_archive_ingredient(self, self.ingredient_id, name):
+            return False
+        db.set_ingredient_status(self.ingredient_id, 'archived' if archive else 'active')
+        self._archived = archive
+        self.modified = True
+        self.status_message = f"{'Archived' if archive else 'Restored'} '{name}'"
+        self._sync_archive_btn()
+        return True
 
     def _on_delete(self):
         name = self.name_edit.text() or self._row['Name']

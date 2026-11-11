@@ -2,7 +2,7 @@
 
 RecipeEditWidget is an embeddable QWidget laid out per the Framework
 canvas's editor artboard: an action bar (breadcrumb, unsaved count,
-Nutrition label, Print, Add to compare, Save), a build area
+Nutrition label, Print, Save), a build area
 (name, format, yield, menu price, a row of status chips, then the
 components grid or the Cost over time view) and a live results column (wedge, cost and food cost,
 nutrition, allergens). It's hosted inside the Recipes place as a
@@ -165,13 +165,12 @@ class RecipeEditWidget(QWidget):
     libraryRequested = Signal()      # breadcrumb "Library" clicked
     openRecipeRequested = Signal(int)  # "Used in …" chip picked a parent recipe
 
-    def __init__(self, recipe_id, compare_tray=None, parent=None):
+    def __init__(self, recipe_id, parent=None):
         super().__init__(parent)
         self.recipe_id = recipe_id
         self.modified = False
         self.status_message = ''
         self._being_deleted = False
-        self._compare_tray = compare_tray
 
         self.undo_stack = QUndoStack(self)
         self.undo_stack.indexChanged.connect(self._refresh)
@@ -257,9 +256,6 @@ class RecipeEditWidget(QWidget):
         if state is not None:
             self.splitter.restoreState(state)
 
-        if self._compare_tray is not None:
-            self._compare_tray.changed.connect(self._sync_compare_button)
-        self._sync_compare_button()
         self._refresh()
 
     # --- container-facing API ------------------------------------------
@@ -390,10 +386,7 @@ class RecipeEditWidget(QWidget):
         print_btn.setStyleSheet(_SECONDARY_BTN.replace('QPushButton', 'QToolButton')
                                 + ' QToolButton { padding-right: 22px; }'
                                   ' QToolButton::menu-button { border: 0; width: 18px; }')
-        self.compare_btn = QPushButton('')
-        self.compare_btn.clicked.connect(self._toggle_compare)
-        self.compare_btn.setVisible(self._compare_tray is not None)
-        for btn in (self.archive_btn, label_btn, self.compare_btn):
+        for btn in (self.archive_btn, label_btn):
             btn.setStyleSheet(_SECONDARY_BTN)
             btn.setAutoDefault(False)
         self.save_btn = QPushButton('Save   Ctrl+S')
@@ -411,7 +404,6 @@ class RecipeEditWidget(QWidget):
         row.addWidget(self.archive_btn)
         row.addWidget(label_btn)
         row.addWidget(print_btn)
-        row.addWidget(self.compare_btn)
         row.addWidget(self.save_btn)
         return bar
 
@@ -907,14 +899,6 @@ class RecipeEditWidget(QWidget):
         if not self._being_deleted:
             self._refresh_chips(db.recipe_info(self.recipe_id))
 
-    def _sync_compare_button(self):
-        if self._compare_tray is None:
-            return
-        inside = self._compare_tray.contains(self.recipe_id)
-        self.compare_btn.setText('In compare ✓   Space' if inside else 'Add to compare   Space')
-        self.compare_btn.setToolTip('Remove from the compare tray' if inside
-                                    else 'Add to the compare tray')
-
     # --- handlers ------------------------------------------------------
 
     def _on_clean_changed(self, is_clean):
@@ -937,10 +921,6 @@ class RecipeEditWidget(QWidget):
             f"· {n} unsaved change{'s' if n != 1 else ''}" if n else ''
         )
         self.dirtyCountChanged.emit(n)
-
-    def _toggle_compare(self):
-        if self._compare_tray is not None:
-            self._compare_tray.toggle(self.recipe_id)
 
     def _show_used_in_menu(self):
         if not self._parents:

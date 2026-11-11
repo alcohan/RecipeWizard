@@ -1,8 +1,9 @@
 '''Analytics › Scenarios: every active recipe against the baseline and
 the chosen scenarios — cost, food cost % and its change.
 
-Scenario chips pick the columns (Baseline always shows); Template and
-Tag narrow the rows; "Changed only" keeps recipes a scenario moves.
+Scenario chips pick the columns (Baseline always shows); the rows are
+the compare tray's recipes after its filters (set_recipe_ids), and
+"Changed only" keeps recipes a scenario moves.
 Hovering a cost lists the rules behind it; a price says where it came
 from. The footer averages food cost over the priced recipes shown.
 Numbers come from utilities.scenarios, which never writes.
@@ -19,7 +20,6 @@ from gui.services import food_cost
 from gui.widgets import config_kit as kit
 from gui.widgets.flow_layout import FlowLayout
 from gui.widgets.text_fit import literal
-from gui.widgets.toolbar_controls import ToolbarCombo
 from utilities import scenarios
 
 
@@ -66,10 +66,7 @@ class ScenarioMatrix(QWidget):
         # Controls.
         self.chips_host = QWidget()
         self.chips = FlowLayout(self.chips_host, spacing=8)
-        self.format_combo = ToolbarCombo()
-        self.format_combo.activated.connect(lambda _i: self._on_filter())
-        self.tag_combo = ToolbarCombo()
-        self.tag_combo.activated.connect(lambda _i: self._on_filter())
+        self._recipe_ids = None
         self.changed_only = QCheckBox('Changed only')
         self.changed_only.setStyleSheet(f'QCheckBox {{ color: {kit.KALE}; spacing: 8px; }}')
         self.changed_only.setChecked(settings.value('analytics/scenarioChanged', False, type=bool))
@@ -78,8 +75,6 @@ class ScenarioMatrix(QWidget):
         edit.clicked.connect(self.setupRequested.emit)
         filters = QHBoxLayout()
         filters.setSpacing(12)
-        filters.addWidget(self.format_combo)
-        filters.addWidget(self.tag_combo)
         filters.addWidget(self.changed_only)
         filters.addStretch()
         filters.addWidget(edit)
@@ -149,11 +144,8 @@ class ScenarioMatrix(QWidget):
 
     def refresh(self):
         self._stale = False
-        self._formats = db.get_tags(kind='recipe')
         self._recipe_tags = db.get_tags(kind='recipe_tag')
-        self._format_names = {f['id']: f['name'] for f in self._formats}
-        self._fill_combo(self.format_combo, 'All templates', self._formats, 'analytics/scenarioFormat')
-        self._fill_combo(self.tag_combo, 'Any tag', self._recipe_tags, 'analytics/scenarioTag')
+        self._format_names = {f['id']: f['name'] for f in db.get_tags(kind='recipe')}
         self._ingredient_names = {i['Id']: i['Name'] for i in db.get_ingredients()}
         self._rules = {r['id']: r for s in scenarios.get_scenarios() for r in s['rules']}
         self.result = scenarios.matrix()
@@ -171,15 +163,13 @@ class ScenarioMatrix(QWidget):
     def has_scenarios(self):
         return bool(self.result and self.result['scenarios'])
 
-    def _fill_combo(self, combo, first, tags, key):
-        current = combo.currentData() if combo.count() else QSettings().value(key, 0, type=int) or None
-        combo.blockSignals(True)
-        combo.clear()
-        combo.addItem(first, None)
-        for t in tags:
-            combo.addItem(literal(t['name']), t['id'])
-        combo.setCurrentIndex(max(0, combo.findData(current)))
-        combo.blockSignals(False)
+    def set_recipe_ids(self, recipe_ids):
+        '''The rows to show, in order (None: every active recipe).'''
+        ids = None if recipe_ids is None else list(recipe_ids)
+        if ids == self._recipe_ids:
+            return
+        self._recipe_ids = ids
+        self._rebuild_table()
 
     # --- controls ------------------------------------------------------
 
@@ -227,24 +217,20 @@ class ScenarioMatrix(QWidget):
         self._rebuild_table()
 
     def _on_filter(self):
-        settings = QSettings()
-        settings.setValue('analytics/scenarioFormat', self.format_combo.currentData() or 0)
-        settings.setValue('analytics/scenarioTag', self.tag_combo.currentData() or 0)
-        settings.setValue('analytics/scenarioChanged', self.changed_only.isChecked())
+        QSettings().setValue('analytics/scenarioChanged', self.changed_only.isChecked())
         self._rebuild_table()
 
     def visible_recipes(self):
         '''The rows shown, after the filters.'''
         if not self.result:
             return []
-        fmt, tag = self.format_combo.currentData(), self.tag_combo.currentData()
         sids = self.scenario_ids()
+        recipes = self.result['recipes']
+        if self._recipe_ids is not None:
+            by_id = {r['id']: r for r in recipes}
+            recipes = [by_id[i] for i in self._recipe_ids if i in by_id]
         out = []
-        for r in self.result['recipes']:
-            if fmt is not None and r['format_id'] != fmt:
-                continue
-            if tag is not None and tag not in r['tags']:
-                continue
+        for r in recipes:
             if self.changed_only.isChecked() and not any(self._changed(r, sid) for sid in sids):
                 continue
             out.append(r)
@@ -318,14 +304,29 @@ class ScenarioMatrix(QWidget):
         self._footer(len(rows), sids)
         hh = t.horizontalHeader()
         hh.setMinimumSectionSize(70)
-        hh.setSectionResizeMode(QHeaderView.ResizeToContents)
-        hh.setSectionResizeMode(0, QHeaderView.Stretch)
+        hh.setSectionResizeMode(QHeaderView.Interactive)
+        t.resizeColumnsToContents()
+        t.setColumnWidth(0, t.columnWidth(0) + 24)
+        self._fit()
+        n = len(rows)
+        self.summary.setText(f"{n} recipe{'s' if n != 1 else ''}")
+
+    def _fit(self):
+        '''The card hugs the columns so the numbers sit next to the names;
+        when they don't fit, the table scrolls sideways.'''
+        t = self.table
+        natural = sum(t.columnWidth(c) for c in range(t.columnCount())) + 2 * t.frameWidth() + 2
+        self.table_card.setMaximumWidth(natural)
+        hh = t.horizontalHeader()
         height = hh.sizeHint().height() + sum(t.rowHeight(i) for i in range(t.rowCount())) + 4
-        if t.horizontalScrollBar().maximum() > 0:
+        if natural > self.width():
             height += t.horizontalScrollBar().sizeHint().height()
         t.setFixedHeight(height)
-        n, total = len(rows), len(self.result['recipes'])
-        self.summary.setText(f'{n} of {total} recipes' if n != total else f'{n} recipes')
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.table.columnCount():
+            self._fit()
 
     def _footer(self, row, sids):
         t = self.table

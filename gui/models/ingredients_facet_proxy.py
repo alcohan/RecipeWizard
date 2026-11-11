@@ -13,8 +13,8 @@ Facets, combined with AND across groups:
 - text: substring of name, category, supplier, allergens, unit or tool.
 - include_archived: archived ingredients are hidden unless it's set.
 
-With no header sort the proxy keeps the source order, which is
-category order then name.
+The table starts sorted by its Category column (category order, then
+name); with no header sort the proxy keeps the source order, the same.
 '''
 from PySide6.QtCore import QSortFilterProxyModel, Qt
 

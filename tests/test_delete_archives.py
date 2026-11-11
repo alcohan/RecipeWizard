@@ -1,0 +1,161 @@
+'''Delete archives the selection in the Library and Ingredients pages;
+in a recipe editor it still removes the selected component.'''
+import os
+
+import pytest
+
+
+@pytest.fixture
+def qapp():
+    os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+    from PySide6.QtCore import QCoreApplication
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    QCoreApplication.setOrganizationName('RecipeWizardTests')
+    QCoreApplication.setApplicationName('RecipeWizardTests')
+    yield app
+    for w in app.topLevelWidgets():
+        w.close()
+        w.deleteLater()
+    app.processEvents()
+
+
+@pytest.fixture(autouse=True)
+def no_dialogs(monkeypatch):
+    '''A dialog would block the test run: fail instead.'''
+    from PySide6.QtWidgets import QMessageBox
+
+    def boom(*_a, **_k):
+        raise AssertionError('unexpected dialog')
+    monkeypatch.setattr(QMessageBox, 'exec', boom)
+    monkeypatch.setattr(QMessageBox, 'question', boom)
+
+
+@pytest.fixture
+def menu(lib):
+    romaine = lib.ingredient('Romaine', '1 oz', 'Greens')
+    bacon = lib.ingredient('Bacon', '1 oz', 'Protein')
+    spare = lib.ingredient('Spare', '1 oz', 'Greens')
+    cobb = lib.recipe('Cobb', 'Salad')
+    for ing in (romaine, bacon):
+        lib.sql('INSERT INTO Connections (ParentRecipe, ChildIngredient, Quantity) VALUES (?, ?, 1);', (cobb, ing))
+    return {'cobb': cobb, 'caesar': lib.recipe('Caesar', 'Salad'), 'romaine': romaine, 'spare': spare}
+
+
+def _show(widget, qapp):
+    from PySide6.QtTest import QTest
+    widget.resize(1200, 800)
+    widget.show()
+    widget.activateWindow()
+    QTest.qWaitForWindowActive(widget)
+    qapp.processEvents()
+
+
+def _status(lib, table, rid):
+    return lib.sql(f'SELECT status FROM {table} WHERE Id = ?;', (rid,))[0][0][0]
+
+
+def _recipes_tab(qapp):
+    from gui.models.recipes_model import RecipesModel
+    from gui.tabs.recipes_tab import RecipesTab
+    tab = RecipesTab(RecipesModel(), context_actions=[])
+    _show(tab, qapp)
+    return tab
+
+
+@pytest.mark.parametrize('view', ['table', 'gallery'])
+def test_delete_archives_selected_recipe(lib, menu, qapp, view):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    tab = _recipes_tab(qapp)
+    tab._set_view(view, persist=False)
+    qapp.processEvents()
+    tab._select_id(menu['caesar'])
+    assert tab._selected_id == menu['caesar']
+    target = tab.table if view == 'table' else tab.gallery.scroll
+    target.setFocus()
+    QTest.keyClick(target, Qt.Key_Delete)
+    assert _status(lib, 'Recipes', menu['caesar']) == 'archived'
+    QTest.keyClick(target, Qt.Key_Z, Qt.ControlModifier)     # undoable like the menu item
+    assert _status(lib, 'Recipes', menu['caesar']) in (None, 'active')
+
+
+def test_delete_in_library_filter_field_edits_text(lib, menu, qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    tab = _recipes_tab(qapp)
+    tab._select_id(menu['caesar'])
+    tab.filter_edit.setFocus()
+    tab.filter_edit.setText('Cae')
+    tab.filter_edit.setCursorPosition(0)
+    QTest.keyClick(tab.filter_edit, Qt.Key_Delete)
+    assert tab.filter_edit.text() == 'ae'
+    assert _status(lib, 'Recipes', menu['caesar']) in (None, 'active')
+
+
+def test_delete_in_recipe_editor_removes_component_not_recipe(lib, menu, qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    tab = _recipes_tab(qapp)
+    tab.open_in_editor(menu['cobb'])
+    editor = tab.editor_tabs.current_editor()
+    table = editor.components_table
+    before = editor.components_model.rowCount()
+    table.setFocus()
+    table.setCurrentIndex(editor.components_model.index(0, 0))
+    QTest.keyClick(table, Qt.Key_Delete)
+    assert editor.components_model.rowCount() == before - 1
+    assert _status(lib, 'Recipes', menu['cobb']) in (None, 'active')
+
+
+def test_delete_archives_selected_ingredient(lib, menu, qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from gui.models.ingredients_model import IngredientsModel
+    from gui.tabs.ingredients_tab import IngredientsTab
+    tab = IngredientsTab(IngredientsModel(), context_actions=[])
+    _show(tab, qapp)
+    tab._set_view('table', persist=False)
+    qapp.processEvents()
+    tab._select_id(menu['spare'])
+    qapp.processEvents()
+    assert tab._selected_id == menu['spare']
+    tab.table.setFocus()
+    QTest.keyClick(tab.table, Qt.Key_Delete)
+    assert _status(lib, 'Ingredients', menu['spare']) == 'archived'
+    QTest.keyClick(tab.table, Qt.Key_Delete)                 # already archived: nothing happens
+    assert _status(lib, 'Ingredients', menu['spare']) == 'archived'
+
+
+def test_ingredient_editor_archives_and_restores(lib, menu, qapp, monkeypatch):
+    from gui.dialogs import ingredient_edit
+    dlg = ingredient_edit.IngredientEditDialog(menu['spare'])
+    assert dlg.archive_btn.text() == 'Archive'
+    assert dlg.toggle_archived()                               # unused: no question
+    assert _status(lib, 'Ingredients', menu['spare']) == 'archived'
+    assert dlg.archive_btn.text() == 'Restore' and dlg.modified
+    assert dlg.toggle_archived()
+    assert _status(lib, 'Ingredients', menu['spare']) == 'active'
+    dlg.close()
+
+    # In use: it asks, and Cancel leaves it alone.
+    asked = []
+    monkeypatch.setattr(ingredient_edit, 'confirm_archive_ingredient',
+                        lambda *a: asked.append(a) or False)
+    used = ingredient_edit.IngredientEditDialog(menu['romaine'])
+    assert not used.toggle_archived() and asked
+    assert _status(lib, 'Ingredients', menu['romaine']) in (None, 'active')
+    used.close()
+
+    # An archived ingredient opens showing Restore.
+    lib.sql("UPDATE Ingredients SET status = 'archived' WHERE Id = ?;", (menu['spare'],))
+    again = ingredient_edit.IngredientEditDialog(menu['spare'])
+    assert again.archive_btn.text() == 'Restore'
+    again.close()
+
+
+def test_inspector_archive_buttons_show_the_key(lib, menu, qapp):
+    tab = _recipes_tab(qapp)
+    tab._select_id(menu['caesar'])
+    tab._update_inspector()
+    assert tab.inspector.archive_btn.text() == 'Archive   Del'

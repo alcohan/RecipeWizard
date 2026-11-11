@@ -9,8 +9,7 @@ tags or several diets shows in each of their groups; each extra card
 copies the first card's wedge instead of rendering it again.
 
 Single click selects (the Library's inspector follows), double-click
-opens the recipe in a tab, right-click asks for the context menu. The
-compare checkbox on each card adds it to the tray.
+opens the recipe in a tab, right-click asks for the context menu.
 
 The gallery filters with the Library proxy's accepts_row and orders
 cards within each group by the Sort menu's key, so it always shows the
@@ -20,7 +19,7 @@ the background, keeping the old one until the new one arrives.
 '''
 from PySide6.QtCore import QPoint, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel, QScrollArea,
+    QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel, QScrollArea,
     QVBoxLayout, QWidget,
 )
 
@@ -91,7 +90,7 @@ def pill(spec):
 
 class RecipeCard(QFrame):
     '''One recipe. Children are transparent to the mouse so the frame
-    gets every click; the compare checkbox is the exception.'''
+    gets every click.'''
 
     clicked = Signal(int)
     activated = Signal(int)
@@ -99,10 +98,9 @@ class RecipeCard(QFrame):
 
     WIDTH, HEIGHT = 216, 240
 
-    def __init__(self, row, compare_tray=None, parent=None):
+    def __init__(self, row, parent=None):
         super().__init__(parent)
         self.recipe_id = row['Id']
-        self._compare_tray = compare_tray
         self._wedge_ready = False
         self.setObjectName('RecipeCard')
         self.setProperty('selected', False)
@@ -149,23 +147,6 @@ class RecipeCard(QFrame):
         layout.addLayout(mid)
         layout.addWidget(self.chips)
         layout.addStretch()
-
-        if self._compare_tray is not None:
-            self.tray_check = QCheckBox(self)
-            self.tray_check.setToolTip('Add to compare (Space)')
-            self.tray_check.setCursor(Qt.PointingHandCursor)
-            self.tray_check.setStyleSheet(f'''
-                QCheckBox {{ background: transparent; padding: 0; }}
-                QCheckBox::indicator {{ width: 16px; height: 16px; border: 1.5px solid {_KALE};
-                    border-radius: 3px; background: #ffffff; }}
-                QCheckBox::indicator:hover {{ border-color: {_ROMAINE}; }}
-                QCheckBox::indicator:checked {{ background: {_ROMAINE}; border-color: {_ROMAINE}; image: none; }}
-            ''')
-            self.tray_check.setFixedSize(20, 20)
-            self.tray_check.move(10, 10)
-            self.tray_check.setChecked(self._compare_tray.contains(self.recipe_id))
-            self.tray_check.toggled.connect(self._on_tray_toggled)
-            self._compare_tray.changed.connect(self._sync_tray_check)
 
         self.drift_chip = QLabel('Prices changed', self)
         self.drift_chip.setAttribute(Qt.WA_TransparentForMouseEvents)
@@ -245,23 +226,6 @@ class RecipeCard(QFrame):
             self.activated.emit(self.recipe_id)
         super().mouseDoubleClickEvent(event)
 
-    def _on_tray_toggled(self, checked):
-        if self._compare_tray is None:
-            return
-        if checked:
-            self._compare_tray.add(self.recipe_id)
-        else:
-            self._compare_tray.remove(self.recipe_id)
-
-    def _sync_tray_check(self):
-        '''Keep the checkbox in sync when another view changes the tray.'''
-        if self._compare_tray is None:
-            return
-        should_be = self._compare_tray.contains(self.recipe_id)
-        if self.tray_check.isChecked() != should_be:
-            self.tray_check.blockSignals(True)
-            self.tray_check.setChecked(should_be)
-            self.tray_check.blockSignals(False)
 
 
 class _Group(QWidget):
@@ -296,10 +260,9 @@ class RecipeGallery(QWidget):
     recipeActivated = Signal(int)
     contextMenuRequested = Signal(int, QPoint)
 
-    def __init__(self, recipes_model, compare_tray=None, parent=None):
+    def __init__(self, recipes_model, parent=None):
         super().__init__(parent)
         self._model = recipes_model
-        self._compare_tray = compare_tray
         self._rows = {}            # recipe id → row
         self._cards = {}           # (group, recipe id) → RecipeCard
         self._primary = {}         # recipe id → the card that renders its wedge
@@ -406,7 +369,7 @@ class RecipeGallery(QWidget):
     def _card_for(self, group, rid):
         card = self._cards.get((group, rid))
         if card is None:
-            card = RecipeCard(self._rows[rid], compare_tray=self._compare_tray, parent=self.container)
+            card = RecipeCard(self._rows[rid], parent=self.container)
             card.clicked.connect(self.recipeClicked.emit)
             card.activated.connect(self.recipeActivated.emit)
             card.contextRequested.connect(self.contextMenuRequested.emit)

@@ -80,9 +80,8 @@ class EditorTabs(QTabWidget):
     currentEditorChanged = Signal(object)  # RecipeEditWidget or None (Library)
     dirtyChanged = Signal()       # any tab's unsaved-edit count changed
 
-    def __init__(self, library_widget, compare_tray=None, parent=None):
+    def __init__(self, library_widget, parent=None):
         super().__init__(parent)
-        self._compare_tray = compare_tray
         # Close buttons are our own (_TabTail), so the unsaved dot can
         # sit beside the × the way the canvas draws it.
         self.setTabsClosable(False)
@@ -137,10 +136,15 @@ class EditorTabs(QTabWidget):
         # Window-wide, so they work wherever focus is (after a restart it
         # starts in the header, outside this widget); Qt skips window
         # shortcuts on hidden widgets, so other places aren't affected.
-        for keys, handler in ((QKeySequence('Ctrl+W'), self.close_current),
-                              (QKeySequence.NextChild, lambda: self._cycle_tab(1)),
-                              (QKeySequence.PreviousChild, lambda: self._cycle_tab(-1))):
-            sc = QShortcut(keys, self)
+        # Backward needs Ctrl+Shift+Tab as well as Qt's Ctrl+Shift+Backtab:
+        # the key can arrive either way, and one no shortcut takes falls
+        # to QTabWidget's own cycling, which skips the hidden Library tab.
+        previous = [QKeySequence('Ctrl+Shift+Tab')] + QKeySequence.keyBindings(QKeySequence.PreviousChild)
+        for keys, handler in (([QKeySequence('Ctrl+W')], self.close_current),
+                              (QKeySequence.keyBindings(QKeySequence.NextChild), lambda: self._cycle_tab(1)),
+                              (previous, lambda: self._cycle_tab(-1))):
+            sc = QShortcut(self)
+            sc.setKeys(keys)
             sc.setContext(Qt.WindowShortcut)
             sc.activated.connect(handler)
 
@@ -156,7 +160,7 @@ class EditorTabs(QTabWidget):
         if existing >= 0:
             self.setCurrentIndex(existing)
             return existing
-        widget = RecipeEditWidget(recipe_id, compare_tray=self._compare_tray, parent=self)
+        widget = RecipeEditWidget(recipe_id, parent=self)
         widget.libraryRequested.connect(self.show_library)
         widget.openRecipeRequested.connect(self.open_recipe)
         widget.titleChanged.connect(lambda _name, w=widget: self._sync_tab_text(w))
@@ -170,7 +174,7 @@ class EditorTabs(QTabWidget):
         bar = self.tabBar()
         # A small wedge of the recipe, redrawn as its components change.
         icon = WedgeView(recipe_id, size=24)
-        icon.setStyleSheet('background: transparent;')
+        _clear_background(icon)
         widget.undo_stack.indexChanged.connect(lambda _i, v=icon: v.refresh())
         bar.setTabButton(idx, QTabBar.LeftSide, _inset(icon, left=6))
         tail = _TabTail(widget.title())
@@ -387,11 +391,19 @@ class _LibraryButton(QToolButton):
         self.setText('  Library' + (f'  {n}' if n is not None else ''))
 
 
+def _clear_background(widget):
+    '''A transparent background for this widget alone. A bare
+    "background: transparent;" style sheet also reaches every child and
+    the tooltips they show, which Windows then draws as black boxes.'''
+    widget.setProperty('clearBackground', True)
+    widget.setStyleSheet('*[clearBackground="true"] { background: transparent; }')
+
+
 def _inset(widget, left=0, right=0):
     '''Wrap a tab side widget so it sits clear of the tab's edge (tab
     padding in the stylesheet doesn't apply to side widgets).'''
     box = QWidget()
-    box.setStyleSheet('background: transparent;')
+    _clear_background(box)
     layout = QHBoxLayout(box)
     layout.setContentsMargins(left, 0, right, 0)
     layout.addWidget(widget)
@@ -406,7 +418,7 @@ class _TabTail(QWidget):
 
     def __init__(self, title, parent=None):
         super().__init__(parent)
-        self.setStyleSheet('background: transparent;')
+        _clear_background(self)
         # The dot always takes its space and only changes color: QTabBar
         # sizes side widgets once, so showing a hidden dot later would
         # squeeze the × out (and make the tab jump in width).
@@ -445,7 +457,7 @@ class _TabCorner(QWidget):
 
     def __init__(self, list_button, plus_button, parent=None):
         super().__init__(parent)
-        self.setStyleSheet('background: transparent;')
+        _clear_background(self)
         hint = QLabel('Ctrl+Tab next tab · Ctrl+W close')
         hint.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
         layout = QHBoxLayout(self)
