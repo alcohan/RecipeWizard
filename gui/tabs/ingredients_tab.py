@@ -30,7 +30,7 @@ from gui.models.ingredients_facet_proxy import IngredientsFacetProxy
 from gui.widgets.ingredient_gallery import IngredientGallery
 from gui.widgets.ingredient_inspector import IngredientInspector
 from gui.widgets.ingredient_table import (
-    ChangeDelegate, NameDelegate, PlainDelegate, TwoLineDelegate,
+    CategoryDelegate, ChangeDelegate, NameDelegate, PlainDelegate, TwoLineDelegate,
 )
 from gui.widgets.ingredients_facet_pane import IngredientsFacetPane
 from gui.widgets.toolbar_controls import SegmentedSwitch
@@ -133,6 +133,12 @@ class IngredientsTab(QWidget):
             enter = QShortcut(QKeySequence(key), self)
             enter.setContext(Qt.WidgetWithChildrenShortcut)
             enter.activated.connect(lambda: self._edit_id(self._selected_id))
+        # Delete archives the selection, on the table and gallery only (not
+        # the filter field).
+        for view in (self.table, self.gallery):
+            sc = QShortcut(QKeySequence.Delete, view)
+            sc.setContext(Qt.WidgetWithChildrenShortcut)
+            sc.activated.connect(self.archive_selected)
 
     # --- building ------------------------------------------------------
 
@@ -205,11 +211,11 @@ class IngredientsTab(QWidget):
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.setSelectionMode(QAbstractItemView.SingleSelection)
         table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        # Unsorted until a header is clicked: source order is category
-        # order, then name ("sorted by category"). The "no sort"
-        # indicator goes on first — enabling sorting sorts by the
-        # indicator's column, which would otherwise be column 0.
-        table.horizontalHeader().setSortIndicator(-1, Qt.AscendingOrder)
+        # Sorted by Category (category order, then name) to start; its
+        # header gets back to that after sorting by another column. The
+        # indicator goes on first: enabling sorting sorts by it.
+        table.horizontalHeader().setSortIndicator(
+            self.source_model.COLUMNS.index('Category'), Qt.AscendingOrder)
         table.setSortingEnabled(True)
         table.horizontalHeader().sortIndicatorChanged.connect(lambda *_: self._after_filter())
         table.setShowGrid(False)
@@ -228,6 +234,7 @@ class IngredientsTab(QWidget):
         ''')
         cols = self.source_model.COLUMNS
         table.setItemDelegateForColumn(cols.index('Name'), NameDelegate(table))
+        table.setItemDelegateForColumn(cols.index('Category'), CategoryDelegate(table))
         table.setItemDelegateForColumn(cols.index('Unit'), TwoLineDelegate(table))
         table.setItemDelegateForColumn(cols.index('Change'), ChangeDelegate(table))
         table.setItemDelegateForColumn(cols.index('Cost'), PlainDelegate(table, bold=True))
@@ -239,7 +246,7 @@ class IngredientsTab(QWidget):
         # Name takes the slack but never drops below a readable width;
         # past that the table scrolls sideways instead of crushing names.
         header.setMinimumSectionSize(48)
-        for name, width in (('Unit', 104), ('Cost', 84), ('Change', 92), ('Supplier', 110),
+        for name, width in (('Category', 120), ('Unit', 104), ('Cost', 84), ('Change', 92), ('Supplier', 110),
                             ('Calories', 56), ('Allergens', 110), ('UsedIn', 68)):
             header.setSectionResizeMode(cols.index(name), QHeaderView.Interactive)
             table.setColumnWidth(cols.index(name), width)
@@ -403,6 +410,12 @@ class IngredientsTab(QWidget):
 
     def toggle_archived(self, ingredient_id):
         return self.set_archived(ingredient_id, not self.is_archived(ingredient_id))
+
+    def archive_selected(self):
+        '''Delete key: archive the selected ingredient (already archived: nothing).'''
+        if self._selected_id is not None:
+            return self.set_archived(self._selected_id, True)
+        return False
 
     def focus_filter(self):
         '''Called by the main window's Ctrl+F shortcut.'''

@@ -33,9 +33,9 @@ NO_ALLERGENS = '__none__'
 
 
 class IngredientsModel(QAbstractTableModel):
-    COLUMNS = ('Name', 'Unit', 'Cost', 'Change', 'Supplier', 'Calories', 'Allergens', 'UsedIn')
+    COLUMNS = ('Name', 'Category', 'Unit', 'Cost', 'Change', 'Supplier', 'Calories', 'Allergens', 'UsedIn')
     HEADERS = {
-        'Name': 'INGREDIENT', 'Unit': 'UNIT · TOOL', 'Cost': 'COST / UNIT',
+        'Name': 'INGREDIENT', 'Category': 'CATEGORY', 'Unit': 'UNIT · TOOL', 'Cost': 'COST / UNIT',
         'Change': '90 DAYS', 'Supplier': 'SUPPLIER', 'Calories': 'KCAL',
         'Allergens': 'ALLERGENS', 'UsedIn': 'USED IN',
     }
@@ -96,7 +96,7 @@ class IngredientsModel(QAbstractTableModel):
             return row.get('ChangePct')
         if role == SubTextRole:
             if col == 'Name':
-                return (row.get('TagName') or 'Uncategorized') + (' · archived' if row['Archived'] else '')
+                return 'Archived' if row['Archived'] else ''
             if col == 'Unit':
                 return row.get('Portion') or ''
             return None
@@ -158,6 +158,8 @@ def format_change(pct):
 def _display(col, row):
     if col == 'Name':
         return row.get('Name') or ''
+    if col == 'Category':
+        return row.get('TagName') or 'Uncategorized'
     if col == 'Unit':
         return row.get('Unit') or ''
     if col == 'Cost':
@@ -182,6 +184,10 @@ def _display(col, row):
 def _sort_key(col, row):
     if col == 'Name':
         return (row.get('Name') or '').lower()
+    if col == 'Category':
+        # Configure's category order (uncategorized last), then name: the
+        # table's default sort.
+        return f"{int(row.get('TagSort') or 1000):05d}|{(row.get('Name') or '').lower()}"
     if col in ('Cost', 'Calories', 'UsedIn', 'Change'):
         value = {'Cost': row.get('Cost') or None, 'Calories': row.get('Calories'),
                  'UsedIn': row.get('UsedIn'), 'Change': row.get('ChangePct')}[col]

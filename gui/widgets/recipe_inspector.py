@@ -259,7 +259,7 @@ class RecipeInspector(QScrollArea):
         reasons = row.get('ReviewReasons') or []
         self.review_note.setText('Needs review · ' + ' · '.join(reasons))
         self.review_note.setVisible(bool(reasons) and not self._archived)
-        self.archive_btn.setText('Restore to menu' if self._archived else 'Archive')
+        self.archive_btn.setText('Restore to menu' if self._archived else 'Archive   Del')
 
         self._stats['cost'].setText(f'${float(row.get("CostRaw") or 0):.2f}')
         pct = row.get('FoodCostPct')

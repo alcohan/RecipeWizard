@@ -221,7 +221,7 @@ class IngredientInspector(QScrollArea):
         self.meta.setText(f'{dot} ' + ' · '.join(b for b in bits if b))
         self._archived = bool(row.get('Archived'))
         self.archived_note.setVisible(self._archived)
-        self.archive_btn.setText('Restore' if self._archived else 'Archive')
+        self.archive_btn.setText('Restore' if self._archived else 'Archive   Del')
 
         unit = row.get('Unit') or 'unit'
         self.cost_title.setText(f'COST PER {unit.upper()}')

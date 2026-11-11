@@ -40,21 +40,19 @@ from gui.tabs.recipes_tab import ARCHIVE_ACTION, RecipesTab
 from gui.tabs.import_formats_page import ImportFormatsPage
 from gui.tabs.suppliers_tab import SuppliersTab
 from gui.tabs.vendor_items_page import VendorItemsPage
-from gui.services.compare_tray import CompareTray
 from gui.services.updates import UpdateService
 from gui.widgets.app_header import AppHeader
 from gui.widgets.command_palette import CommandPalette
-from gui.widgets.compare_tray_dock import CompareTrayDock
 from gui.widgets.status_bar import RecipeWizardStatusBar
 
 
 class MainWindow(QMainWindow):
     '''Shell, top to bottom: menu bar, app bar (four places), the
-    current place, the docked compare tray, the status bar.
+    current place, the status bar.
 
     Places follow the RecipeWizard Framework canvas: Recipes (pinned
     Library tab + one tab per open recipe), Ingredients, Analytics
-    (the compare tray, expanded) and Configure (setup and upkeep —
+    (recipes side by side, with its own compare tray) and Configure (setup and upkeep —
     formats, categories, suppliers, library health, data & backups,
     images, preferences). Ctrl+1-4 switch places; every command lives
     in the menu bar with its shortcut.'''
@@ -111,13 +109,12 @@ class MainWindow(QMainWindow):
         except (TypeError, ValueError):
             pass
 
-        self._set_tray_docked(settings.value('compareTray/docked', False, type=bool))
+        settings.remove('compareTray')    # the retired bottom tray's setting
         # Stored as "hidden" (default off) under a fresh key: the earlier
         # recipes/facetsVisible was written from isVisible() and could
         # record a bogus False, so it's deliberately not read.
         self.recipes_tab.set_facets_visible(
             not settings.value('recipes/facetsHidden', False, type=bool))
-        self._sync_tray_visibility()
 
     def closeEvent(self, event):
         # Capture tabs before closing them — the close below empties
@@ -135,12 +132,11 @@ class MainWindow(QMainWindow):
         settings.setValue('mainWindow/currentPlace', self.app_header.current())
         settings.setValue('recipes/openTabs', ','.join(str(i) for i in open_ids))
         settings.setValue('recipes/currentTab', current_tab)
-        settings.setValue('compareTray/docked', self._tray_docked)
         settings.setValue('recipes/facetsHidden', not self.recipes_tab.facets_visible())
         super().closeEvent(event)
 
     def _build_places(self):
-        '''App bar + stacked places + docked compare tray + status bar.
+        '''App bar + stacked places + status bar.
         One place per app-bar slot; indices follow _PLACES. Model refs
         are stashed on self so handlers can call refresh() on them.'''
         self._progress('Loading ingredients…', 0.42)
@@ -148,25 +144,18 @@ class MainWindow(QMainWindow):
         self._progress('Loading recipes…', 0.46)
         self.recipes_model = RecipesModel(self)
 
-        # Session-only staging set for side-by-side comparison. Lives
-        # here so every place (Recipes cards, Analytics, the docked
-        # strip, the status-bar chip) shares one source of truth.
-        self.compare_tray = CompareTray(self)
-
         self.app_header = AppHeader(self)
         self.stack = QStackedWidget()
         # Workspace backdrop is the Evergreens `bg` token so places
         # inherit a consistent warm off-white, not Qt's OS default.
         self.stack.setAutoFillBackground(True)
         self.stack.setStyleSheet('QStackedWidget { background: #fffaf2; }')
-        # Docking the compare tray must take its height from the place,
-        # never grow the window. An Ignored vertical policy drops the
+        # A tall place must never grow the window. An Ignored vertical policy drops the
         # pages' minimum-size hints from the layout's sums; the explicit
         # floor keeps a place usable when the window is short.
         self.stack.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Ignored)
         self.stack.setMinimumHeight(160)
         self.app_header.placeChanged.connect(self.stack.setCurrentIndex)
-        self.app_header.placeChanged.connect(lambda _i: self._sync_tray_visibility())
 
         self._progress('Building the recipe library…', 0.5)
         self.app_header.add_place('Recipes')
@@ -182,20 +171,8 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self._configure_place())
         self._progress('Checking library health…', 0.82)
 
-        self.tray_dock = CompareTrayDock(self.compare_tray)
-        self.tray_dock.expandRequested.connect(lambda: self._go_to_place('analytics'))
-        self.tray_dock.recipeActivated.connect(self._on_recipe_edit_by_id)
-        self.tray_dock.printRequested.connect(self._print_recipes)
-        self.tray_dock.printNoPortionsRequested.connect(lambda ids: self._print_recipes(ids, portions=False))
-        self._tray_docked = False
-
         self.status_bar = RecipeWizardStatusBar()
-        self.status_bar.compareTrayClicked.connect(self._toggle_tray_docked)
         self.status_bar.updateClicked.connect(self._on_show_update)
-        self.compare_tray.changed.connect(
-            lambda: self.status_bar.set_compare_tray_count(self.compare_tray.count())
-        )
-        self.status_bar.set_compare_tray_count(self.compare_tray.count())
 
         central = QWidget()
         outer = QVBoxLayout(central)
@@ -203,7 +180,6 @@ class MainWindow(QMainWindow):
         outer.setSpacing(0)
         outer.addWidget(self.app_header)
         outer.addWidget(self.stack, stretch=1)
-        outer.addWidget(self.tray_dock)
         outer.addWidget(self.status_bar)
         self.setCentralWidget(central)
 
@@ -231,7 +207,6 @@ class MainWindow(QMainWindow):
             source_model=self.recipes_model,
             context_actions=[
                 ('Open in tab', self._on_recipe_edit),
-                ('Add to compare (Space)', self._on_toggle_tray_for_row),
                 ('Duplicate', lambda r: self._duplicate_recipe(self.recipes_model.id_at_row(r))),
                 ('Print…', lambda r: self._print_recipes([self.recipes_model.id_at_row(r)])),
                 ('Print without portions…',
@@ -240,7 +215,6 @@ class MainWindow(QMainWindow):
                 (None, None),
                 ('Delete…', self._on_recipe_delete),
             ],
-            compare_tray=self.compare_tray,
         )
         tab.newRecipeRequested.connect(self._on_new_recipe)
         tab.duplicateRequested.connect(self._duplicate_recipe)
@@ -256,10 +230,6 @@ class MainWindow(QMainWindow):
         self.recipes_tab = tab
         return tab
 
-    def _on_toggle_tray_for_row(self, src_row):
-        rid = self.recipes_model.id_at_row(src_row)
-        self.compare_tray.toggle(rid)
-
     def _ingredients_place(self):
         tab = IngredientsTab(
             source_model=self.ingredients_model,
@@ -267,7 +237,7 @@ class MainWindow(QMainWindow):
                 ('Edit…', self._on_ingredient_edit),
                 ('New price…', lambda r: self._on_ingredient_new_price(
                     self.ingredients_model.id_at_row(r))),
-                (lambda row: 'Restore' if row.get('Archived') else 'Archive',
+                (lambda row: 'Restore' if row.get('Archived') else 'Archive	Del',
                  lambda r: self.ingredients_tab.toggle_archived(self.ingredients_model.id_at_row(r))),
                 ('Delete', self._on_ingredient_delete),
             ],
@@ -298,18 +268,12 @@ class MainWindow(QMainWindow):
         self._refresh_configure_counts()
 
     def _analytics_place(self):
-        tab = AnalyticsTab(self.recipes_model, compare_tray=self.compare_tray,
-                           library_ids=lambda: self.recipes_tab.visible_ids())
+        tab = AnalyticsTab(self.recipes_model)
         tab.recipeActivated.connect(self._on_recipe_edit_by_id)
-        tab.dockRequested.connect(self._on_dock_tray)
+        tab.printRequested.connect(self._print_recipes)
         tab.scenarioSetupRequested.connect(lambda: self._show_configure('scenarios'))
         self.analytics_tab = tab
         return tab
-
-    def _on_dock_tray(self):
-        '''Analytics › Dock to bottom: back to Recipes with the tray docked.'''
-        self._set_tray_docked(True)
-        self._go_to_place('recipes')
 
     def _configure_place(self):
         '''Setup and upkeep. Suppliers and Library health are hosted
@@ -426,26 +390,6 @@ class MainWindow(QMainWindow):
         self._go_to_place('recipes')
         self.recipes_tab.show_library()
 
-    def _set_tray_docked(self, docked):
-        self._tray_docked = bool(docked)
-        self.status_bar.set_compare_tray_docked(self._tray_docked)
-        if hasattr(self, 'tray_toggle_action'):
-            self.tray_toggle_action.setChecked(self._tray_docked)
-        self._sync_tray_visibility()
-
-    def _toggle_tray_docked(self):
-        '''Ctrl+Shift+C / status-bar chip: collapsed ↔ docked. From
-        Analytics (the expanded tray) it docks and returns to Recipes.'''
-        if self.app_header.current() == self._PLACES.index('analytics'):
-            self._set_tray_docked(True)
-            self._go_to_place('recipes')
-            return
-        self._set_tray_docked(not self._tray_docked)
-
-    def _sync_tray_visibility(self):
-        on_analytics = self.app_header.current() == self._PLACES.index('analytics')
-        self.tray_dock.setVisible(self._tray_docked and not on_analytics)
-
     def _toggle_facets(self):
         self._on_show_library()
         self.recipes_tab.set_facets_visible(not self.recipes_tab.facets_visible())
@@ -522,7 +466,6 @@ class MainWindow(QMainWindow):
             ('import-purchases', 'Import Purchases…'),
             ('vendor-items', 'Vendor Items'),
             ('health', 'Library Health'),
-            ('compare-tray', 'Show / Hide Compare Tray'),
             ('check-updates', 'Check for Updates…'),
             ('about', 'About RecipeWizard'),
         ]
@@ -547,7 +490,6 @@ class MainWindow(QMainWindow):
             'import-purchases': self._on_import_purchases,
             'vendor-items': lambda: self._show_configure('vendor_items'),
             'health': lambda: self._show_configure('health'),
-            'compare-tray': self._toggle_tray_docked,
             'check-updates': self._on_check_updates,
             'about': self._on_about,
         }
@@ -625,9 +567,6 @@ class MainWindow(QMainWindow):
                 lambda n=name: self._go_to_place(n), f'Ctrl+{i + 1}')
         add(view_menu, '&Library Tab', self._on_show_library, 'Ctrl+0')
         view_menu.addSeparator()
-        self.tray_toggle_action = add(
-            view_menu, 'Compare &Tray', self._toggle_tray_docked, 'Ctrl+Shift+C')
-        self.tray_toggle_action.setCheckable(True)
         add(view_menu, 'Filter &Pane', self._toggle_facets, 'Ctrl+Alt+S')
         view_menu.addSeparator()
         add(view_menu, '&Refresh', self.refresh, 'F5')

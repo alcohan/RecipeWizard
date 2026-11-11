@@ -381,7 +381,7 @@ def test_csv_rows_and_averages(lib, menu):
     assert sc.averages(result, [menu['wrap']])[out] is None
 
 
-def test_matrix_view_filters_and_export(lib, menu, qapp):
+def test_matrix_view_rows_and_export(lib, menu, qapp):
     from gui.widgets.scenario_matrix import ScenarioMatrix
     view = ScenarioMatrix()
     view.refresh()
@@ -399,8 +399,7 @@ def test_matrix_view_filters_and_export(lib, menu, qapp):
     view.changed_only.setChecked(True)
     assert {r['id'] for r in view.visible_recipes()} == {menu['salad'], menu['bowl']}
     view.changed_only.setChecked(False)
-    view.format_combo.setCurrentIndex(view.format_combo.findData(menu['Salad']))
-    view._on_filter()
+    view.set_recipe_ids([menu['salad'], 999])                 # the tray, after its filters
     assert [r['id'] for r in view.visible_recipes()] == [menu['salad']]
     tip = view.table.item(0, 3).toolTip()
     assert 'Swap Salad Bowl 32oz → Airport Salad Bowl' in tip and '+$0.20' in tip

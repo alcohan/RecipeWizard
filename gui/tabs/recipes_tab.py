@@ -7,8 +7,7 @@ left, the gallery (grouped by format) or table in the middle, and the
 inspector on the right.
 
 Single click selects a recipe and fills the inspector; double-click
-or Enter opens it in a tab beside Library. Space adds the selected
-recipe to the compare tray. Archived recipes (off the menu) are hidden
+or Enter opens it in a tab beside Library. Archived recipes (off the menu) are hidden
 unless the filter pane's Include archived is checked; Archive / Restore
 from the right-click menu or the inspector is undoable with Ctrl+Z on
 the Library. Both views read one RecipesModel through
@@ -63,11 +62,10 @@ class RecipesTab(QWidget):
     duplicateRequested = Signal(int)     # recipe id
     printRequested = Signal(int)         # recipe id
 
-    def __init__(self, source_model, context_actions, compare_tray=None, parent=None):
+    def __init__(self, source_model, context_actions, parent=None):
         super().__init__(parent)
         self.source_model = source_model
         self._context_actions = context_actions
-        self._compare_tray = compare_tray
         self._selected_id = None
         self._restore_id = None
 
@@ -77,7 +75,7 @@ class RecipesTab(QWidget):
         self._inspect_timer.timeout.connect(self._update_inspector)
 
         library_view = self._build_library()
-        self.editor_tabs = EditorTabs(library_view, compare_tray=compare_tray)
+        self.editor_tabs = EditorTabs(library_view)
         self.editor_tabs.recipeDeleted.connect(self.recipeDeletedFromTabs.emit)
 
         layout = QVBoxLayout(self)
@@ -87,15 +85,19 @@ class RecipesTab(QWidget):
         self.rowActivated.connect(lambda r: self.open_in_editor(self.source_model.id_at_row(r)))
 
         # Library keys, scoped to the Library page so they never reach
-        # an editor tab: Enter opens, Space toggles the compare tray.
+        # an editor tab: Enter opens.
         for key in (Qt.Key_Return, Qt.Key_Enter):
             sc = QShortcut(QKeySequence(key), library_view)
             sc.setContext(Qt.WidgetWithChildrenShortcut)
             sc.activated.connect(lambda: self._open_id(self._selected_id))
-        if self._compare_tray is not None:
-            space_sc = QShortcut(QKeySequence(Qt.Key_Space), self)
-            space_sc.setContext(Qt.WidgetWithChildrenShortcut)
-            space_sc.activated.connect(self._toggle_tray_for_current)
+
+        # Delete archives the selection: on the table and gallery only, so
+        # it never reaches the filter field or an editor tab (where Delete
+        # removes a component).
+        for view in (self.table, self.gallery):
+            sc = QShortcut(QKeySequence.Delete, view)
+            sc.setContext(Qt.WidgetWithChildrenShortcut)
+            sc.activated.connect(self.archive_selected)
 
         # Library-level undo (Archive / Restore), separate from each
         # recipe tab's own stack.
@@ -125,7 +127,7 @@ class RecipesTab(QWidget):
                      'sort': self.sort_combo.currentData() or _DEFAULT_SORT},
             self._apply_view_layout)
 
-        self.gallery = RecipeGallery(self.source_model, compare_tray=self._compare_tray)
+        self.gallery = RecipeGallery(self.source_model)
         self.gallery.recipeClicked.connect(self._on_gallery_clicked)
         self.gallery.recipeActivated.connect(self._open_id)
         self.gallery.contextMenuRequested.connect(self._show_context_menu)
@@ -343,6 +345,11 @@ class RecipesTab(QWidget):
     def toggle_archived(self, recipe_id):
         self.set_archived(recipe_id, not self.is_archived(recipe_id))
 
+    def archive_selected(self):
+        '''Delete key: archive the selected recipe (already archived: nothing).'''
+        if self._selected_id is not None:
+            self.set_archived(self._selected_id, True)
+
     def _on_status_changed(self, _index):
         self.source_model.refresh()
         # An open tab shows the status too.
@@ -516,7 +523,7 @@ class RecipesTab(QWidget):
 
     def _on_gallery_clicked(self, recipe_id):
         self._select_id(recipe_id)
-        # Give the Library focus so Enter / Space act on the selection.
+        # Give the Library focus so Enter acts on the selection.
         self.gallery.scroll.setFocus()
 
     def _open_id(self, recipe_id):
@@ -545,18 +552,9 @@ class RecipesTab(QWidget):
                 continue
             if label == ARCHIVE_ACTION:
                 archived = self.is_archived(recipe_id)
-                action = menu.addAction('Restore to menu' if archived else 'Archive')
+                action = menu.addAction('Restore to menu' if archived else 'Archive	Del')
                 action.triggered.connect(lambda _c=False, rid=recipe_id: self.toggle_archived(rid))
                 continue
             action = menu.addAction(label)
             action.triggered.connect(lambda _checked=False, r=src_row, h=handler: h(r))
         menu.exec(global_pos)
-
-    def _toggle_tray_for_current(self):
-        '''Space: on a recipe tab it toggles that recipe; on the Library
-        the selected one.'''
-        if self._compare_tray is None:
-            return
-        rid = self.selected_recipe_id()
-        if rid is not None:
-            self._compare_tray.toggle(rid)

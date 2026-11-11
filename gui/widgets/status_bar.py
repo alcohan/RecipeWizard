@@ -2,7 +2,7 @@
 
 Replaces Qt's default status bar with a fixed-content strip at the
 bottom of the main window: library counts, latest supplier-price
-date, last backup, and a compare-tray link on the right.
+date, last backup, and an update link on the right when one is out.
 
 Each section is a QLabel so the main window can bump its text without
 rebuilding anything. refresh() recomputes all three from the DB.
@@ -17,10 +17,8 @@ from utilities.backup import list_backups
 
 class RecipeWizardStatusBar(QFrame):
     '''Thin band pinned at the bottom of the main window. Content is
-    read-only; the right-side "Compare tray" entry is a signal-emitting
-    link so the main window can route the click to its place switcher.'''
+    read-only except the update link, which emits updateClicked.'''
 
-    compareTrayClicked = Signal()
     updateClicked = Signal()
 
     def __init__(self, parent=None):
@@ -51,21 +49,6 @@ class RecipeWizardStatusBar(QFrame):
         self._unsaved_label = QLabel('')
         self._unsaved_label.setStyleSheet('color: #8a4a00; font-weight: 600;')
         self._unsaved_label.hide()
-        # Tray chip: always visible so the collapsed tray has a home.
-        # Click (or Ctrl+Shift+C) flips collapsed ↔ docked.
-        self._tray_count = 0
-        self._tray_docked = False
-        self._tray_label = _TrayChip()
-        self._tray_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
-        self._tray_label.setProperty('role', 'link')
-        self._tray_label.setCursor(Qt.PointingHandCursor)
-        self._tray_label.setToolTip('Ctrl+Shift+C')
-        self._tray_label.mousePressEvent = self._on_tray_click
-        # Fixed width (see _TrayChip), centred text: the count and the
-        # ▴/▾ change, but the chip never shifts, so collapsing is a click
-        # in the same spot that opened the tray.
-        self._tray_label.setAlignment(Qt.AlignCenter)
-        self._update_tray_chip()
         # Update chip: hidden until a check finds a newer release.
         self._update_label = QLabel('')
         self._update_label.setProperty('role', 'link')
@@ -82,7 +65,6 @@ class RecipeWizardStatusBar(QFrame):
         layout.addWidget(self._unsaved_label)
         layout.addStretch()
         layout.addWidget(self._update_label)
-        layout.addWidget(self._tray_label)
 
     def refresh(self):
         '''Rebuild all three left-side sections. Called by the main
@@ -111,17 +93,6 @@ class RecipeWizardStatusBar(QFrame):
         last_backup = _last_backup_label()
         self._backup_label.setText(last_backup)
 
-    def set_compare_tray_count(self, n):
-        '''Called by the compare-tray service when membership changes.'''
-        self._tray_count = max(0, n)
-        self._update_tray_chip()
-
-    def set_compare_tray_docked(self, docked):
-        '''▾ when the docked strip is showing (click collapses it),
-        ▴ when collapsed (click docks it).'''
-        self._tray_docked = bool(docked)
-        self._update_tray_chip()
-
     def set_unsaved_count(self, n):
         '''Unsaved edits in the current recipe tab; zero hides it.'''
         if n:
@@ -136,31 +107,6 @@ class RecipeWizardStatusBar(QFrame):
         if release is not None:
             self._update_label.setText(f'Update available · {release.tag}')
         self._update_label.setVisible(release is not None)
-
-    def _update_tray_chip(self):
-        arrow = '▾' if self._tray_docked else '▴'
-        self._tray_label.setText(f'Compare tray · {self._tray_count} {arrow}')
-
-    def _on_tray_click(self, _event):
-        self.compareTrayClicked.emit()
-
-
-class _TrayChip(QLabel):
-    '''Status-bar chip whose width is always that of its widest text,
-    measured at layout time with the font and padding it actually has
-    (measuring at construction ran before the stylesheet applied).'''
-
-    _WIDEST = 'Compare tray · 999 ▾'
-    _PADDING = 2 * 10 + 8   # stylesheet's left+right padding, plus slack
-
-    def sizeHint(self):
-        hint = super().sizeHint()
-        hint.setWidth(self.fontMetrics().horizontalAdvance(self._WIDEST) + self._PADDING)
-        return hint
-
-    def minimumSizeHint(self):
-        return self.sizeHint()
-
 
 def _latest_price_date():
     '''Return a human-readable date string ("Oct 14") for the most

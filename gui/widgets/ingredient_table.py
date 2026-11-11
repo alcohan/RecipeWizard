@@ -1,8 +1,9 @@
 '''Delegates for the Ingredients table, per the Framework canvas.
 
-- NameDelegate: a 32 px avatar (category-tinted tile with the initial),
-  the name in semibold, and a dot + category underneath. Avatars are
-  painted, not photos — the table never decodes an image.
+- NameDelegate: a 32 px avatar (category-tinted tile with the initial)
+  and the name in semibold ("Archived" underneath when it is). Avatars
+  are painted, not photos — the table never decodes an image.
+- CategoryDelegate: a dot in the category's color and its name.
 - TwoLineDelegate: main text with a muted second line (Unit · tool).
 - ChangeDelegate: the 90-day change — an amber "▲ +8.2%" pill at 5% or
   more, a red "No price" pill when there's no price, muted text
@@ -90,21 +91,37 @@ class NameDelegate(QStyledItemDelegate):
         name = str(row.get('Name') or '')
         painter.drawText(av, Qt.AlignCenter, name[:1].upper())
 
-        # Name + category line.
+        # Name, with "Archived" underneath when it is.
         x = int(av.right()) + 10
         w = rect.right() - x - 8
-        top = QRectF(x, rect.y() + 4, w, rect.height() / 2 - 2)
-        painter.drawText(top, Qt.AlignLeft | Qt.AlignBottom,
-                         elide(painter.font(), name, w))
-        small = _small(option.font)
-        painter.setFont(small)
-        cy = rect.y() + rect.height() * 0.72
+        sub = str(index.data(SubTextRole) or '')
+        if sub:
+            painter.drawText(QRectF(x, rect.y() + 4, w, rect.height() / 2 - 2), Qt.AlignLeft | Qt.AlignBottom,
+                             elide(painter.font(), name, w))
+            painter.setFont(_small(option.font))
+            painter.setPen(QColor(_MUTED))
+            painter.drawText(QRectF(x, rect.y() + rect.height() / 2, w, rect.height() / 2 - 4),
+                             Qt.AlignLeft | Qt.AlignTop, sub)
+        else:
+            painter.drawText(QRectF(x, rect.y(), w, rect.height()), Qt.AlignLeft | Qt.AlignVCenter,
+                             elide(painter.font(), name, w))
+        painter.restore()
+
+
+class CategoryDelegate(QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        _background(painter, option, index)
+        rect = option.rect.adjusted(8, 0, -8, 0)
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(color or '#a7ad9c'))
-        painter.drawEllipse(QRectF(x, cy - 3.5, 7, 7))
-        painter.setPen(QColor(_MUTED))
-        painter.drawText(QRectF(x + 12, rect.y() + rect.height() / 2, w - 12, rect.height() / 2 - 4),
-                         Qt.AlignLeft | Qt.AlignTop, str(index.data(SubTextRole) or ''))
+        painter.setBrush(QColor(index.data(TagColorRole) or '#a7ad9c'))
+        painter.drawEllipse(QRectF(rect.x(), rect.center().y() - 3.5, 7, 7))
+        painter.setFont(option.font)
+        painter.setPen(QColor(_KALE))
+        text = str(index.data(Qt.DisplayRole) or '')
+        painter.drawText(QRectF(rect.x() + 13, rect.y(), rect.width() - 13, rect.height()),
+                         Qt.AlignLeft | Qt.AlignVCenter, elide(option.font, text, rect.width() - 13))
         painter.restore()
 
 
