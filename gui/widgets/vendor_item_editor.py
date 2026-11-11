@@ -101,7 +101,8 @@ class VendorItemEditor(QWidget):
         self.ingredient.clear()
         self.ingredient.addItem('', None)
         for ing in ingredients:
-            self.ingredient.addItem(ing['Name'], ing['Id'])
+            if not ing.get('Archived'):
+                self.ingredient.addItem(ing['Name'], ing['Id'])
         self._loading = False
 
     def set_item(self, item, case_price=None):
@@ -109,7 +110,15 @@ class VendorItemEditor(QWidget):
         cost on average (for the per-portion figure).'''
         self._loading = True
         self._case_price = case_price
-        idx = self.ingredient.findData(item.get('ingredient_id')) if item.get('ingredient_id') else 0
+        ing_id = item.get('ingredient_id')
+        for i in reversed(range(self.ingredient.count())):   # the last item's archived pick
+            data = self.ingredient.itemData(i)
+            if data is not None and data != ing_id and (self._ingredients.get(data) or {}).get('Archived'):
+                self.ingredient.removeItem(i)
+        if ing_id and self.ingredient.findData(ing_id) < 0 and ing_id in self._ingredients:
+            # Mapped to an archived ingredient: keep it, so saving doesn't unmap it.
+            self.ingredient.addItem(f"{self._ingredients[ing_id]['Name']} · archived", ing_id)
+        idx = self.ingredient.findData(ing_id) if ing_id else 0
         self.ingredient.setCurrentIndex(max(idx, 0))
         qty = item.get('case_qty')
         unit = item.get('case_unit')

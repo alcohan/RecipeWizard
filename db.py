@@ -141,6 +141,13 @@ def get_ingredient_usage(ingredient_id):
     return query(sql, (ingredient_id,))['data']
 
 
+def set_ingredient_status(ingredient_id, status):
+    '''Archive ('archived') or restore ('active') an ingredient. Recipes
+    using it keep it.'''
+    assert status in ('active', 'archived'), status
+    query('UPDATE Ingredients SET status = ? WHERE Id = ?;', (status, ingredient_id))
+
+
 def get_ingredient_prices(ingredient_id):
     '''Full price history, newest first, with supplier names.'''
     sql = '''
@@ -443,7 +450,8 @@ def library_health(stale_days=STALE_PRICE_DAYS):
         older than `stale_days`, in a category that needs a price.
         Oldest first. [{Id, Name, Category, last_price, checked,
         supplier, unit_price, Unit}]
-      - duplicates: names two or more ingredients share. [name]
+      - duplicates: names two or more ingredients share (archiving
+        one of them settles it). [name]
 
     `issues` is what the Configure badge counts: each nutrition gap and
     duplicate, and stale prices once.'''
@@ -469,7 +477,8 @@ def library_health(stale_days=STALE_PRICE_DAYS):
         (f'-{int(stale_days)} day',))['data']
     dup_rows = query(
         'SELECT lower(Name) AS k, COUNT(*) AS n, MIN(Name) AS Name'
-        ' FROM Ingredients GROUP BY lower(Name) HAVING n > 1'
+        " FROM Ingredients WHERE COALESCE(status, 'active') <> 'archived'"
+        ' GROUP BY lower(Name) HAVING n > 1'
         ' ORDER BY k')['data']
     report = {
         'nutrition': [r for r in nutrition if not r['confirmed']],
@@ -629,6 +638,8 @@ def create_recipe_with(name, unit, outputqty, menu_price=None, format_tag_id=Non
                                      SortOrder, from_template_tag_id, portion_share)
             SELECT ?, ChildRecipe, ChildIngredient, Quantity, SortOrder, from_template_tag_id, portion_share
             FROM Connections WHERE ParentRecipe = ?;''', (new_id, copy_from))
+        query('INSERT INTO recipe_print_cards (recipe_id, kind, child_id, shown)'
+              ' SELECT ?, kind, child_id, shown FROM recipe_print_cards WHERE recipe_id = ?;', (new_id, copy_from))
         old_tag_id = (get_recipe_tag(copy_from) or {}).get('id')
     if old_tag_id or format_tag_id:
         transition_recipe_format(new_id, old_tag_id, format_tag_id)
@@ -1824,15 +1835,15 @@ def delete_saved_comparison(comparison_id):
 
 def duplicate_recipe(recipe_id):
     '''Copy a recipe — its yield, menu price, components (in order,
-    keeping template provenance) and tags — as "<name> (copy)". The
-    copy starts active, even from an archived recipe. Returns the new
-    id.'''
+    keeping template provenance), tags and print settings — as
+    "<name> (copy)". The copy starts active, even from an archived
+    recipe. Returns the new id.'''
     connection = sqlite3.connect(config.DATABASE)
     try:
         cur = connection.cursor()
         cur.execute('''
-            INSERT INTO Recipes (Name, Unit, OutputQty, menu_price, ImageFilename, updated_at)
-            SELECT Name || ' (copy)', Unit, OutputQty, menu_price, ImageFilename, datetime('now')
+            INSERT INTO Recipes (Name, Unit, OutputQty, menu_price, ImageFilename, print_title, updated_at)
+            SELECT Name || ' (copy)', Unit, OutputQty, menu_price, ImageFilename, print_title, datetime('now')
             FROM Recipes WHERE Id = ?;''', (recipe_id,))
         new_id = cur.lastrowid
         cur.execute('''
@@ -1843,6 +1854,9 @@ def duplicate_recipe(recipe_id):
         cur.execute('''
             INSERT INTO recipe_tags_mapping (tag_id, recipe_id)
             SELECT tag_id, ? FROM recipe_tags_mapping WHERE recipe_id = ?;''', (new_id, recipe_id))
+        cur.execute('INSERT INTO recipe_print_cards (recipe_id, kind, child_id, shown)'
+                    ' SELECT ?, kind, child_id, shown FROM recipe_print_cards WHERE recipe_id = ?;',
+                    (new_id, recipe_id))
         connection.commit()
         return new_id
     finally:
@@ -2154,9 +2168,13 @@ def recipe_print_data(recipe_id):
      diets: [names it fits], allergens, facility (facility-only warnings),
      free_of: [names, neither contained nor a facility warning], wedge: [components],
      rows: [{name, type, amount, tool: ToolUse | None, allergens, facility, from_template, statement}],
-     dressings: [{name, weight, nutrition} per 1 fl oz of each Dressing ingredient],
+     nutrition_title: the main panel's subtitle or None,
+     cards: [{key, name, serving, weight, nutrition} for each component
+             with a panel of its own (utilities.recipe_print)],
+     card_options: [{key, name, shown, default}] for the Print view,
      tools_used: [Tool]}. Rows are in the user's order; packaging is
-    left out except a wrap's tortilla (utilities.recipe_print.prints_row).'''
+    left out except a wrap's tortilla (utilities.recipe_print.prints_row).
+    A card key is (kind, child id).'''
     from utilities import recipe_print
     info = query('SELECT * FROM RecipesWithNutrition WHERE Id = ?;', (recipe_id,), one=True)
     if info is None:
@@ -2173,13 +2191,21 @@ def recipe_print_data(recipe_id):
         SELECT COALESCE(r.Name, i.Name) AS Name
              , CASE WHEN c.ChildRecipe IS NOT NULL THEN 'recipe' ELSE 'ingredient' END AS Type
              , c.Quantity
+             , COALESCE(c.ChildIngredient, c.ChildRecipe) AS ChildId
              , COALESCE(i.Unit, r.Unit) AS Unit
              , i.Portion AS Portion
              , i.Calories AS UnitCalories
              , i.statement AS Statement
-             , i.Weight AS UnitWeight
-             , i.Calories, i.TTLFatGrams, i.SatFatGrams, i.CholesterolMilligrams, i.SodiumMilligrams
-             , i.CarbGrams, i.FiberGrams, i.SugarGrams, i.ProteinGrams
+             , COALESCE(i.Weight, rn.Weight) AS UnitWeight
+             , COALESCE(i.Calories, rn.Calories) AS Calories
+             , COALESCE(i.TTLFatGrams, rn.TTLFatGrams) AS TTLFatGrams
+             , COALESCE(i.SatFatGrams, rn.SatFatGrams) AS SatFatGrams
+             , COALESCE(i.CholesterolMilligrams, rn.CholesterolMilligrams) AS CholesterolMilligrams
+             , COALESCE(i.SodiumMilligrams, rn.SodiumMilligrams) AS SodiumMilligrams
+             , COALESCE(i.CarbGrams, rn.CarbGrams) AS CarbGrams
+             , COALESCE(i.FiberGrams, rn.FiberGrams) AS FiberGrams
+             , COALESCE(i.SugarGrams, rn.SugarGrams) AS SugarGrams
+             , COALESCE(i.ProteinGrams, rn.ProteinGrams) AS ProteinGrams
              , c.from_template_tag_id AS FromTemplateTagId
              , (SELECT t.name FROM tags t JOIN ingredient_tags_mapping itm ON itm.tag_id = t.id
                  WHERE itm.ingredient_id = i.Id AND t.kind = 'ingredient' LIMIT 1) AS TagName
@@ -2203,21 +2229,28 @@ def recipe_print_data(recipe_id):
                END AS FacilityAllergens
         FROM Connections c
         LEFT JOIN Recipes r ON r.Id = c.ChildRecipe
+        LEFT JOIN RecipesWithNutrition rn ON rn.Id = c.ChildRecipe
         LEFT JOIN Ingredients i ON i.Id = c.ChildIngredient
         WHERE c.ParentRecipe = ?
         ORDER BY c.SortOrder, c.rowid;''', (recipe_id,))['data']
+    settings = recipe_print_settings(recipe_id)
     tools = portion_tool_objects()
     tool_order = {t.id: n for n, t in enumerate(tools)}
     fmt_name = fmt['name'] if fmt else None
-    rows, used, dressings = [], {}, []
+    rows, used, cards, card_options = [], {}, [], []
     for c in components:
         if not recipe_print.prints_row(c, fmt_name):
             continue
-        if c['Type'] == 'ingredient' and (c['TagName'] or '') == recipe_print.DRESSING_CATEGORY:
-            label = recipe_print.per_floz_label(c['Name'], c['Unit'], c['UnitWeight'],
-                                                {k: c.get(k) for k in _PRINT_NUTRIENTS})
-            if label:
-                dressings.append(label)
+        key = (c['Type'], c['ChildId'])
+        if key not in {o['key'] for o in card_options}:
+            default = recipe_print.card_by_default(c)
+            shown = settings['cards'].get(key, default)
+            label = dict(recipe_print.card_label(c['Name'], c['Unit'], c['UnitWeight'],
+                                                 {k: c.get(k) for k in _PRINT_NUTRIENTS}), key=key)
+            card_options.append({'key': key, 'name': c['Name'], 'serving': label['serving'],
+                                 'shown': shown, 'default': default})
+            if shown:
+                cards.append(label)
         amt = recipe_print.amount(c['Quantity'], c['Unit'])
         use = (recipe_print.resolve_tool(c['Quantity'], c['Unit'], c['Portion'], tools)
                if c['Type'] == 'ingredient' else None)
@@ -2253,10 +2286,41 @@ def recipe_print_data(recipe_id):
         'free_of': [a for a in order if a not in present and a not in facility],
         'wedge': get_recipe_wedge_components(recipe_id),
         'photo': get_recipe_image(recipe_id),
-        'dressings': dressings,
+        'nutrition_title': recipe_print.nutrition_title(info['Name'], bool(cards), settings['title']),
+        'title_override': settings['title'],
+        'cards': cards,
+        'card_options': card_options,
         'rows': rows,
         'tools_used': sorted(used.values(), key=lambda t: tool_order.get(t.id, 0)),
     }
+
+
+def recipe_print_settings(recipe_id):
+    '''{title: the main panel title override or None,
+     cards: {(kind, child id): shown}} for the components the recipe
+    has said something about.'''
+    row = query('SELECT print_title FROM Recipes WHERE Id = ?;', (recipe_id,), one=True)
+    cards = query('SELECT kind, child_id, shown FROM recipe_print_cards WHERE recipe_id = ?;',
+                  (recipe_id,))['data']
+    return {'title': (row or {}).get('print_title') or None,
+            'cards': {(c['kind'], c['child_id']): bool(c['shown']) for c in cards}}
+
+
+def set_recipe_print_title(recipe_id, title):
+    '''None or blank: back to the automatic title.'''
+    query('UPDATE Recipes SET print_title = ? WHERE Id = ?;', ((title or '').strip() or None, recipe_id))
+
+
+def set_recipe_print_card(recipe_id, key, shown):
+    '''Whether component `key` (kind, child id) gets its own panel;
+    None goes back to the default.'''
+    kind, child_id = key
+    if shown is None:
+        query('DELETE FROM recipe_print_cards WHERE recipe_id = ? AND kind = ? AND child_id = ?;',
+              (recipe_id, kind, child_id))
+    else:
+        query('INSERT OR REPLACE INTO recipe_print_cards (recipe_id, kind, child_id, shown)'
+              ' VALUES (?, ?, ?, ?);', (recipe_id, kind, child_id, 1 if shown else 0))
 
 
 # --- print branding (Configure › Print & branding) -------------------------

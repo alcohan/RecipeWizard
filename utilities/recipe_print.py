@@ -207,25 +207,46 @@ def size_problem(unit_text, tool):
             f'{fraction_text(unit.floz)} fl oz')
 
 
-# --- dressing labels --------------------------------------------------------
+# --- nutrition cards ---------------------------------------------------------
 
-# Ingredients of this category get their own Nutrition Facts panel for
-# a 1 fl oz portion, and the recipe's main panel is titled "(dressed)".
-DRESSING_CATEGORY = 'Dressing'
+# A component can get a Nutrition Facts panel of its own beside the
+# recipe's (a dressing served on the side). By default, ingredients in
+# these categories do; the recipe's Print view turns any component on
+# or off. Then the recipe's main panel is titled "<name> (dressed)",
+# unless the recipe gives its own title.
+CARD_CATEGORIES = ('Dressing',)
 
 
-def per_floz_label(name, unit_text, unit_weight, unit_nutrition):
-    '''{name, weight, nutrition} for 1 fl oz of an ingredient whose
-    nutrition is per `unit_text`, or None when the unit isn't a volume.'''
+def card_by_default(row):
+    '''Whether a component row gets a card when the recipe hasn't said.'''
+    return row.get('Type') == 'ingredient' and (row.get('TagName') or '') in CARD_CATEGORIES
+
+
+def card_label(name, unit_text, unit_weight, unit_nutrition):
+    '''{name, serving, weight, nutrition} for one card: per 1 fl oz when
+    the unit is a volume, otherwise per one unit ("½ each").'''
     unit = portions.parse_unit(unit_text)
-    if unit is None or not unit.is_volume or not unit.floz:
-        return None
-    scale = 1.0 / unit.floz
+    if unit is not None and unit.is_volume and unit.floz:
+        scale, serving = 1.0 / unit.floz, '1 fl oz'
+    else:
+        scale, serving = 1.0, amount(1, unit_text).text or '1 serving'
+    weight = float(unit_weight or 0) * scale
+    if weight:
+        serving += f' ({weight:.0f} g)'
     return {
         'name': name,
-        'weight': float(unit_weight or 0) * scale,
+        'serving': serving,
+        'weight': weight,
         'nutrition': {k: float(v or 0) * scale for k, v in unit_nutrition.items()},
     }
+
+
+def nutrition_title(recipe_name, has_cards, override=None):
+    '''The subtitle of the recipe's main panel, or None for none.'''
+    override = (override or '').strip()
+    if override:
+        return override
+    return f'{recipe_name} (dressed)' if has_cards else None
 
 
 # --- which rows print -----------------------------------------------------

@@ -750,6 +750,15 @@ class _Merger:
                 if tag_id in tags:
                     self.con.execute('INSERT INTO main.recipe_tags_mapping (tag_id, recipe_id) VALUES (?, ?);',
                                      (tags[tag_id], new_id))
+            if 'recipe_print_cards' in self.src_had['tables']:
+                for kind, child_id, shown in self.con.execute(
+                        'SELECT kind, child_id, shown FROM src.recipe_print_cards WHERE recipe_id = ?;',
+                        (src_id,)).fetchall():
+                    child = (ingredients if kind == 'ingredient' else m).get(child_id)
+                    if child is not None:
+                        self.con.execute('INSERT OR REPLACE INTO main.recipe_print_cards'
+                                         ' (recipe_id, kind, child_id, shown) VALUES (?, ?, ?, ?);',
+                                         (new_id, kind, child, shown))
             # Adding components bumped updated_at; put back the
             # backup's (the trigger leaves an explicit change alone).
             if row.get('updated_at'):

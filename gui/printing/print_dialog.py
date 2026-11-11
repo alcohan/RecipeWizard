@@ -2,17 +2,19 @@
 
 print_recipes(parent, recipe_ids) shows the native print dialog (on
 Windows, the usual one: printer, copies, preferences) and prints every
-recipe's pages to the chosen printer. To get a PDF, pick "Microsoft
-Print to PDF". Pages are always Letter-or-printer-size portrait; the
+recipe's pages to the chosen printer. export_pdf(parent, recipe_ids)
+saves them as a PDF. Pages are always Letter-or-printer-size portrait; the
 layout doesn't have a landscape form.
 
 Data is read when printing starts, so it's whatever is in the library
 right then (recipe tab edits are saved to the library as they're made).
 '''
-from PySide6.QtCore import Qt
+import os
+
+from PySide6.QtCore import QSettings, QStandardPaths, Qt
 from PySide6.QtGui import QPageSize
 from PySide6.QtPrintSupport import QAbstractPrintDialog, QPrintDialog, QPrinter
-from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QMessageBox
 
 import db
 from utilities import recipe_print
@@ -20,12 +22,12 @@ from gui.printing.recipe_page import page_layout_for, paint_recipes
 from gui.services import print_branding
 
 
-def recipe_pages_data(recipe_ids):
+def recipe_pages_data(recipe_ids, portions=True):
     datas = []
     for rid in recipe_ids:
         data = db.recipe_print_data(rid)
         if data is not None:
-            datas.append(data)
+            datas.append(data if portions else recipe_print.without_portions(data))
     return datas
 
 
@@ -42,9 +44,7 @@ def save_pdf(path, datas, branding=None):
 def print_recipes(parent, recipe_ids, portions=True):
     '''Ask where to print, then print. Returns True if pages were sent.
     portions=False prints the page without portion tools or the scoop key.'''
-    datas = recipe_pages_data(recipe_ids)
-    if not portions:
-        datas = [recipe_print.without_portions(d) for d in datas]
+    datas = recipe_pages_data(recipe_ids, portions)
     if not datas:
         QMessageBox.information(parent, 'Print', 'There’s no recipe to print.')
         return False
@@ -74,3 +74,33 @@ def print_recipes(parent, recipe_ids, portions=True):
         return False
     QApplication.restoreOverrideCursor()
     return True
+
+
+def export_pdf(parent, recipe_ids, portions=True):
+    '''Ask where to save, then write the pages as a PDF. Returns the
+    path, or None.'''
+    datas = recipe_pages_data(recipe_ids, portions)
+    if not datas:
+        QMessageBox.information(parent, 'Export PDF', 'There’s no recipe to export.')
+        return None
+    settings = QSettings()
+    folder = settings.value('print/pdfFolder') or QStandardPaths.writableLocation(
+        QStandardPaths.DocumentsLocation) or os.path.expanduser('~')
+    name = datas[0]['name'] if len(datas) == 1 else 'Recipes'
+    name = ''.join('-' if ch in '<>:"/\\|?*' else ch for ch in name).strip(' .') or 'Recipe'
+    path, _ = QFileDialog.getSaveFileName(parent, 'Export PDF', os.path.join(folder, name + '.pdf'),
+                                          'PDF (*.pdf)')
+    if not path:
+        return None
+    if not path.lower().endswith('.pdf'):
+        path += '.pdf'
+    settings.setValue('print/pdfFolder', os.path.dirname(path))
+    QApplication.setOverrideCursor(Qt.WaitCursor)
+    try:
+        save_pdf(path, datas)
+    except Exception as exc:
+        QApplication.restoreOverrideCursor()
+        QMessageBox.warning(parent, 'Export PDF', f'Couldn’t save the PDF:\n{exc}')
+        return None
+    QApplication.restoreOverrideCursor()
+    return path

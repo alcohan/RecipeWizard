@@ -10,6 +10,7 @@ doesn't query the DB, so test setup and future "add another kind of
 thing to search" stay simple.
 '''
 from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QVBoxLayout,
@@ -20,13 +21,17 @@ from utilities import fuzzy
 # How many items per section. Keep each section short so the whole
 # list is one eye-span.
 _PER_SECTION_LIMIT = 6
+_ARCHIVED_FG = '#a7ad9c'
 
 
 class CommandPalette(QDialog):
     '''Caller passes three iterables:
-      recipes:    [(id, name), ...]
-      ingredients: [(id, name), ...]
+      recipes:    [(id, name), ...] or [(id, name, archived), ...]
+      ingredients: [(id, name), ...] or [(id, name, archived), ...]
       commands:   [(key, label), ...]
+
+    Archived recipes and ingredients are still found (to open or
+    restore them), but grayed and listed after the rest.
 
     Fires one of three signals on activation:
       recipeChosen(int)      # recipe id
@@ -149,9 +154,11 @@ class CommandPalette(QDialog):
             header.setFlags(Qt.NoItemFlags)
             header.setData(Qt.ForegroundRole, Qt.gray)
             self.results.addItem(header)
-            for item_id_or_key, label in hits[:_PER_SECTION_LIMIT]:
-                row = QListWidgetItem(label)
+            for item_id_or_key, label, archived in hits[:_PER_SECTION_LIMIT]:
+                row = QListWidgetItem(label + ('  · archived' if archived else ''))
                 row.setData(Qt.UserRole, (kind, item_id_or_key))
+                if archived:
+                    row.setData(Qt.ForegroundRole, QColor(_ARCHIVED_FG))
                 self.results.addItem(row)
                 if first_selectable is None:
                     first_selectable = row
@@ -162,17 +169,19 @@ class CommandPalette(QDialog):
     def _match(items, needle):
         '''Rank by (match-position, length-of-label) so prefix matches
         rank before mid-string matches and shorter labels win ties.
-        An empty needle returns everything.'''
+        An empty needle returns everything. Archived items come after
+        the rest. Returns (id or key, label, archived) tuples.'''
+        items = [(t[0], t[1], bool(t[2]) if len(t) > 2 else False) for t in items]
         if not needle:
-            return list(items)
+            return sorted(items, key=lambda t: t[2])
         scored = []
-        for item_id_or_key, label in items:
+        for item_id_or_key, label, archived in items:
             s = fuzzy.score(needle, label or '')
             if s is None:
                 continue
-            scored.append((s, item_id_or_key, label))
-        scored.sort(key=lambda t: t[0])
-        return [(t[1], t[2]) for t in scored]
+            scored.append((archived, s, item_id_or_key, label))
+        scored.sort(key=lambda t: (t[0], t[1]))
+        return [(t[2], t[3], t[0]) for t in scored]
 
     # --- selection / activation ----------------------------------------
 

@@ -4,11 +4,13 @@ Reflows on resize. Cards are cheap to build: each thumbnail shows its
 initial tile at once and loads its photo in the background from the
 thumbnail cache (gui.thumbs), so a rebuild never decodes a full-size
 photo on the UI thread. Context menu actions match the table view so
-right-click "Edit / Delete" works the same way in either view.
+right-click "Edit / Delete" works the same way in either view. An
+action's label may be a function of the row ("Archive" / "Restore").
+Archived ingredients' cards are faded.
 '''
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QMenu, QScrollArea, QVBoxLayout, QWidget,
+    QFrame, QGraphicsOpacityEffect, QGridLayout, QMenu, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from gui.widgets.ingredient_card import IngredientCard, CARD_WIDTH
@@ -154,7 +156,8 @@ class IngredientGallery(QWidget):
         self._cards = []
         for i in range(self._model.rowCount()):
             row = self._model.row_dict(i)
-            look = (row.get('Name'), row.get('TagName'), row.get('TagColor'), row.get('ImageFilename'))
+            look = (row.get('Name'), row.get('TagName'), row.get('TagColor'), row.get('ImageFilename'),
+                    row.get('Archived'))
             card = old.pop(row['Id'], None)
             if card is None or card._look != look:
                 if card is not None:
@@ -167,6 +170,11 @@ class IngredientGallery(QWidget):
                     image_filename=row.get('ImageFilename'),
                 )
                 card._look = look
+                if row.get('Archived'):
+                    effect = QGraphicsOpacityEffect(card)
+                    effect.setOpacity(0.45)
+                    card.setGraphicsEffect(effect)
+                    card.setToolTip(f"{row.get('Name')} · archived")
                 # Handlers read card._row at click time, so a kept card
                 # follows its ingredient to a new row.
                 card.clicked.connect(lambda _id, c=card: self.ingredientClicked.emit(c._row))
@@ -189,7 +197,8 @@ class IngredientGallery(QWidget):
 
     def _show_context_menu(self, card, point):
         menu = QMenu(card)
+        row = self._model.row_dict(card._row)
         for label, handler in self._context_actions:
-            action = menu.addAction(label)
+            action = menu.addAction(label(row) if callable(label) else label)
             action.triggered.connect(lambda _checked=False, h=handler, r=card._row: h(r))
         menu.exec(card.mapToGlobal(point))

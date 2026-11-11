@@ -543,16 +543,14 @@ class RecipePagePainter:
     def _side_items(self):
         '''The side column's panels in order, as (method, kwargs).'''
         d = self.data
-        dressings = d.get('dressings') or []
         serving = f"1 {d['unit']}".strip()
         if d['weight']:
             serving += f" ({float(d['weight']):.0f} g)"
         items = [(self._nutrition, {'n': d['nutrition'], 'serving': serving,
-                                    'subtitle': f"{d['name']} (dressed)" if dressings else None})]
-        for dressing in dressings:
-            serving = '1 fl oz' + (f" ({dressing['weight']:.0f} g)" if dressing['weight'] else '')
-            items.append((self._nutrition, {'n': dressing['nutrition'], 'serving': serving,
-                                            'subtitle': dressing['name'], 'small': True}))
+                                    'subtitle': d.get('nutrition_title')})]
+        for card in d.get('cards') or []:
+            items.append((self._nutrition, {'n': card['nutrition'], 'serving': card['serving'],
+                                            'subtitle': card['name'], 'small': True}))
         if d['tools_used']:
             items.append((self._scoop_key, {}))
         return items

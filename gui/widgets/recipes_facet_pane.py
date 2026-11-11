@@ -44,7 +44,6 @@ from gui.models.recipes_facet_proxy import matches
 from gui.models.recipes_model import SUB_RECIPES
 from gui.widgets.elided_label import ElidedLabel
 from gui.widgets.facet_pane import KALE, MUTED, ROMAINE, WARN, FacetPane, FacetSection
-from gui.widgets.toolbar_controls import ToggleSwitch
 from utilities import diets
 
 
@@ -84,24 +83,6 @@ class RecipesFacetPane(FacetPane):
         if group == 'format':
             return key != SUB_RECIPES
         return super()._default_checked(group, key)
-
-    def _build_archived(self):
-        row = QWidget()
-        hl = QHBoxLayout(row)
-        hl.setContentsMargins(0, 0, 0, 0)
-        hl.setSpacing(6)
-        self.include_archived = ToggleSwitch()
-        self.include_archived.toggled.connect(self._on_archived_toggled)
-        label = ElidedLabel('Include archived')
-        label.setStyleSheet(f'color: {KALE};')
-        # Clicking the words flips the switch too.
-        label.mousePressEvent = lambda _e: self.include_archived.toggle()
-        self.archived_count = QLabel('0')
-        self.archived_count.setStyleSheet(f'color: {MUTED};')
-        hl.addWidget(label, stretch=1)
-        hl.addWidget(self.archived_count)
-        hl.addWidget(self.include_archived)
-        self._layout.insertWidget(0, row)
 
     def _on_archived_toggled(self, _on):
         self._refill()

@@ -51,14 +51,15 @@ from gui.dialogs.recipe_component_add import RecipeComponentAddDialog
 from gui.models.components_model import RecipeComponentsModel
 from gui.undo.recipe_commands import (
     AddComponentCommand, PortionCommand, RemoveComponentCommand, ReorderComponentsCommand,
-    SetComponentQtyCommand, SetRecipeImageCommand, SetRecipeStatusCommand, SetRecipeTagCommand,
-    SetRecipeTagsCommand, UpdateRecipeInfoCommand,
+    SetComponentQtyCommand, SetPrintCardCommand, SetPrintTitleCommand, SetRecipeImageCommand,
+    SetRecipeStatusCommand, SetRecipeTagCommand, SetRecipeTagsCommand, UpdateRecipeInfoCommand,
 )
 from gui.widgets.component_delegates import (
     ChangedRowDelegate, NameDelegate, QuantityDelegate, ShareDelegate,
 )
 from gui.widgets.cost_history_view import CostHistoryView
 from gui.widgets.editor_results import EditorResults
+from gui.widgets.recipe_print_view import RecipePrintView
 from gui.widgets.toolbar_controls import SegmentedSwitch
 from gui.widgets.undo_keys import pass_undo_keys
 from gui.widgets.format_segments import FormatSegments
@@ -383,6 +384,8 @@ class RecipeEditWidget(QWidget):
         print_btn.clicked.connect(lambda: self.print_recipe())
         print_menu = QMenu(print_btn)
         print_menu.addAction('Print without portions…', lambda: self.print_recipe(portions=False))
+        print_menu.addAction('Export PDF…', self._export_pdf)
+        print_menu.addAction('Print settings', lambda: self._set_view('print'))
         print_btn.setMenu(print_menu)
         print_btn.setStyleSheet(_SECONDARY_BTN.replace('QPushButton', 'QToolButton')
                                 + ' QToolButton { padding-right: 22px; }'
@@ -504,8 +507,9 @@ class RecipeEditWidget(QWidget):
         layout.setSpacing(16)
         layout.addLayout(fields)
         layout.addLayout(chips)
-        # Components or Cost over time, one at a time.
-        self.view_switch = SegmentedSwitch([('components', 'Components'), ('cost', 'Cost over time')])
+        # Components, Cost over time or Print, one at a time.
+        self.view_switch = SegmentedSwitch([('components', 'Components'), ('cost', 'Cost over time'),
+                                            ('print', 'Print')])
         self.view_switch.set_current('components')
         self.view_switch.changed.connect(self._set_view)
         switch_row = QHBoxLayout()
@@ -520,15 +524,23 @@ class RecipeEditWidget(QWidget):
         self.cost_view.ingredientRequested.connect(self._edit_ingredient)
         self.cost_view.hide()
         layout.addWidget(self.cost_view)
+        self.print_view = RecipePrintView(self.recipe_id)
+        self.print_view.titleEdited.connect(
+            lambda before, after: self.undo_stack.push(SetPrintTitleCommand(self.recipe_id, before, after)))
+        self.print_view.cardToggled.connect(
+            lambda key, before, after: self.undo_stack.push(
+                SetPrintCardCommand(self.recipe_id, key, before, after)))
+        self.print_view.hide()
+        layout.addWidget(self.print_view)
         layout.addStretch(1)
         return area
 
     def _set_view(self, key):
-        cost = key == 'cost'
         self.view_switch.set_current(key)
-        self.components_card.setVisible(not cost)
-        self.cost_view.setVisible(cost)
-        if cost:
+        self.components_card.setVisible(key == 'components')
+        self.cost_view.setVisible(key == 'cost')
+        self.print_view.setVisible(key == 'print')   # refreshes when shown
+        if key == 'cost':
             self.cost_view.refresh()
 
     def _build_photo_box(self):
@@ -733,6 +745,8 @@ class RecipeEditWidget(QWidget):
         self._recipe_snapshot = self._snapshot(recipe)
         if hasattr(self, 'cost_view') and not self.cost_view.isHidden():
             self.cost_view.refresh()
+        if hasattr(self, 'print_view') and not self.print_view.isHidden():
+            self.print_view.refresh()
 
         self.components_model.refresh()
         try:
@@ -1150,6 +1164,10 @@ class RecipeEditWidget(QWidget):
     def print_recipe(self, portions=True):
         from gui.printing.print_dialog import print_recipes
         print_recipes(self, [self.recipe_id], portions=portions)
+
+    def _export_pdf(self):
+        from gui.printing.print_dialog import export_pdf
+        export_pdf(self, [self.recipe_id])
 
     def _on_nutrition_label(self):
         NutritionLabelDialog(self.recipe_id, parent=self).exec()

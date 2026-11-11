@@ -12,6 +12,10 @@ lose your place).
 Emits `rowActivated(int)` (source row) for Edit, like before, plus
 `newIngredientRequested`, `newPriceRequested(int)` and
 `recipeRequested(int)` for the main window to route.
+
+Archived ingredients are hidden unless the filter pane's Include
+archived is on; then they show faded. Archive / Restore is in the
+inspector and the right-click menu (the main window's context actions).
 '''
 from PySide6.QtCore import QItemSelectionModel, Qt, QSettings, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -20,6 +24,8 @@ from PySide6.QtWidgets import (
     QLineEdit, QMenu, QPushButton, QStackedWidget, QTableView, QVBoxLayout, QWidget,
 )
 
+import db
+from gui.dialogs.archive_confirm import confirm_archive_ingredient
 from gui.models.ingredients_facet_proxy import IngredientsFacetProxy
 from gui.widgets.ingredient_gallery import IngredientGallery
 from gui.widgets.ingredient_inspector import IngredientInspector
@@ -77,6 +83,7 @@ class IngredientsTab(QWidget):
         self.inspector.editRequested.connect(self._edit_id)
         self.inspector.newPriceRequested.connect(self.newPriceRequested.emit)
         self.inspector.recipeRequested.connect(self.recipeRequested.emit)
+        self.inspector.archiveRequested.connect(self.set_archived)
 
         table_card = QFrame()
         table_card.setObjectName('TableCard')
@@ -275,7 +282,11 @@ class IngredientsTab(QWidget):
         sorted_by = 'sorted by category' if self.table.horizontalHeader().sortIndicatorSection() < 0 \
             else 'sorted by ' + self.source_model.HEADERS[
                 self.source_model.COLUMNS[self.table.horizontalHeader().sortIndicatorSection()]].lower()
-        self.count_label.setText(f'{shown} of {total} · {sorted_by}')
+        text = f'{shown} of {total} · {sorted_by}'
+        hidden = 0 if self.proxy.includes_archived() else self.source_model.archived_count()
+        if hidden:
+            text += f' · {hidden} archived hidden'
+        self.count_label.setText(text)
         # Keep the inspector on a visible ingredient.
         if self._selected_id is not None and not self._select_id(self._selected_id):
             self._select_first()
@@ -365,10 +376,33 @@ class IngredientsTab(QWidget):
             return
         src_row = self.proxy.mapToSource(view_index).row()
         menu = QMenu(self.table)
+        row = self.source_model.row_dict(src_row)
         for label, handler in self._context_actions:
-            action = menu.addAction(label)
+            action = menu.addAction(label(row) if callable(label) else label)
             action.triggered.connect(lambda _checked=False, r=src_row, h=handler: h(r))
         menu.exec(self.table.viewport().mapToGlobal(point))
+
+    # --- archiving -----------------------------------------------------
+
+    def is_archived(self, ingredient_id):
+        src_row = self.source_model.row_for_id(ingredient_id)
+        return src_row >= 0 and self.source_model.row_dict(src_row)['Archived']
+
+    def set_archived(self, ingredient_id, archived):
+        '''Archive (asking first when active recipes use it) or restore.
+        Returns True if it changed.'''
+        src_row = self.source_model.row_for_id(ingredient_id)
+        if src_row < 0 or self.is_archived(ingredient_id) == archived:
+            return False
+        name = self.source_model.row_dict(src_row)['Name']
+        if archived and not confirm_archive_ingredient(self, ingredient_id, name):
+            return False
+        db.set_ingredient_status(ingredient_id, 'archived' if archived else 'active')
+        self.source_model.refresh()
+        return True
+
+    def toggle_archived(self, ingredient_id):
+        return self.set_archived(ingredient_id, not self.is_archived(ingredient_id))
 
     def focus_filter(self):
         '''Called by the main window's Ctrl+F shortcut.'''

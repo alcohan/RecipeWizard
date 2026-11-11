@@ -266,6 +266,8 @@ class MainWindow(QMainWindow):
                 ('Edit…', self._on_ingredient_edit),
                 ('New price…', lambda r: self._on_ingredient_new_price(
                     self.ingredients_model.id_at_row(r))),
+                (lambda row: 'Restore' if row.get('Archived') else 'Archive',
+                 lambda r: self.ingredients_tab.toggle_archived(self.ingredients_model.id_at_row(r))),
                 ('Delete', self._on_ingredient_delete),
             ],
         )
@@ -492,8 +494,8 @@ class MainWindow(QMainWindow):
         '''Ctrl+K entry point. Builds a fresh index each time — recipe /
         ingredient lists change often enough that caching would need
         invalidation anyway.'''
-        recipes = [(r['Id'], r['Name']) for r in db.recipe_info()]
-        ingredients = [(i['Id'], i['Name']) for i in db.get_ingredients()]
+        recipes = [(r['Id'], r['Name'], r.get('Status') == 'archived') for r in db.recipe_info()]
+        ingredients = [(i['Id'], i['Name'], i.get('status') == 'archived') for i in db.get_ingredients()]
         commands = [
             ('new-recipe', 'New Recipe'),
             ('new-ingredient-usda', 'New Ingredient (USDA Search)'),

@@ -203,3 +203,38 @@ class SetRecipeTagsCommand(QUndoCommand):
 
     def undo(self):
         db.set_recipe_tags(self.recipe_id, self.before)
+
+
+class SetPrintTitleCommand(QUndoCommand):
+    '''The printed Nutrition Facts title; None or blank is automatic.'''
+
+    def __init__(self, recipe_id, before, after):
+        super().__init__('Edit print title')
+        self.recipe_id = recipe_id
+        self.before = before
+        self.after = after
+
+    def redo(self):
+        db.set_recipe_print_title(self.recipe_id, self.after)
+
+    def undo(self):
+        db.set_recipe_print_title(self.recipe_id, self.before)
+
+
+class SetPrintCardCommand(QUndoCommand):
+    '''Whether a component prints its own Nutrition Facts panel. A
+    state is True, False or None (the default).'''
+
+    def __init__(self, recipe_id, key, before, after):
+        # after None is back to the default, which may be either.
+        super().__init__('Change nutrition cards')
+        self.recipe_id = recipe_id
+        self.key = key
+        self.before = before
+        self.after = after
+
+    def redo(self):
+        db.set_recipe_print_card(self.recipe_id, self.key, self.after)
+
+    def undo(self):
+        db.set_recipe_print_card(self.recipe_id, self.key, self.before)
