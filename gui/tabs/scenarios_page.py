@@ -480,6 +480,12 @@ class ScenariosPage(QWidget):
 
     # --- data ------------------------------------------------------------
 
+    def library_replaced(self):
+        '''After a restore or reset: undo would put back another
+        library's scenarios.'''
+        self.undo_stack.clear()
+        self.refresh()
+
     def showEvent(self, event):
         # Ingredients, formats and recipes may have changed elsewhere.
         self.refresh()
@@ -496,8 +502,9 @@ class ScenariosPage(QWidget):
     def refresh(self, select_id=None):
         select_id = select_id or self.current_id()
         self._scenarios = scenarios.get_scenarios()
-        self._ingredients = [i for i in db.get_ingredients() if (i.get('status') or 'active') != 'archived']
-        self._names = {i['Id']: i['Name'] for i in db.get_ingredients()}
+        self._all_ingredients = db.get_ingredients()
+        self._ingredients = [i for i in self._all_ingredients if (i.get('status') or 'active') != 'archived']
+        self._names = {i['Id']: i['Name'] for i in self._all_ingredients}
         self._formats = db.get_tags(kind='recipe')
         self.exclusions.reload_tags()
         self.list.blockSignals(True)
@@ -750,7 +757,11 @@ class ScenariosPage(QWidget):
                                                         except_tags=except_tags, **v) and None)
 
     def edit_rule(self, rule, scope_name):
-        dlg = RuleDialog(scope_name, self._ingredients, self._suggested(rule['format_tag_id']),
+        # An archived item the rule already uses stays pickable.
+        keep = {rule['from_ingredient'], rule['to_ingredient']}
+        choices = [i for i in self._all_ingredients
+                   if (i.get('status') or 'active') != 'archived' or i['Id'] in keep]
+        dlg = RuleDialog(scope_name, choices, self._suggested(rule['format_tag_id']),
                          rule=rule, parent=self)
         if dlg.exec() != QDialog.Accepted:
             return

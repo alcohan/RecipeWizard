@@ -418,3 +418,65 @@ def test_matrix_view_left_out_spans(lib, menu, qapp):
     row = next(i for i, r in enumerate(view._shown) if r['id'] == menu['wrap'])
     assert view.table.item(row, 3).text() == 'Left out'
     assert view.table.columnSpan(row, 3) == 3
+
+
+# --- the rest of the app ---------------------------------------------------
+
+def test_delete_ingredient_used_only_by_a_scenario_is_blocked(lib, menu):
+    import db
+    sid = _seatac(menu)
+    with pytest.raises(Exception, match='SeaTac scenario'):
+        db.delete_ingredient(menu['air_salad'])
+    assert sc.get_scenarios()[0]['rules']
+    sc.delete_scenario(sid)
+    db.delete_ingredient(menu['air_salad'])          # free again
+
+
+def test_scenario_items_count_as_in_use(lib, menu):
+    import db
+    _seatac(menu)
+    rows = {r['Id']: r for r in db.get_ingredient_library()}
+    assert rows[menu['air_salad']]['UsedIn'] == 0 and rows[menu['air_salad']]['ScenarioUses'] == 1
+    assert rows[menu['bag']]['ScenarioUses'] == 0
+    # No price yet: Library health asks for one, as for recipe items.
+    stale = {r['Id'] for r in db.library_health()['prices']}
+    assert menu['air_salad'] in stale and menu['bag'] not in stale
+
+
+def test_tag_and_ingredient_uses(lib, menu):
+    sid = _seatac(menu)
+    sc.set_scenario_exclusions(sid, [menu['Wrap']])
+    assert sc.tag_uses(menu['Salad']) == ['SeaTac']
+    assert sc.tag_uses(menu['Wrap']) == ['SeaTac']
+    assert sc.tag_uses(menu['Bowl']) == []
+    assert sc.ingredient_uses(menu['salad_bowl']) == ['SeaTac']
+    assert sc.names_text(['A']) == 'A'
+    assert sc.names_text(['A', 'B']) == 'A and B'
+    assert sc.names_text(['A', 'B', 'C']) == 'A, B and C'
+    assert sc.names_text(list('ABCDE')) == 'A, B, C and 2 more'
+
+
+def test_rule_dialog_keeps_archived_item(lib, menu, qapp):
+    from gui.tabs.scenarios_page import ScenariosPage
+    if 'status' not in {c[1] for c in lib.sql('PRAGMA table_info(Ingredients);')[0]}:
+        pytest.skip('ingredient archiving not in this build')
+    sid = _seatac(menu)
+    lib.sql("UPDATE Ingredients SET status = 'archived' WHERE Id = ?;", (menu['air_salad'],))
+    page = ScenariosPage()
+    page.refresh(select_id=sid)
+    rule = page.current()['rules'][0]
+    keep = {rule['from_ingredient'], rule['to_ingredient']}
+    choices = [i for i in page._all_ingredients
+               if (i.get('status') or 'active') != 'archived' or i['Id'] in keep]
+    from gui.tabs.scenarios_page import RuleDialog
+    dlg = RuleDialog('Salad', choices, rule=rule)
+    assert dlg.values()['to_ingredient'] == menu['air_salad']
+
+
+def test_library_replaced_clears_undo(lib, menu, qapp):
+    from gui.tabs.scenarios_page import ScenariosPage
+    page = ScenariosPage()
+    page.new_scenario()
+    assert page.undo_stack.canUndo()
+    page.library_replaced()
+    assert not page.undo_stack.canUndo()

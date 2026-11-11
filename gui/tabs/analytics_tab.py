@@ -242,6 +242,7 @@ class AnalyticsTab(QWidget):
         self.scenarios = ScenarioMatrix()
         self.scenarios.recipeActivated.connect(self.recipeActivated.emit)
         self.scenarios.setupRequested.connect(self.scenarioSetupRequested.emit)
+        self.scenarios.refreshed.connect(self._sync_export)
         sc_host = QWidget()
         sl = QVBoxLayout(sc_host)
         sl.setContentsMargins(28, 20, 28, 28)
@@ -312,7 +313,7 @@ class AnalyticsTab(QWidget):
 
     def _sync_export(self):
         if self._view == 'scenarios':
-            self.export_btn.setEnabled(True)
+            self.export_btn.setEnabled(self.scenarios.has_scenarios())
             self.export_btn.setToolTip('Save every recipe × scenario as a CSV file')
         else:
             self.export_btn.setEnabled(bool(self.recipe_ids()) if self.data is not None else False)
@@ -384,7 +385,11 @@ class AnalyticsTab(QWidget):
             self._tray.set_ids(ids)
 
     def focus_filter(self):
-        '''Ctrl+F on this place: the Add recipe box.'''
+        '''Ctrl+F on this place: the Add recipe box (Scenarios: the
+        template filter).'''
+        if self._view == 'scenarios':
+            self.scenarios.format_combo.setFocus()
+            return
         self.add_edit.setFocus()
         self.add_edit.selectAll()
 

@@ -315,6 +315,39 @@ def averages(result, recipe_ids=None):
     return out
 
 
+def _names_using(sql, params, path=None):
+    con = _connect(path)
+    try:
+        return [r[0] for r in con.execute(sql, params)]
+    finally:
+        con.close()
+
+
+def ingredient_uses(ingredient_id, path=None):
+    '''Names of the scenarios with a rule that uses this ingredient.'''
+    return _names_using(
+        'SELECT name FROM scenarios WHERE id IN (SELECT scenario_id FROM scenario_rules'
+        ' WHERE from_ingredient = ? OR to_ingredient = ?) ORDER BY COALESCE(sortOrder, id), id;',
+        (ingredient_id, ingredient_id), path)
+
+
+def tag_uses(tag_id, path=None):
+    '''Names of the scenarios with a rule for this format or that leave
+    out recipes with this tag.'''
+    return _names_using(
+        'SELECT name FROM scenarios WHERE id IN (SELECT scenario_id FROM scenario_rules WHERE format_tag_id = ?'
+        ' UNION SELECT scenario_id FROM scenario_exclusions WHERE tag_id = ?)'
+        ' ORDER BY COALESCE(sortOrder, id), id;', (tag_id, tag_id), path)
+
+
+def names_text(names, limit=3):
+    '''"SeaTac", "SeaTac and Take-out", "A, B, C and 2 more".'''
+    names = list(names)
+    if len(names) <= limit:
+        return ' and '.join(filter(None, [', '.join(names[:-1]), names[-1] if names else '']))
+    return f'{", ".join(names[:limit])} and {len(names) - limit} more'
+
+
 # --- editing (scenario tables only) --------------------------------------
 
 def _write(fn, path=None):

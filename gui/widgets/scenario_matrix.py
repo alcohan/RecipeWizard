@@ -51,6 +51,7 @@ def _pts(v):
 class ScenarioMatrix(QWidget):
     recipeActivated = Signal(int)
     setupRequested = Signal()
+    refreshed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -165,6 +166,10 @@ class ScenarioMatrix(QWidget):
         self.body.setVisible(has)
         self._rebuild_chips()
         self._rebuild_table()
+        self.refreshed.emit()
+
+    def has_scenarios(self):
+        return bool(self.result and self.result['scenarios'])
 
     def _fill_combo(self, combo, first, tags, key):
         current = combo.currentData() if combo.count() else QSettings().value(key, 0, type=int) or None
@@ -390,7 +395,7 @@ class ScenarioMatrix(QWidget):
     # --- export ------------------------------------------------------------
 
     def csv_rows(self):
-        if not self.result:
+        if not self.has_scenarios():
             return []
         keep = {r['id'] for r in self.visible_recipes()}
         sids = self.scenario_ids()

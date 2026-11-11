@@ -517,6 +517,7 @@ class MainWindow(QMainWindow):
             ('place-analytics', 'Go to Analytics'),
             ('place-configure', 'Go to Configure'),
             ('formats', 'Formats & Templates'),
+            ('scenarios', 'Scenarios'),
             ('suppliers', 'Suppliers'),
             ('import-purchases', 'Import Purchases…'),
             ('vendor-items', 'Vendor Items'),
@@ -541,6 +542,7 @@ class MainWindow(QMainWindow):
             'place-analytics': lambda: self._go_to_place('analytics'),
             'place-configure': lambda: self._go_to_place('configure'),
             'formats': lambda: self._show_configure('formats'),
+            'scenarios': lambda: self._show_configure('scenarios'),
             'suppliers': lambda: self._show_configure('suppliers'),
             'import-purchases': self._on_import_purchases,
             'vendor-items': lambda: self._show_configure('vendor_items'),
@@ -920,6 +922,7 @@ class MainWindow(QMainWindow):
         if result is None:
             return
         self.refresh()
+        self.scenarios_page.library_replaced()
         self.status_bar.refresh()
         self.library_health_tab.mark_stale()
         if mode == 'merge':
@@ -948,6 +951,7 @@ class MainWindow(QMainWindow):
             return
         setup.initializeDB(includeSampleData=False)
         self.refresh()
+        self.scenarios_page.library_replaced()
         self._flash_status('Database reset')
 
     def _on_reset_sample(self):
@@ -965,6 +969,7 @@ class MainWindow(QMainWindow):
         setup.initializeDB()
         setup.auto_assign_images()
         self.refresh()
+        self.scenarios_page.library_replaced()
         self._flash_status('Sample data loaded')
 
     def _on_auto_assign_images(self):
