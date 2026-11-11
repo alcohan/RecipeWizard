@@ -45,9 +45,21 @@ def _small(font):
     return f
 
 
-def _background(painter, option):
+_ARCHIVED_OPACITY = 0.45
+
+
+def _fade(painter, index):
+    '''Archived rows draw faded from here on.'''
+    if (index.data(RowRole) or {}).get('Archived'):
+        painter.setOpacity(_ARCHIVED_OPACITY)
+
+
+def _background(painter, option, index=None):
+    '''The selection fill; then, given the index, fade an archived row.'''
     if option.state & QStyle.State_Selected:
         painter.fillRect(option.rect, QColor(_SELECTED))
+    if index is not None:
+        _fade(painter, index)
 
 
 class NameDelegate(QStyledItemDelegate):
@@ -60,6 +72,7 @@ class NameDelegate(QStyledItemDelegate):
         rect = option.rect
         if option.state & QStyle.State_Selected:
             painter.fillRect(rect.x(), rect.y(), 3, rect.height(), QColor(_ROMAINE))
+        _fade(painter, index)
         row = index.data(RowRole) or {}
         color = index.data(TagColorRole)
 
@@ -98,7 +111,7 @@ class NameDelegate(QStyledItemDelegate):
 class TwoLineDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
         painter.save()
-        _background(painter, option)
+        _background(painter, option, index)
         rect = option.rect.adjusted(8, 4, -8, -4)
         painter.setFont(option.font)
         painter.setPen(QColor(_KALE))
@@ -116,7 +129,7 @@ class ChangeDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing)
-        _background(painter, option)
+        _background(painter, option, index)
         row = index.data(RowRole) or {}
         pct = index.data(ChangeRole)
         rect = option.rect.adjusted(8, 0, -8, 0)
@@ -156,7 +169,7 @@ class PlainDelegate(QStyledItemDelegate):
 
     def paint(self, painter, option, index):
         painter.save()
-        _background(painter, option)
+        _background(painter, option, index)
         text = str(index.data(Qt.DisplayRole) or '')
         font = QFont(option.font)
         if self._bold and text not in _PLACEHOLDERS:

@@ -11,6 +11,7 @@ Facets, combined with AND across groups:
   contains ANY of them (NO_ALLERGENS matches ingredients with none).
   Empty set = no allergen filter.
 - text: substring of name, category, supplier, allergens, unit or tool.
+- include_archived: archived ingredients are hidden unless it's set.
 
 With no header sort the proxy keeps the source order, which is
 category order then name.
@@ -30,8 +31,10 @@ class IngredientsFacetProxy(QSortFilterProxyModel):
         self._suppliers = None
         self._allergens = set()
         self._text = ''
+        self._include_archived = False
 
-    def set_facets(self, categories, attention, suppliers, allergens=()):
+    def set_facets(self, categories, attention, suppliers, allergens=(), include_archived=False):
+        self._include_archived = bool(include_archived)
         self._categories = categories
         self._attention = set(attention or ())
         self._suppliers = suppliers
@@ -45,6 +48,8 @@ class IngredientsFacetProxy(QSortFilterProxyModel):
     def accepts_row(self, row):
         '''Same test as filterAcceptsRow, on a row dict (the gallery
         uses it to filter cards without going through indexes).'''
+        if row.get('Archived') and not self._include_archived:
+            return False
         if self._categories is not None and row.get('TagId') not in self._categories:
             return False
         if self._suppliers is not None and row.get('SupplierId') not in self._suppliers:
@@ -59,6 +64,9 @@ class IngredientsFacetProxy(QSortFilterProxyModel):
         if self._text and not fuzzy.matches(self._text, row['SearchText']):
             return False
         return True
+
+    def includes_archived(self):
+        return self._include_archived
 
     def filterAcceptsRow(self, source_row, source_parent):
         index = self.sourceModel().index(source_row, 0, source_parent)

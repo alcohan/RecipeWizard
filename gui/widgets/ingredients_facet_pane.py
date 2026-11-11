@@ -10,7 +10,9 @@ collapsing and All / None come from FacetPane.
 
 Counts are totals over the whole library, so they don't jump as other
 filters change. `set_library(rows)` rebuilds the lists from the
-model's rows, keeping each checkbox's state by key.
+model's rows, keeping each checkbox's state by key. Archived
+ingredients are hidden, and left out of the counts, until Include
+archived is on.
 '''
 from gui.models.ingredients_model import ATTENTION_KEYS, NO_ALLERGENS
 from gui.widgets.facet_pane import MUTED, FacetPane
@@ -34,7 +36,23 @@ class IngredientsFacetPane(FacetPane):
     )
     SETTINGS_PREFIX = 'ingredients/facetOpen/'
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._rows = []
+        self._build_archived()
+
+    def _on_archived_toggled(self, _on):
+        self._refill()
+        self.changed.emit()
+
     def set_library(self, rows):
+        self._rows = list(rows)
+        self._refill()
+
+    def _refill(self):
+        all_rows = self._rows
+        self.archived_count.setText(str(sum(1 for r in all_rows if r.get('Archived'))))
+        rows = [r for r in all_rows if self.include_archived.isChecked() or not r.get('Archived')]
         cats = {}
         for r in rows:
             key = r.get('TagId')
@@ -77,9 +95,9 @@ class IngredientsFacetPane(FacetPane):
                    + [(NO_ALLERGENS, 'No allergens', None, none_n, None)])
 
     def selection(self):
-        '''(categories, attention, suppliers, allergens) for
-        IngredientsFacetProxy. An include section with everything
-        checked returns None (no filter); an any section returns the
-        set of checked keys (empty = no filter).'''
+        '''(categories, attention, suppliers, allergens,
+        include_archived) for IngredientsFacetProxy. An include section
+        with everything checked returns None (no filter); an any section
+        returns the set of checked keys (empty = no filter).'''
         return (self.included('category'), self.checked('attention'),
-                self.included('supplier'), self.checked('allergen'))
+                self.included('supplier'), self.checked('allergen'), self.include_archived.isChecked())

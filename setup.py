@@ -312,13 +312,21 @@ def migrateDB(path=None):
     # Trigger set is rebuilt on every migration so changes to the bump
     # logic propagate without bespoke migration steps. The WHEN guard on
     # the row-self-update triggers prevents infinite recursion.
+    # Ingredients archive like recipes: 'active' or 'archived' (kept and
+    # still used by recipes, but hidden from the library and pickers).
+    if not column_exists('Ingredients', 'status'):
+        print('Migrating: adding Ingredients.status')
+        cursor.execute("ALTER TABLE Ingredients ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
+
     cursor.executescript('''
         DROP TRIGGER IF EXISTS ingredients_bump_updated_at;
-        -- Library health's "0 is right" and "Still right" aren't edits.
+        -- Library health's "0 is right" and "Still right" aren't edits,
+        -- and neither is archiving or restoring.
         CREATE TRIGGER ingredients_bump_updated_at AFTER UPDATE ON Ingredients
         WHEN NEW.updated_at = OLD.updated_at
           AND NOT (NEW.nutrition_confirmed IS NOT OLD.nutrition_confirmed
-                   OR NEW.price_checked IS NOT OLD.price_checked)
+                   OR NEW.price_checked IS NOT OLD.price_checked
+                   OR NEW.status IS NOT OLD.status)
         BEGIN
           UPDATE Ingredients SET updated_at = datetime('now') WHERE Id = NEW.Id;
         END;
@@ -613,6 +621,29 @@ WHERE NOT EXISTS (SELECT 1 FROM RecipeAllergens ra
             cursor.execute('DELETE FROM recipe_tags_mapping WHERE tag_id = ?;', (tag_id,))
             cursor.execute('DELETE FROM tags WHERE id = ?;', (tag_id,))
         cursor.execute("INSERT INTO app_meta (key, value) VALUES ('archived_tag_to_status', '1');")
+
+    # Per-recipe print settings (the recipe's Print view): a title for
+    # the main Nutrition Facts panel (NULL: automatic) and which
+    # components get a panel of their own. A card row overrides the
+    # default (an ingredient in a card category, like Dressing).
+    if not column_exists('Recipes', 'print_title'):
+        cursor.execute('ALTER TABLE Recipes ADD COLUMN print_title TEXT')
+    cursor.executescript('''
+        CREATE TABLE IF NOT EXISTS recipe_print_cards (
+            recipe_id INTEGER NOT NULL,
+            kind TEXT NOT NULL,          -- 'ingredient' or 'recipe'
+            child_id INTEGER NOT NULL,
+            shown INTEGER NOT NULL,
+            PRIMARY KEY (recipe_id, kind, child_id)
+        );
+        CREATE TRIGGER IF NOT EXISTS recipe_print_cards_recipe_deleted AFTER DELETE ON Recipes BEGIN
+            DELETE FROM recipe_print_cards WHERE recipe_id = OLD.Id
+                OR (kind = 'recipe' AND child_id = OLD.Id);
+        END;
+        CREATE TRIGGER IF NOT EXISTS recipe_print_cards_ingredient_deleted AFTER DELETE ON Ingredients BEGIN
+            DELETE FROM recipe_print_cards WHERE kind = 'ingredient' AND child_id = OLD.Id;
+        END;
+    ''')
 
     if not column_exists('vendor_items', 'grams_per_each'):
         cursor.execute('ALTER TABLE vendor_items ADD COLUMN grams_per_each REAL')

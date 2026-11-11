@@ -182,11 +182,20 @@ def test_library_per_serving_divides_by_yield_once(lib):
     assert db.recipe_print_data(rid)['nutrition']['Calories'] == 400
 
 
-def test_per_floz_label():
-    label = rp.per_floz_label('Ranch', '2 f.oz', 30, {'Calories': 200, 'SodiumMilligrams': 300})
+def test_card_label():
+    label = rp.card_label('Ranch', '2 f.oz', 30, {'Calories': 200, 'SodiumMilligrams': 300})
     assert label['nutrition'] == {'Calories': 100, 'SodiumMilligrams': 150}
-    assert label['weight'] == 15
-    assert rp.per_floz_label('Packet', '1 ea', 10, {'Calories': 50}) is None
+    assert (label['weight'], label['serving']) == (15, '1 fl oz (15 g)')
+    # Not a volume: per one unit as entered.
+    packet = rp.card_label('Avocado', '.5 ea', 61, {'Calories': 117})
+    assert (packet['serving'], packet['nutrition']['Calories']) == ('½ each (61 g)', 117)
+
+
+def test_nutrition_title():
+    assert rp.nutrition_title('Cobb', False) is None
+    assert rp.nutrition_title('Cobb', True) == 'Cobb (dressed)'
+    assert rp.nutrition_title('Cobb', True, '  Cobb with ranch ') == 'Cobb with ranch'
+    assert rp.nutrition_title('Cobb', False, 'As served') == 'As served'
 
 
 def test_dressing_labels_and_statements(lib):
@@ -202,9 +211,65 @@ def test_dressing_labels_and_statements(lib):
     by_name = {r['name']: r for r in data['rows']}
     assert by_name['Ranch']['statement'] == 'buttermilk,   oil, salt'
     assert by_name['Greens']['statement'] == ''
-    assert [d['name'] for d in data['dressings']] == ['Ranch']
-    assert data['dressings'][0]['nutrition']['Calories'] == 120
+    assert [d['name'] for d in data['cards']] == ['Ranch']
+    assert data['cards'][0]['nutrition']['Calories'] == 120
     assert data['nutrition']['Calories'] == 240     # the main panel includes the 2 oz on the recipe
+    assert data['nutrition_title'] == 'Salad (dressed)'
+    assert [(o['name'], o['shown'], o['default']) for o in data['card_options']] == [
+        ('Greens', False, False), ('Ranch', True, True)]
+
+
+def _salad_with_sides(lib):
+    greens = lib.ingredient('Greens', '3 cups', 'Greens')
+    ranch = lib.ingredient('Ranch', '1 f.oz', 'Dressing')
+    vin = lib.recipe('House vinaigrette')
+    oil = lib.ingredient('Oil', '1 f.oz')
+    lib.sql('UPDATE Ingredients SET Calories = 240, Weight = 28 WHERE Id = ?;', (oil,))
+    lib.sql("UPDATE Recipes SET Unit = '2 f.oz' WHERE Id = ?;", (vin,))
+    lib.sql('INSERT INTO Connections (ParentRecipe, ChildIngredient, Quantity) VALUES (?, ?, 2);', (vin, oil))
+    rid = lib.recipe('Salad', 'Salad')
+    for order, (col, child) in enumerate([('ChildIngredient', greens), ('ChildIngredient', ranch),
+                                          ('ChildRecipe', vin)], start=1):
+        lib.sql(f'INSERT INTO Connections (ParentRecipe, {col}, Quantity, SortOrder) VALUES (?, ?, 1, ?);',
+                (rid, child, order))
+    return rid, greens, ranch, vin
+
+
+def test_cards_and_title_follow_the_recipe(lib):
+    rid, greens, ranch, vin = _salad_with_sides(lib)
+    db.set_recipe_print_card(rid, ('ingredient', ranch), False)
+    db.set_recipe_print_card(rid, ('recipe', vin), True)
+    data = db.recipe_print_data(rid)
+    # A sub-recipe's card is per 1 fl oz of what it makes: 480 kcal in 2 fl oz.
+    assert [(c['name'], c['serving'], c['nutrition']['Calories']) for c in data['cards']] == [
+        ('House vinaigrette', '1 fl oz (28 g)', 240)]
+    db.set_recipe_print_title(rid, 'Salad, with vinaigrette')
+    assert db.recipe_print_data(rid)['nutrition_title'] == 'Salad, with vinaigrette'
+    db.set_recipe_print_title(rid, '  ')
+    db.set_recipe_print_card(rid, ('ingredient', ranch), None)
+    db.set_recipe_print_card(rid, ('recipe', vin), None)
+    data = db.recipe_print_data(rid)
+    assert (data['title_override'], [c['name'] for c in data['cards']]) == (None, ['Ranch'])
+
+
+def test_no_cards_no_title(lib):
+    rid, _g, ranch, _v = _salad_with_sides(lib)
+    db.set_recipe_print_card(rid, ('ingredient', ranch), False)
+    data = db.recipe_print_data(rid)
+    assert (data['cards'], data['nutrition_title']) == ([], None)
+
+
+def test_print_settings_copy_and_clean_up(lib):
+    rid, greens, ranch, vin = _salad_with_sides(lib)
+    db.set_recipe_print_card(rid, ('ingredient', greens), True)
+    copy = db.create_recipe_with('Salad 2', 'ea', 1, copy_from=rid)
+    assert db.recipe_print_settings(copy)['cards'] == {('ingredient', greens): True}
+    lib.sql('DELETE FROM Ingredients WHERE Id = ?;', (greens,))
+    assert db.recipe_print_settings(rid)['cards'] == {}
+    db.set_recipe_print_card(rid, ('recipe', vin), True)
+    lib.sql('DELETE FROM Recipes WHERE Id = ?;', (rid,))
+    rows, _ = lib.sql('SELECT COUNT(*) FROM recipe_print_cards WHERE recipe_id = ?;', (rid,))
+    assert rows == [(0,)]
 
 
 
@@ -222,3 +287,20 @@ def test_label_rounding():
     assert rp.label_amount('TTLFatGrams', 43.8) == 44
     assert rp.label_amount('SatFatGrams', 0.5) == 1
     assert rp.label_amount('CholesterolMilligrams', 117.6) == 118
+
+
+def test_merge_brings_print_settings_with_a_new_recipe(lib, tmp_path):
+    from utilities import backup
+    rid, greens, ranch, vin = _salad_with_sides(lib)
+    db.set_recipe_print_card(rid, ('recipe', vin), True)
+    db.set_recipe_print_card(rid, ('ingredient', ranch), False)
+    db.set_recipe_print_title(rid, 'As served')
+    path = str(tmp_path / 'b.rwbackup')
+    backup.create_backup(path, db_path=lib.path, images_dir=str(tmp_path))
+    lib.sql('DELETE FROM Connections WHERE ParentRecipe = ?;', (rid,))
+    lib.sql('DELETE FROM Recipes WHERE Id = ?;', (rid,))
+    backup.restore_merge(path, db_path=lib.path, images_dir=str(tmp_path),
+                         branding_dir=str(tmp_path / 'brand'), safety=False)
+    (new_id,), _ = lib.sql("SELECT Id FROM Recipes WHERE Name = 'Salad';")
+    data = db.recipe_print_data(new_id[0])
+    assert (data['nutrition_title'], [c['name'] for c in data['cards']]) == ('As served', ['House vinaigrette'])

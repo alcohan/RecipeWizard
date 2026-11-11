@@ -11,6 +11,7 @@ TagName, TagColor, ImageFilename, Portion, Unit, Calories).
 import os
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PySide6.QtGui import QColor
 
 import config
 import db
@@ -20,6 +21,8 @@ from gui.widgets.tag_badge import TagColorRole
 SubTextRole = Qt.UserRole + 20     # second line under the main text
 ChangeRole = Qt.UserRole + 21      # float change since BasePrice, or None (no price)
 RowRole = Qt.UserRole + 22         # the whole row dict
+
+_ARCHIVED_FG = QColor('#a7ad9c')
 
 # "Price up 5%+ (90 days)" threshold.
 PRICE_UP_THRESHOLD = 0.05
@@ -58,7 +61,9 @@ class IngredientsModel(QAbstractTableModel):
             if price is not None:
                 change = (price / base - 1.0) if base else 0.0
             r['ChangePct'] = change
-            r['Flags'] = {
+            r['Archived'] = r.get('status') == 'archived'
+            # Archived ingredients don't need attention.
+            r['Flags'] = {k: False for k in ATTENTION_KEYS} if r['Archived'] else {
                 'price_up': change is not None and change >= PRICE_UP_THRESHOLD,
                 'no_price': not r.get('PriceCount'),
                 'no_nutrition': not r.get('Calories'),
@@ -67,7 +72,7 @@ class IngredientsModel(QAbstractTableModel):
             }
             r['AllergenList'] = [a.strip() for a in (r.get('Allergens') or '').split(',') if a.strip()]
             r['SearchText'] = ' '.join(str(r.get(k) or '') for k in (
-                'Name', 'TagName', 'SupplierName', 'Allergens', 'Unit', 'Portion')).lower()
+                'Name', 'TagName', 'SupplierName', 'Allergens', 'Unit', 'Portion')).lower()                 + (' archived' if r['Archived'] else '')
         self._rows = rows
         self._by_id = {r['Id']: i for i, r in enumerate(rows)}
         self.endResetModel()
@@ -91,12 +96,16 @@ class IngredientsModel(QAbstractTableModel):
             return row.get('ChangePct')
         if role == SubTextRole:
             if col == 'Name':
-                return row.get('TagName') or 'Uncategorized'
+                return (row.get('TagName') or 'Uncategorized') + (' · archived' if row['Archived'] else '')
             if col == 'Unit':
                 return row.get('Portion') or ''
             return None
         if role == Qt.DisplayRole:
             return _display(col, row)
+        if role == Qt.ForegroundRole and row['Archived']:
+            return _ARCHIVED_FG
+        if role == Qt.ToolTipRole and row['Archived'] and col == 'Name':
+            return f"{row['Name']} · archived"
         if role == Qt.UserRole:
             return _sort_key(col, row)
         if role == Qt.TextAlignmentRole and col in self.RIGHT_ALIGNED:
@@ -125,6 +134,9 @@ class IngredientsModel(QAbstractTableModel):
 
     def rows(self):
         return self._rows
+
+    def archived_count(self):
+        return sum(1 for r in self._rows if r['Archived'])
 
 
 def format_unit_price(value):

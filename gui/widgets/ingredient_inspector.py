@@ -4,7 +4,8 @@ selected ingredient without opening it.
 Photo (from the thumbnail cache), name, category · unit · tool, the
 cost card (unit price, change since the previous price, price step
 chart, case breakdown), which recipes use it and what the latest price
-change did to each, allergens, and Edit / New price buttons.
+change did to each, allergens, and Edit / New price buttons, with
+Archive / Restore under them.
 
 Only the selected row's price history and usage are queried, when the
 selection changes.
@@ -14,7 +15,7 @@ from datetime import date
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 import db
@@ -52,6 +53,7 @@ class IngredientInspector(QScrollArea):
     editRequested = Signal(int)
     newPriceRequested = Signal(int)
     recipeRequested = Signal(int)
+    archiveRequested = Signal(int, bool)   # ingredient id, True = archive / False = restore
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -139,6 +141,18 @@ class IngredientInspector(QScrollArea):
         buttons.setSpacing(8)
         buttons.addWidget(self.edit_btn)
         buttons.addWidget(self.price_btn)
+        self._archived = False
+        self.archived_note = QLabel('Archived')
+        self.archived_note.setStyleSheet(f'color: {_MUTED}; background: #f3ece0; border-radius: 6px;'
+                                         ' padding: 4px 8px; font-size: 12px;')
+        self.archive_btn = QPushButton('')
+        self.archive_btn.setCursor(Qt.PointingHandCursor)
+        self.archive_btn.setStyleSheet(
+            f'QPushButton {{ border: 0; background: transparent; color: {_ROMAINE}; padding: 2px 0; }}'
+            ' QPushButton:hover { text-decoration: underline; }')
+        self.archive_btn.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.archive_btn.clicked.connect(
+            lambda: self._id is not None and self.archiveRequested.emit(self._id, not self._archived))
 
         self.empty = QLabel('Select an ingredient')
         self.empty.setWordWrap(True)
@@ -153,6 +167,7 @@ class IngredientInspector(QScrollArea):
         name_col.setSpacing(4)
         name_col.addWidget(self.name)
         name_col.addWidget(self.meta)
+        name_col.addWidget(self.archived_note, alignment=Qt.AlignLeft)
         bl.addLayout(name_col)
         bl.addWidget(card)
         usage_col = QVBoxLayout()
@@ -168,6 +183,7 @@ class IngredientInspector(QScrollArea):
         bl.addLayout(allergen_col)
         bl.addStretch()
         bl.addLayout(buttons)
+        bl.addWidget(self.archive_btn)
 
         layout = QVBoxLayout(host)
         layout.setContentsMargins(20, 20, 20, 20)
@@ -203,6 +219,9 @@ class IngredientInspector(QScrollArea):
         dot = f'<span style="color: {row.get("TagColor") or "#a7ad9c"}">●</span>'
         bits = [row.get('TagName') or 'Uncategorized', row.get('Unit'), row.get('Portion')]
         self.meta.setText(f'{dot} ' + ' · '.join(b for b in bits if b))
+        self._archived = bool(row.get('Archived'))
+        self.archived_note.setVisible(self._archived)
+        self.archive_btn.setText('Restore' if self._archived else 'Archive')
 
         unit = row.get('Unit') or 'unit'
         self.cost_title.setText(f'COST PER {unit.upper()}')

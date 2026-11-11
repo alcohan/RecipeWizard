@@ -503,9 +503,12 @@ def save_vendor_item(item):
 
 
 def get_ingredients():
-    '''Id, Name, Unit, Weight (portion grams), Cost (per portion).'''
+    '''Id, Name, Unit, Weight (portion grams), Cost (per portion),
+    Archived. Archived ones stay so existing mappings still price; they
+    aren't suggested or offered for new ones.'''
     with _connect() as con:
-        rows = con.execute('SELECT Id, Name, Unit, Weight, Cost FROM Ingredients'
+        rows = con.execute("SELECT Id, Name, Unit, Weight, Cost,"
+                           " COALESCE(status, 'active') = 'archived' AS Archived FROM Ingredients"
                            ' ORDER BY Name COLLATE NOCASE;').fetchall()
     return [dict(r) for r in rows]
 
@@ -571,9 +574,12 @@ def suggest_mapping(item, ingredients, vendor_items):
     are already mapped (the inventory system already grouped them).
     Second: every word of an ingredient's name appears in the item's
     inventory name or description, and no other ingredient fits as well.'''
+    archived = {i['Id'] for i in ingredients if i.get('Archived')}
+    ingredients = [i for i in ingredients if not i.get('Archived')]
     inv = _norm(item.get('inventory_item'))
     if inv:
         siblings = [v for v in vendor_items if v['status'] == 'mapped' and v.get('ingredient_id')
+                    and v['ingredient_id'] not in archived
                     and _norm(v.get('inventory_item')) == inv and v['vendor_key'] != item['vendor_key']]
         if siblings:
             counts = collections.Counter(v['ingredient_id'] for v in siblings)

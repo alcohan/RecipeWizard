@@ -1,4 +1,5 @@
--- Get all eligible recipes (avoiding circular references). Each row also
+-- Get all eligible recipes (avoiding circular references) and the
+-- ingredients that aren't archived. Each row also
 -- carries the component's tag name + color for the badge painted by the
 -- picker delegate — recipes show their format tag, ingredients their
 -- category tag. NULLs are fine; the delegate renders a generic fallback.
@@ -31,4 +32,5 @@ SELECT i.Id, 'ingredient' AS Type, i.Name, i.Unit,
      WHERE itm.ingredient_id=i.Id AND t.kind='ingredient' LIMIT 1) AS TagColor,
     i.Cost, i.Calories
 FROM Ingredients i
+WHERE COALESCE(i.status, 'active') <> 'archived'   -- archived: not for new use
 ORDER BY Name;

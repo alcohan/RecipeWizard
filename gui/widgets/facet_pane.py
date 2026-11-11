@@ -13,7 +13,9 @@ filter never hides rows silently. Sections with more than five options
 get an All / None toggle.
 
 Subclasses declare SECTIONS and SETTINGS_PREFIX, fill each section
-with `_fill(group, items)` and read checks with `checked(group)`.
+with `_fill(group, items)` and read checks with `checked(group)`. A
+place with archiving calls `_build_archived()` for the Include archived
+switch at the top and handles `_on_archived_toggled`.
 '''
 from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtWidgets import (
@@ -22,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.widgets.elided_label import ElidedLabel
+from gui.widgets.toolbar_controls import ToggleSwitch
 
 
 KALE = '#082c00'
@@ -150,6 +153,28 @@ class FacetPane(QScrollArea):
 
     def section(self, group):
         return self._groups[group]['section']
+
+    def _build_archived(self):
+        '''Include archived: a switch with the archived count, at the top.'''
+        row = QWidget()
+        hl = QHBoxLayout(row)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.setSpacing(6)
+        self.include_archived = ToggleSwitch()
+        self.include_archived.toggled.connect(self._on_archived_toggled)
+        label = ElidedLabel('Include archived')
+        label.setStyleSheet(f'color: {KALE};')
+        # Clicking the words flips the switch too.
+        label.mousePressEvent = lambda _e: self.include_archived.toggle()
+        self.archived_count = QLabel('0')
+        self.archived_count.setStyleSheet(f'color: {MUTED};')
+        hl.addWidget(label, stretch=1)
+        hl.addWidget(self.archived_count)
+        hl.addWidget(self.include_archived)
+        self._layout.insertWidget(0, row)
+
+    def _on_archived_toggled(self, _on):
+        self.changed.emit()
 
     # --- building ------------------------------------------------------
 
