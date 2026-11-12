@@ -137,18 +137,18 @@ def _round(v, places=2):
 
 
 def pricing_csv(data):
-    '''Recipe, Template, Ingredients, Ingredient list, a cost column per
+    '''Recipe, Template, Ingredients (the list), a cost column per
     category, Food cost, Menu price, Food cost %; an Average row last.'''
     cats = data['categories']
-    out = [['Recipe', 'Template', 'Ingredients', 'Ingredient list'] + cats
+    out = [['Recipe', 'Template', 'Ingredients'] + cats
            + ['Food cost', 'Menu price', 'Food cost %']]
     for r in data['recipes']:
-        out.append([r['name'], r['format'] or '', len(r['ingredients']), '; '.join(r['ingredients'])]
+        out.append([r['name'], r['format'] or '', '; '.join(r['ingredients'])]
                    + [_round(r['categories'].get(c)) if c in r['categories'] else '' for c in cats]
                    + [_round(r['cost']), _round(r['menu_price']), _round(r['pct'], 1)])
     if data['recipes']:
         avg = averages(data)
-        out.append(['Average', '', '', ''] + [_round(avg['categories'][c]) for c in cats]
+        out.append(['Average', '', ''] + [_round(avg['categories'][c]) for c in cats]
                    + [_round(avg['cost']), _round(avg['menu_price']), _round(avg['pct'], 1)])
     return out
 

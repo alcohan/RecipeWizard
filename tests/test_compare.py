@@ -78,10 +78,10 @@ def test_averages_empty():
 
 def test_pricing_csv():
     rows = compare.pricing_csv(_build((1, 2)))
-    assert rows[0] == ['Recipe', 'Template', 'Ingredients', 'Ingredient list', 'Greens', 'Protein', 'Dairy',
+    assert rows[0] == ['Recipe', 'Template', 'Ingredients', 'Greens', 'Protein', 'Dairy',
                        'Food cost', 'Menu price', 'Food cost %']
-    assert rows[1] == ['Cobb', 'Salad', 3, 'Romaine; Spinach; Bacon', 1.25, 1.25, '', 2.5, 10.0, 25.0]
-    assert rows[2][:4] == ['Ranch', '', 1, 'Buttermilk']
+    assert rows[1] == ['Cobb', 'Salad', 'Romaine; Spinach; Bacon', 1.25, 1.25, '', 2.5, 10.0, 25.0]
+    assert rows[2][:3] == ['Ranch', '', 'Buttermilk']
     assert rows[2][-2:] == ['', '']
     assert rows[-1][0] == 'Average'
 

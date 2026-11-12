@@ -12,8 +12,8 @@ queried, when the selection changes.
 '''
 from datetime import datetime
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
@@ -142,9 +142,17 @@ class RecipeInspector(QScrollArea):
             self._stats[key] = value
 
         self.components_title = _eyebrow('Components')
-        self.component_list = QLabel('')
+        self.component_list = _ClickLabel('')
         self.component_list.setWordWrap(True)
         self.component_list.setMinimumWidth(1)
+        self.component_list.setCursor(Qt.PointingHandCursor)
+        self.component_list.setToolTip('Click to copy')
+        self.component_list.clicked.connect(self.copy_components)
+        self._components_title_text = ''
+        self._copied_timer = QTimer(self)
+        self._copied_timer.setSingleShot(True)
+        self._copied_timer.setInterval(1500)
+        self._copied_timer.timeout.connect(lambda: self.components_title.setText(self._components_title_text))
 
         self._diet_chips = FlowLayout()
         diet_wrap = QWidget()
@@ -295,10 +303,22 @@ class RecipeInspector(QScrollArea):
         # components (or inside a long name), never before a bullet.
         comps = db.recipe_components(rid)
         n = len(comps)
-        self.components_title.setText(f"{n} COMPONENT{'S' if n != 1 else ''}" if n else 'NO COMPONENTS YET')
+        self._components_title_text = f"{n} COMPONENT{'S' if n != 1 else ''}" if n else 'NO COMPONENTS YET'
+        self._copied_timer.stop()
+        self.components_title.setText(self._components_title_text)
         names = [(c.get('Name') or '').strip() for c in comps]
         self.component_list.setText('\u00a0\u2022 '.join(n for n in names if n))
         self.component_list.setVisible(bool(n))
+
+    def copy_components(self):
+        '''Click on the list: copy it as shown ("Romaine • Kale • ...").'''
+        text = self.component_list.text().replace(' ', ' ')
+        if not text:
+            return ''
+        QGuiApplication.clipboard().setText(text)
+        self.components_title.setText('COPIED')
+        self._copied_timer.start()
+        return text
 
     def _fill_diets(self, row):
         _clear(self._diet_chips)
@@ -314,3 +334,12 @@ class RecipeInspector(QScrollArea):
             none = QLabel('No tags, and no diets fit')
             none.setStyleSheet(f'color: {_MUTED};')
             self._diet_chips.addWidget(none)
+
+
+class _ClickLabel(QLabel):
+    clicked = Signal()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)

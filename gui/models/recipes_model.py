@@ -146,8 +146,8 @@ class RecipesModel(QAbstractTableModel):
             if col == 'Cost':
                 return float(row.get('CostRaw') or 0)
             if col == 'FoodCostPct':
-                # Unpriced recipes sort after priced ones.
-                return row['FoodCostPct'] if row['FoodCostPct'] is not None else 1e9
+                # Unpriced ("—") sorts lowest.
+                return row['FoodCostPct'] if row['FoodCostPct'] is not None else -1.0
             if col == 'Calories':
                 return row['CaloriesPerServing']
             if col == 'Components':
