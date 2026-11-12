@@ -1,6 +1,6 @@
 '''Analytics › Pricing and Nutrition: recipes as rows, per serving.
 
-Pricing: ingredient count (hover for the list), cost by ingredient
+Pricing: ingredients (hover the ⓘ for the list), cost by ingredient
 category (collapsed by default), cost, menu price and food cost %.
 Nutrition: weight and the Nutrition Facts values, then allergens the
 recipe contains and facility-only ones. Click a header to sort; the
@@ -64,9 +64,9 @@ def _info_icon():
     return QIcon(pix)
 
 
-def _last(v):
-    '''Sort key with None after every number.'''
-    return (v is None, v or 0)
+def _low(v):
+    '''Sort key for a value that may be blank ("—"): blank sorts lowest.'''
+    return float('-inf') if v is None else v
 
 
 class RecipeMatrix(QWidget):
@@ -174,17 +174,16 @@ class RecipeMatrix(QWidget):
         '''[(key, header, align, sort key(recipe), cell(recipe) -> item)].'''
         cols = [('name', 'Recipe', _LEFT, lambda r: r['name'].lower(), self._name_item)]
         if self.mode == 'pricing':
-            cols.append(('ingredients', 'Ingredients', _LEFT, lambda r: len(r['ingredients']),
-                         self._ingredients_item))
+            cols.append(('ingredients', 'Ingredients', Qt.AlignCenter, None, self._ingredients_item))
             if self._open:
                 for cat in self.data['categories']:
-                    cols.append((('cat', cat), cat, _RIGHT, lambda r, c=cat: _last(r['categories'].get(c)),
+                    cols.append((('cat', cat), cat, _RIGHT, lambda r, c=cat: _low(r['categories'].get(c)),
                                  lambda r, c=cat: self._num(_money(r['categories'].get(c)), self._cat_tip(r, c))))
             cols += [
                 ('cost', 'Cost', _RIGHT, lambda r: r['cost'], lambda r: self._num(_money(r['cost']))),
-                ('price', 'Menu price', _RIGHT, lambda r: _last(r['menu_price']),
+                ('price', 'Menu price', _RIGHT, lambda r: _low(r['menu_price']),
                  lambda r: self._num(_money(r['menu_price']))),
-                ('pct', 'Food cost', _RIGHT, lambda r: _last(r['pct']), lambda r: self._pct_item(r['pct'])),
+                ('pct', 'Food cost', _RIGHT, lambda r: _low(r['pct']), lambda r: self._pct_item(r['pct'])),
             ]
         else:
             for key, label, unit in compare.NUTRIENTS:
@@ -231,15 +230,17 @@ class RecipeMatrix(QWidget):
         if rows:
             self._footer(len(rows))
         hh = t.horizontalHeader()
-        if self._sort and self._sort[0] in keys:
-            hh.setSortIndicatorShown(True)
-            hh.setSortIndicator(keys.index(self._sort[0]),
-                                Qt.DescendingOrder if self._sort[1] else Qt.AscendingOrder)
-        else:
-            hh.setSortIndicatorShown(False)
         hh.setMinimumSectionSize(64)
         hh.setSectionResizeMode(QHeaderView.Interactive)
+        # Measure with the sort arrow hidden: Qt would widen the sorted
+        # column for it (the arrow draws above the text, not beside it),
+        # and the table would jump on every sort.
+        hh.setSortIndicatorShown(False)
         t.resizeColumnsToContents()
+        if self._sort and self._sort[0] in keys:
+            hh.setSortIndicator(keys.index(self._sort[0]),
+                                Qt.DescendingOrder if self._sort[1] else Qt.AscendingOrder)
+            hh.setSortIndicatorShown(True)
         self._name_width = t.columnWidth(0)
         self._fit()
         self.summary.setText('Per serving')
@@ -302,10 +303,9 @@ class RecipeMatrix(QWidget):
         return item
 
     def _ingredients_item(self, r):
-        n = len(r['ingredients'])
-        item = QTableWidgetItem(str(n))
-        item.setTextAlignment(_LEFT)
-        if n:
+        item = QTableWidgetItem('')
+        item.setTextAlignment(Qt.AlignCenter)
+        if r['ingredients']:
             item.setIcon(self._info)
             lines = [f'{cat}: {", ".join(names)}' for cat, names in r['items'].items()]
             item.setToolTip('\n'.join(lines))
@@ -347,7 +347,9 @@ class RecipeMatrix(QWidget):
     def _on_header_clicked(self, section):
         if not (0 <= section < len(self._columns)):
             return
-        key = self._columns[section][0]
+        key, sort_key = self._columns[section][0], self._columns[section][3]
+        if sort_key is None:
+            return      # the Ingredients column is a hover list, not a value
         if self._sort and self._sort[0] == key:
             # Name: A→Z, Z→A, off. Numbers: high→low, low→high, off.
             first_desc = key != 'name' and key not in ('contains', 'facility')

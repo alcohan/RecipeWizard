@@ -193,4 +193,6 @@ def _sort_key(col, row):
                  'UsedIn': row.get('UsedIn'), 'Change': row.get('ChangePct')}[col]
         # Missing values sort below everything.
         return float(value) if value is not None else float('-inf')
-    return (_display(col, row) or '').lower()
+    text = _display(col, row) or ''
+    # A blank ("—", e.g. no supplier or allergens) sorts lowest.
+    return '' if text == '—' else text.lower()
