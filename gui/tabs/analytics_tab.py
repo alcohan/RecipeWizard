@@ -1,10 +1,12 @@
 '''Analytics: recipes side by side, as tables.
 
-Left, the compare set: the tray's recipes (wedge, name, ×; drag to
-reorder), an "Add recipe…" box, Template and Tag filters, and saved
-comparisons (click to open; right-click to update, rename or delete).
-An empty tray means every active recipe; the filters narrow whichever
-set is showing, and Clear all resets both.
+Left, like the Library's filter pane: the tray's recipes (wedge, name,
+×; drag to reorder) and an "Add recipe…" box, then Format and Tags
+checkboxes (Sub-recipes starts unchecked), then saved comparisons
+(click to open; right-click to update, rename or delete). An empty tray
+means every active recipe; the filters narrow whichever set is showing,
+and Clear all resets both. Group by (Format, the default, or None)
+groups every view's rows, in Configure's format order.
 
 Right, one of three views of that set: Pricing (ingredients, cost by
 category, cost, menu price, food cost %), Nutrition (per serving, with
@@ -13,6 +15,7 @@ Print prints the recipes shown. The tray and filters are remembered
 between sessions; Save comparison keeps a named copy in the library.
 '''
 import csv
+import json
 import os
 
 from PySide6.QtCore import QMimeData, QPoint, QSettings, QStandardPaths, Qt, Signal
@@ -26,9 +29,11 @@ import db
 from gui.services.compare_tray import CompareTray
 from gui.widgets import config_kit as kit
 from gui.widgets.elided_label import ElidedLabel
+from gui.models.recipes_facet_proxy import matches
+from gui.models.recipes_model import SUB_RECIPES
+from gui.widgets.analytics_facet_pane import AnalyticsFacetPane
 from gui.widgets.recipe_matrix import RecipeMatrix
 from gui.widgets.scenario_matrix import ScenarioMatrix
-from gui.widgets.text_fit import literal
 from gui.widgets.toolbar_controls import SegmentedSwitch, ToolbarCombo
 from gui.widgets.wedge_view import WedgeView
 from utilities import compare
@@ -68,9 +73,9 @@ class AnalyticsTab(QWidget):
         self._active_saved = None
         self._stale = True
         self.data = None
-        settings = QSettings()
-        self._filters = {'format': settings.value('analytics/format', 0, type=int) or None,
-                         'tag': settings.value('analytics/tag', 0, type=int) or None}
+        self._group = QSettings().value('analytics/groupBy', 'format', type=str)
+        if self._group not in ('format', 'none'):
+            self._group = 'format'
 
         self.setStyleSheet(f'AnalyticsTab {{ background: {kit.BG}; }}')
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -87,9 +92,9 @@ class AnalyticsTab(QWidget):
         self.print_btn.setStyleSheet(kit.button('').styleSheet().replace('QPushButton', 'QToolButton')
                                      + ' QToolButton { padding-right: 22px; }'
                                        ' QToolButton::menu-button { border: 0; width: 18px; }')
-        self.print_btn.clicked.connect(lambda: self.print_shown(portions=True))
+        self.print_btn.clicked.connect(lambda: self.print_shown(portions=False))
         print_menu = QMenu(self.print_btn)
-        print_menu.addAction('Print without portions…', lambda: self.print_shown(portions=False))
+        print_menu.addAction('Print with portions…', lambda: self.print_shown(portions=True))
         self.print_btn.setMenu(print_menu)
         self.save_btn = kit.button('Save comparison', primary=True)
         self.save_btn.clicked.connect(lambda: self.save_comparison())
@@ -104,6 +109,16 @@ class AnalyticsTab(QWidget):
         bl.addWidget(kit.heading('Analytics'))
         bl.addWidget(self.view_switch)
         bl.addWidget(self.subtitle)
+        group_label = QLabel('Group by')
+        group_label.setStyleSheet(f'color: {kit.MUTED};')
+        self.group_combo = ToolbarCombo()
+        self.group_combo.addItem('Format', 'format')
+        self.group_combo.addItem('None', 'none')
+        self.group_combo.setCurrentIndex(max(0, self.group_combo.findData(self._group)))
+        self.group_combo.activated.connect(lambda _i: self.set_group(self.group_combo.currentData()))
+        bl.addSpacing(8)
+        bl.addWidget(group_label)
+        bl.addWidget(self.group_combo)
         bl.addStretch()
         bl.addWidget(self.export_btn)
         bl.addWidget(self.print_btn)
@@ -137,40 +152,36 @@ class AnalyticsTab(QWidget):
         self._completer.setFilterMode(Qt.MatchContains)
         self._completer.activated.connect(self.add_by_name)
         self.add_edit.setCompleter(self._completer)
-        self.format_combo = ToolbarCombo()
-        self.format_combo.activated.connect(lambda _i: self.set_filter('format', self.format_combo.currentData()))
-        self.tag_combo = ToolbarCombo()
-        self.tag_combo.activated.connect(lambda _i: self.set_filter('tag', self.tag_combo.currentData()))
         self.saved_box = QVBoxLayout()
         self.saved_box.setSpacing(2)
         self.saved_empty = kit.note('None yet')
 
-        aside = QWidget()
-        aside.setFixedWidth(250)
-        al = QVBoxLayout(aside)
-        al.setContentsMargins(16, 20, 16, 20)
-        al.setSpacing(6)
-        al.addLayout(tray_head)
-        al.addWidget(self.tray_note)
-        al.addWidget(self.tray_list)
-        al.addWidget(self.add_edit)
-        al.addSpacing(16)
-        al.addWidget(kit.eyebrow('Filter'))
-        al.addWidget(self.format_combo)
-        al.addWidget(self.tag_combo)
-        al.addSpacing(16)
-        al.addWidget(kit.eyebrow('Saved comparisons'))
-        al.addLayout(self.saved_box)
-        al.addWidget(self.saved_empty)
-        al.addStretch()
-        aside_scroll = QScrollArea()
-        aside_scroll.setWidget(aside)
-        aside_scroll.setWidgetResizable(True)
-        aside_scroll.setFixedWidth(252)
-        aside_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        aside_scroll.setFrameShape(QFrame.NoFrame)
-        aside_scroll.setStyleSheet(f'QScrollArea {{ background: {kit.BG}; border-right: 1px solid {kit.BORDER}; }}'
-                                   ' QScrollArea > QWidget > QWidget { background: transparent; }')
+        # Left pane: the Library's filter pane, with the tray on top and
+        # saved comparisons below.
+        self.facets = AnalyticsFacetPane()
+        tray = QWidget()
+        tl = QVBoxLayout(tray)
+        tl.setContentsMargins(0, 0, 0, 0)
+        tl.setSpacing(6)
+        tl.addLayout(tray_head)
+        tl.addWidget(self.tray_note)
+        tl.addWidget(self.tray_list)
+        tl.addWidget(self.add_edit)
+        self.facets.add_top(tray)
+        saved = QWidget()
+        sl = QVBoxLayout(saved)
+        sl.setContentsMargins(0, 0, 0, 0)
+        sl.setSpacing(6)
+        sl.addWidget(kit.eyebrow('Saved comparisons'))
+        sl.addLayout(self.saved_box)
+        sl.addWidget(self.saved_empty)
+        self.facets.add_bottom(saved)
+        try:
+            self.facets.apply_state(json.loads(QSettings().value('analytics/filters', '', type=str) or '{}'))
+        except ValueError:
+            pass
+        self.facets.changed.connect(self._on_filters_changed)
+        aside_scroll = self.facets
 
         # The views.
         self.pricing = RecipeMatrix('pricing')
@@ -249,7 +260,6 @@ class AnalyticsTab(QWidget):
         self._formats = db.get_tags(kind='recipe')
         self._recipe_tags = db.get_tags(kind='recipe_tag')
         self._prune_tray()
-        self._fill_filters()
         self._completer.model().setStringList(sorted((r['Name'] for r in self._model.rows()), key=str.lower))
         self._rebuild_saved()
         self._rebuild()
@@ -289,64 +299,47 @@ class AnalyticsTab(QWidget):
             # Rebuilt when Analytics is next shown.
             self._stale = True
 
-    # --- filters -----------------------------------------------------
-
-    def _fill_filters(self):
-        for combo, first, items, key in (
-                (self.format_combo, 'All templates',
-                 [(t['id'], t['name']) for t in self._formats] + [(_NO_TEMPLATE, 'Sub-recipes')], 'format'),
-                (self.tag_combo, 'Any tag', [(t['id'], t['name']) for t in self._recipe_tags], 'tag')):
-            combo.blockSignals(True)
-            combo.clear()
-            combo.addItem(first, None)
-            for tid, name in items:
-                combo.addItem(literal(name), tid)
-            index = combo.findData(self._filters[key]) if self._filters[key] is not None else 0
-            if index < 0:
-                self._filters[key] = None
-                index = 0
-            combo.setCurrentIndex(index)
-            combo.blockSignals(False)
+    # --- filters and grouping ------------------------------------------
 
     def filters(self):
-        return dict(self._filters)
+        '''{'formats': [names] or None (all), 'tags': [ids]}.'''
+        return self.facets.state()
 
-    def set_filter(self, key, value):
-        value = value or None
-        if self._filters.get(key) == value:
-            return
-        self._filters[key] = value
-        QSettings().setValue(f'analytics/{key}', value or 0)
-        combo = self.format_combo if key == 'format' else self.tag_combo
-        combo.blockSignals(True)
-        combo.setCurrentIndex(max(0, combo.findData(value)) if value is not None else 0)
-        combo.blockSignals(False)
-        self._rebuild()
+    def set_filters(self, state):
+        self.facets.apply_state(state)
+
+    def _on_filters_changed(self):
+        QSettings().setValue('analytics/filters', json.dumps(self.facets.state()))
+        if not self._stale:
+            self._rebuild()
 
     def _passes(self, row):
-        fmt, tag = self._filters['format'], self._filters['tag']
-        if fmt is not None:
-            if fmt == _NO_TEMPLATE:
-                if row.get('TagName'):
-                    return False
-            else:
-                name = next((t['name'] for t in self._formats if t['id'] == fmt), None)
-                if row.get('TagName') != name:
-                    return False
-        if tag is not None and tag not in (row.get('TagIds') or set()):
-            return False
-        return True
+        return matches(row, dict(self.facets.state(), include_archived=True))
+
+    def group(self):
+        return self._group
+
+    def set_group(self, key):
+        '''"format" (rows under their format, in Configure's order) or "none".'''
+        key = key if key in ('format', 'none') else 'format'
+        self._group = key
+        QSettings().setValue('analytics/groupBy', key)
+        self.group_combo.setCurrentIndex(max(0, self.group_combo.findData(key)))
+        self._apply_group()
+
+    def _apply_group(self):
+        order = [t['name'] for t in self._formats]
+        for view in (self.pricing, self.nutrition, self.scenarios):
+            view.set_group(self._group, order)
 
     def clear_all(self):
         '''Empty the tray and reset the filters.'''
         self._active_saved = None
-        for key in ('format', 'tag'):
-            self._filters[key] = None
-            QSettings().setValue(f'analytics/{key}', 0)
-        self.format_combo.setCurrentIndex(0)
-        self.tag_combo.setCurrentIndex(0)
-        if not self._tray.clear():
-            self._rebuild()
+        self._tray.blockSignals(True)
+        self._tray.clear()
+        self._tray.blockSignals(False)
+        self._save_tray()
+        self.facets.clear()           # emits changed: one rebuild
 
     # --- tray --------------------------------------------------------
 
@@ -404,8 +397,21 @@ class AnalyticsTab(QWidget):
         self.saved_empty.setVisible(not rows)
 
     def _saved_filters(self, row):
-        settings = row.get('settings') or {}
-        return {k: (settings.get(k) or None) for k in ('format', 'tag')}
+        '''A saved comparison's filters as a facets state; an older one
+        saved a single Template and Tag.'''
+        settings = dict(row.get('settings') or {})
+        if 'formats' in settings or 'tags' in settings:
+            return {'formats': settings.get('formats'), 'tags': list(settings.get('tags') or [])}
+        state = {'tags': [settings['tag']] if settings.get('tag') else []}
+        fmt = settings.get('format')
+        if fmt == _NO_TEMPLATE:
+            state['formats'] = [SUB_RECIPES]
+        elif fmt:
+            name = next((t['name'] for t in db.get_tags('recipe') if t['id'] == fmt), None)
+            state['formats'] = [name] if name else None
+        else:
+            state['formats'] = None     # an older comparison didn't filter: everything
+        return state
 
     def active_saved(self):
         '''The saved comparison on screen, if the tray and filters still match it.'''
@@ -415,23 +421,22 @@ class AnalyticsTab(QWidget):
         if row is None:
             return None
         same_ids = [i for i in row['recipe_ids'] if i in self._known_ids()] == self.recipe_ids()
-        return row['id'] if same_ids and self._saved_filters(row) == self._filters else None
+        return row['id'] if same_ids and _same_filters(self._saved_filters(row), self.filters()) else None
 
     def _can_save(self):
-        return bool(self.recipe_ids()) or any(v is not None for v in self._filters.values())
+        return bool(self.recipe_ids()) or not self.facets.is_default()
 
     def load_comparison(self, comparison_id):
         row = next((r for r in self.saved() if r['id'] == comparison_id), None)
         if row is None:
             return
         self._active_saved = comparison_id
-        for key, value in self._saved_filters(row).items():
-            self._filters[key] = value
-            QSettings().setValue(f'analytics/{key}', value or 0)
-        self._fill_filters()
         known = self._known_ids()
-        if not self._tray.set_ids([i for i in row['recipe_ids'] if i in known]):
-            self._rebuild()
+        self._tray.blockSignals(True)
+        self._tray.set_ids([i for i in row['recipe_ids'] if i in known])
+        self._tray.blockSignals(False)
+        self._save_tray()
+        self.facets.apply_state(self._saved_filters(row))     # emits changed: one rebuild
 
     def save_comparison(self, name=None):
         if not self._can_save():
@@ -523,8 +528,11 @@ class AnalyticsTab(QWidget):
         self.tray_list.set_recipes([by_id[i] for i in ids], self._thumb)
         self.tray_list.setVisible(bool(ids))
         self.tray_note.setVisible(not ids)
-        filtered = any(v is not None for v in self._filters.values())
+        filtered = not self.facets.is_default()
         self.clear_btn.setVisible(bool(ids) or filtered)
+        self.facets.set_rows([by_id[i] for i in ids] if ids
+                             else [r for r in self._model.rows() if not r.get('Archived')])
+        self._apply_group()
         shown = self.shown_ids()
         n = len(shown)
         self.subtitle.setText(f"{n} recipe{'s' if n != 1 else ''}")
@@ -556,7 +564,7 @@ class AnalyticsTab(QWidget):
 
     # --- print -------------------------------------------------------
 
-    def print_shown(self, portions=True):
+    def print_shown(self, portions=False):
         '''Print the recipes the view shows (the tray, or every active
         recipe, after the filters).'''
         ids = self.shown_ids()
@@ -709,3 +717,10 @@ class _SavedLink(QPushButton):
         self.setStyleSheet(f'QPushButton {{ text-align: left; border: 0; border-radius: 6px; padding: 5px 8px;'
                            f' color: {kit.KALE}; font-weight: {weight}; background: {bg}; }}'
                            f' QPushButton:hover {{ color: {kit.ROMAINE_HOVER}; text-decoration: underline; }}')
+
+
+def _same_filters(a, b):
+    '''Two facets states filter the same (lists compared as sets).'''
+    fa, fb = a.get('formats'), b.get('formats')
+    same_formats = (fa is None and fb is None) or (fa is not None and fb is not None and set(fa) == set(fb))
+    return same_formats and set(a.get('tags') or ()) == set(b.get('tags') or ())

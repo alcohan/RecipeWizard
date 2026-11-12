@@ -304,3 +304,30 @@ def test_merge_brings_print_settings_with_a_new_recipe(lib, tmp_path):
     (new_id,), _ = lib.sql("SELECT Id FROM Recipes WHERE Name = 'Salad';")
     data = db.recipe_print_data(new_id[0])
     assert (data['nutrition_title'], [c['name'] for c in data['cards']]) == ('As served', ['House vinaigrette'])
+
+
+def _long_page(statement, rows=10):
+    return {'name': 'Long', 'unit': 'each', 'output_qty': 1, 'weight': None, 'format': None, 'tags': [],
+            'diets': [], 'allergens': [], 'facility': [], 'free_of': [], 'portions': False,
+            'rows': [{'name': f'Item {i}', 'type': 'ingredient', 'amount': '1 oz', 'tool': None,
+                      'allergens': '', 'facility': '', 'from_template': False, 'statement': statement}
+                     for i in range(rows)]}
+
+
+def test_a_long_page_shrinks_statements_before_spilling():
+    import os
+    os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+    from PySide6.QtWidgets import QApplication
+    _app = QApplication.instance() or QApplication([])
+    from gui.printing import recipe_page as page
+    words = 'water, salt, sugar, vinegar, spices, garlic powder, onion powder, xanthan gum, ' * 3
+    natural = page.RecipePageLayout(_long_page(words), 612.0, 792.0, 'Disclaimer.')
+    fitted = page._fitted_layout(_long_page(words), 612.0, 792.0, 'Disclaimer.')
+    assert len(natural.pages) == 2 and len(fitted.pages) == 1
+    assert fitted.statement_pt < page.FIT_STEPS[0][0]
+    # A page that fits as is keeps the normal look.
+    short = page._fitted_layout(_long_page('water, salt', rows=4), 612.0, 792.0, '')
+    assert (short.statement_pt, short.row_pad) == page.FIT_STEPS[0]
+    # One that doesn't fit at any step runs on at the normal size.
+    huge = page._fitted_layout(_long_page(words * 3, rows=14), 612.0, 792.0, '')
+    assert len(huge.pages) > 1 and huge.statement_pt == page.FIT_STEPS[0][0]

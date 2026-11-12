@@ -214,9 +214,11 @@ def compute(data):
                     continue
                 if not output:
                     continue
+                parts = []      # [(ingredient id, signed $ per unit)]: what moved the cost
                 if action == 'add':
                     qty = _num(rule['quantity'])
                     delta = costs.get(rule['to_ingredient'], 0) * (1 if qty is None else qty) / output
+                    parts = [(rule['to_ingredient'], delta)]
                 else:
                     used = usage.get((rid, rule['from_ingredient']))
                     if not used:
@@ -224,12 +226,14 @@ def compute(data):
                     old = costs.get(rule['from_ingredient'], 0) * used
                     if action == 'remove':
                         delta = -old / output
+                        parts = [(rule['from_ingredient'], delta)]
                     else:
                         ratio = _num(rule['quantity'])
                         new = costs.get(rule['to_ingredient'], 0) * used * (1 if ratio is None else ratio)
                         delta = (new - old) / output
+                        parts = [(rule['from_ingredient'], -old / output), (rule['to_ingredient'], new / output)]
                 cost += delta
-                applied.append({'rule_id': rule['id'], 'action': action, 'delta': delta})
+                applied.append({'rule_id': rule['id'], 'action': action, 'delta': delta, 'parts': parts})
             override = data['prices'].get((sid, rid))
             if override is not None:
                 price = _num(override)
@@ -241,6 +245,16 @@ def compute(data):
                                    'excluded': False, 'applied': applied}
         out.append(entry)
     return {'scenarios': [{'id': s['id'], 'name': s['name']} for s in data['scenarios']], 'recipes': out}
+
+
+def ingredient_changes(cell):
+    '''[(ingredient id, signed $ per unit)] behind a cell's cost change,
+    one line per ingredient, largest first; price rules aren't cost.'''
+    total = {}
+    for a in cell.get('applied') or ():
+        for ing, amount in a.get('parts') or ():
+            total[ing] = total.get(ing, 0.0) + amount
+    return sorted(((i, v) for i, v in total.items() if abs(v) >= 0.005), key=lambda kv: -abs(kv[1]))
 
 
 def _money(value, signed=False):

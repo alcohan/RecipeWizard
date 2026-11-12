@@ -62,6 +62,15 @@ def _fmt_qty(q):
     return '{:.2f}'.format(float(q)).rstrip('0').rstrip('.')
 
 
+def _number(v):
+    '''A float, or None for a missing or non-numeric value (a stray ''
+    would otherwise stop the row painting halfway, leaving it blank).'''
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 class _MatchDelegate(QStyledItemDelegate):
     '''[pill] name ............ $0.04 / oz · 37 kcal'''
 
@@ -120,10 +129,11 @@ class _MatchDelegate(QStyledItemDelegate):
             meta = f'Already in recipe · {_fmt_qty(existing)} {unit or ""}'.rstrip()
         else:
             parts = []
+            cost, kcal = _number(cost), _number(kcal)
             if cost is not None:
-                parts.append(f'${float(cost):.2f} / {unit or "unit"}')
+                parts.append(f'${cost:.2f} / {unit or "unit"}')
             if kcal is not None:
-                parts.append(f'{float(kcal):,.0f} kcal')
+                parts.append(f'{kcal:,.0f} kcal')
             meta = ' · '.join(parts)
         painter.setFont(small)
         meta_w = painter.fontMetrics().horizontalAdvance(meta)
@@ -159,17 +169,18 @@ class _SearchField(QLineEdit):
 
 
 class RecipeComponentAddDialog(QDialog):
-    def __init__(self, recipe_id, recipe_name, parent=None, ingredients_only=False, on_add=None):
-        '''`ingredients_only=True` hides sub-recipe rows from the picker.
-        Used by the templates manager — templates only hold ingredients,
-        and offering recipes there can create circular references when the
-        template is later applied to a recipe in the cycle.'''
+    def __init__(self, recipe_id, recipe_name, parent=None, ingredients_only=False, on_add=None,
+                 exclude_recipes=()):
+        '''`ingredients_only=True` hides sub-recipe rows from the picker;
+        `exclude_recipes` hides just those recipes (a format's template
+        can't hold one that is the format or contains one).'''
         super().__init__(parent)
         self.setWindowTitle(f'{config.APPNAME} | Add to {recipe_name}')
         self.resize(620, 700)
 
         self.recipe_id = recipe_id
         self._ingredients_only = ingredients_only
+        self._exclude_recipes = set(exclude_recipes or ())
         self._on_add = on_add
         self._kind = 'all'
         # `selected` and `qty` are populated on Add when there's no callback.
@@ -357,6 +368,8 @@ class RecipeComponentAddDialog(QDialog):
         eligible = db.get_eligible_ingredients(self.recipe_id)
         if self._ingredients_only:
             eligible = [row for row in eligible if row[1] != 'recipe']
+        elif self._exclude_recipes:
+            eligible = [row for row in eligible if not (row[1] == 'recipe' and row[0] in self._exclude_recipes)]
         # Like the Ingredients gallery: ingredients by category order, then
         # name (uncategorized last); sub-recipes after them, by name.
         cat_order = {t['name']: i for i, t in enumerate(db.get_tags('ingredient'))}

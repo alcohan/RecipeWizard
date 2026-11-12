@@ -740,9 +740,15 @@ class ScenariosPage(QWidget):
         self._do('Change left-out tags', lambda: scenarios.set_scenario_exclusions(s['id'], tag_ids))
 
     def _suggested(self, tag_id):
+        '''The format's template items, with a sub-recipe item (a packaging
+        kit) opened up into its ingredients: rules swap ingredients.'''
         if tag_id is None:
             return []
-        return [c['child_ingredient'] for c in db.get_tag_components(tag_id) if c['child_ingredient']]
+        out = []
+        for c in db.get_tag_components(tag_id):
+            ids = [c['child_ingredient']] if c['child_ingredient'] else db.recipe_leaf_ingredient_ids(c['child_recipe'])
+            out += [i for i in ids if i and i not in out]
+        return out
 
     def add_rule(self, tag_id, scope_name):
         s = self.current()

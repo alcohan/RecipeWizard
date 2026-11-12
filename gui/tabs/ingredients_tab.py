@@ -404,9 +404,24 @@ class IngredientsTab(QWidget):
         name = self.source_model.row_dict(src_row)['Name']
         if archived and not confirm_archive_ingredient(self, ingredient_id, name):
             return False
+        if archived and not self.proxy.includes_archived() and ingredient_id == self._selected_id:
+            # It's about to disappear: land on the row below it (the one
+            # above when it's last), not back at the top.
+            self._selected_id = self._neighbor_id(ingredient_id)
         db.set_ingredient_status(ingredient_id, 'archived' if archived else 'active')
         self.source_model.refresh()
         return True
+
+    def _neighbor_id(self, ingredient_id):
+        '''The ingredient after this one in the list (before it when it's
+        last), or None when it's the only one.'''
+        ids = [self.source_model.id_at_row(self.proxy.mapToSource(self.proxy.index(r, 0)).row())
+               for r in range(self.proxy.rowCount())]
+        if ingredient_id not in ids:
+            return None
+        i = ids.index(ingredient_id)
+        others = ids[i + 1:] + ids[:i][::-1]
+        return others[0] if others else None
 
     def toggle_archived(self, ingredient_id):
         return self.set_archived(ingredient_id, not self.is_archived(ingredient_id))

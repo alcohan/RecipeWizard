@@ -772,10 +772,18 @@ class _Merger:
         (see _empty_template). An older backup's multipliers were dropped
         when it was migrated; their effect is in its recipes' quantities.'''
         tags, ingredients = self.maps['tags'], self.maps['ingredients']
+        recipes = self.maps.get('recipes', {})
         for src_tag in self._new_formats:
             tag_id = tags[src_tag]
             for row in self.src_rows('tag_components', 'id'):
-                if row['tag_id'] != src_tag or row.get('child_ingredient') not in ingredients:
+                if row['tag_id'] != src_tag:
+                    continue
+                if row.get('child_recipe') is not None:
+                    if row['child_recipe'] in recipes:       # a sub-recipe item (a packaging kit)
+                        self.insert('tag_components', row, tag_id=tag_id, child_ingredient=None,
+                                    child_recipe=recipes[row['child_recipe']])
+                    continue
+                if row.get('child_ingredient') not in ingredients:
                     continue
                 self.insert('tag_components', row, tag_id=tag_id, child_recipe=None,
                             child_ingredient=ingredients[row['child_ingredient']])

@@ -8,6 +8,9 @@ table continues on more pages. Layout, top to bottom:
                 allergen box; the wedge top-right
   body          ingredients table; nutrition facts and the scoop key
                 beside it (first page only)
+A page that would spill over first tightens the rows and shrinks the
+ingredient statements (FIT_STEPS); it only runs onto a second page when
+even the smallest step doesn't fit.
   footer        footer text · "name · Page 1 of 2"
 No cost anywhere. Data comes from db.recipe_print_data(); branding from
 gui.services.print_branding.
@@ -44,7 +47,7 @@ MARGIN_X = 43.0
 MARGIN_TOP = 34.0
 MARGIN_BOTTOM = 30.0
 SIDE_W = 150.0          # nutrition + scoop key column
-WEDGE = SIDE_W          # the photo or wedge sits over that column
+WEDGE = 112.0           # the photo or wedge, top-right over that column
 GUTTER = 16.0
 FAMILY = 'Segoe UI'
 
@@ -57,7 +60,9 @@ _COLUMNS = (
     ('allergens', 'Allergens', 74.0),
 )
 _CELL_PAD = 4.0
-_ROW_PAD = 5.0
+# (statement point size, row padding), tried in order until the table
+# fits one page; the first is the normal look.
+FIT_STEPS = ((7.0, 5.0), (6.5, 4.0), (6.0, 3.5), (5.5, 3.0))
 
 _NUTRIENT_ROWS = (
     # (label, key, unit, indent, bold)
@@ -188,11 +193,11 @@ F_DISCLAIMER = _font(7.0)
 F_DISCLAIMER.setItalic(True)
 
 
-def _statement_doc(text, width):
+def _statement_doc(text, width, pt=7.0):
     '''"Ingredients: …" laid out as rich text `width` points wide.'''
     doc = QTextDocument()
     doc.setDocumentMargin(0)
-    doc.setDefaultFont(F_STATEMENT)
+    doc.setDefaultFont(F_STATEMENT if pt == 7.0 else _font(pt))
     doc.setTextWidth(width * _U)
     doc.setHtml(f'<span style="color:{MUTED.name()}"><b style="color:{INK.name()}">Ingredients:</b> '
                 f'{escape(text)}</span>')
@@ -205,8 +210,9 @@ class RecipePageLayout:
     '''Where one recipe's pages break. Measures without painting, so
     the footer can say "Page 1 of 2" before anything is drawn.'''
 
-    def __init__(self, data, page_w, page_h, disclaimer=''):
+    def __init__(self, data, page_w, page_h, disclaimer='', fit=FIT_STEPS[0]):
         self.data = data
+        self.statement_pt, self.row_pad = fit
         self.disclaimer = (disclaimer or '').strip()
         self.page_w, self.page_h = page_w, page_h
         self.content_w = page_w - 2 * MARGIN_X
@@ -231,16 +237,17 @@ class RecipePageLayout:
         if row.get('facility'):
             alg_h += m.wrapped_height(F_CELL_ALG, 'facility: ' + row['facility'], alg_w)
         tool_h = m.line_height(F_TOOL) if row['tool'] else 0
-        return max(name_h, alg_h, tool_h, m.line_height(F_AMOUNT)) + 2 * _ROW_PAD
+        return max(name_h, alg_h, tool_h, m.line_height(F_AMOUNT)) + 2 * self.row_pad
 
     def _statement_height(self, m, row):
         '''Extra height under a row for its ingredient statement.'''
         if not row.get('statement'):
             return 0.0
-        return _statement_doc(row['statement'], self.statement_w).size().height() / _U + _ROW_PAD
+        doc = _statement_doc(row['statement'], self.statement_w, self.statement_pt)
+        return doc.size().height() / _U + self.row_pad
 
     def body_top_first(self, m):
-        return self.title_block_bottom(m) + 14.0
+        return self.title_block_bottom(m) + 10.0
 
     def body_top_more(self, m):
         return MARGIN_TOP + 24.0 + 12.0 + m.line_height(F_META_BOLD) + 10.0
@@ -350,6 +357,18 @@ class RecipePageLayout:
             top = self.body_top_more(m) + self.header_height(m)
 
 
+def _fitted_layout(data, page_w, page_h, disclaimer):
+    '''The first FIT_STEPS layout whose table fits one page; the normal
+    one when none does (the table then continues on page 2).'''
+    first = None
+    for fit in FIT_STEPS:
+        layout = RecipePageLayout(data, page_w, page_h, disclaimer, fit)
+        if len(layout.pages) == 1:
+            return layout
+        first = first or layout
+    return first
+
+
 class RecipePagePainter:
     '''Paint one recipe's pages. `new_page()` is called between pages.'''
 
@@ -361,7 +380,7 @@ class RecipePagePainter:
         self.accent = QColor(branding.get('accent') or '#082c00')
         self.logo = logo
         self.printed = printed or date.today()
-        self.layout = RecipePageLayout(data, page_w, page_h, branding.get('disclaimer') or '')
+        self.layout = _fitted_layout(data, page_w, page_h, branding.get('disclaimer') or '')
         self.page_w, self.page_h = page_w, page_h
         self.side_pages = self._plan_side()
         while len(self.layout.pages) < len(self.side_pages):
@@ -497,7 +516,7 @@ class RecipePagePainter:
 
     def _row(self, x, y, h, number, row):
         g, W = self.g, self.layout.widths
-        cy = y + _ROW_PAD
+        cy = y + self.layout.row_pad
         mid = Qt.AlignLeft | Qt.AlignTop
         g.text(x + _CELL_PAD, cy, W['n'] - 2 * _CELL_PAD, 12, F_TOOL_PLAIN, MUTED, str(number),
                Qt.AlignRight | Qt.AlignTop)
@@ -534,7 +553,7 @@ class RecipePagePainter:
             sh = L.statement_heights[number - 1]
             sx = MARGIN_X + W['n'] + _CELL_PAD
             sy = y + h - sh
-            doc = _statement_doc(row['statement'], L.statement_w)
+            doc = _statement_doc(row['statement'], L.statement_w, L.statement_pt)
             self.p.save()
             self.p.translate(sx * _U, sy * _U)
             doc.drawContents(self.p)

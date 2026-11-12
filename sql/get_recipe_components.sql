@@ -53,14 +53,32 @@ LEFT JOIN tag_portion_rules pr
 -- listed so it can be edited or removed. Cost and nutrition rollups
 -- still see every Connections row via the views, so packaging always
 -- factors into recipe cost.
+-- A sub-recipe the template added counts as packaging when everything in
+-- it is (a packaging kit: bowl, lid, fork, napkin).
 WHERE c.ParentRecipe = ?
   AND NOT (
     c.from_template_tag_id IS NOT NULL
-    AND EXISTS (
-      SELECT 1 FROM ingredient_tags_mapping itm
-      JOIN tags t ON t.id = itm.tag_id
-      WHERE itm.ingredient_id = c.ChildIngredient
-        AND t.kind = 'ingredient' AND t.name = 'Packaging'
+    AND (
+      EXISTS (
+        SELECT 1 FROM ingredient_tags_mapping itm
+        JOIN tags t ON t.id = itm.tag_id
+        WHERE itm.ingredient_id = c.ChildIngredient
+          AND t.kind = 'ingredient' AND t.name = 'Packaging'
+      )
+      OR (
+        c.ChildRecipe IS NOT NULL
+        AND EXISTS (SELECT 1 FROM recipe_ingredients_expanded kx WHERE kx.recipe_id = c.ChildRecipe)
+        AND NOT EXISTS (
+          SELECT 1 FROM recipe_ingredients_expanded kx
+          WHERE kx.recipe_id = c.ChildRecipe
+            AND NOT EXISTS (
+              SELECT 1 FROM ingredient_tags_mapping itm
+              JOIN tags t ON t.id = itm.tag_id
+              WHERE itm.ingredient_id = kx.ingredient_id
+                AND t.kind = 'ingredient' AND t.name = 'Packaging'
+            )
+        )
+      )
     )
   )
 ORDER BY c.SortOrder, c.rowid

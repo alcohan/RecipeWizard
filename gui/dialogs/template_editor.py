@@ -300,7 +300,7 @@ class TemplatesEditor(QWidget):
         ic.addWidget(head_wrap)
 
         self.items_table = QTableWidget(0, 5)
-        self.items_table.setHorizontalHeaderLabels(['Ingredient', 'Qty', 'Unit', 'Cost', ''])
+        self.items_table.setHorizontalHeaderLabels(['Item', 'Qty', 'Unit', 'Cost', ''])
         self.items_table.verticalHeader().setVisible(False)
         self.items_table.verticalHeader().setDefaultSectionSize(36)
         self.items_table.setShowGrid(False)
@@ -490,12 +490,15 @@ class TemplatesEditor(QWidget):
             self.items_table.setRowCount(len(rows))
             for r, row in enumerate(rows):
                 cat = db.get_ingredient_tag(row['child_ingredient']) if row['child_ingredient'] else None
-                name_item = QTableWidgetItem(row['Name'] or '')
+                sub = row['child_recipe'] is not None
+                name_item = QTableWidgetItem((row['Name'] or '') + ('  · sub-recipe' if sub else ''))
                 name_item.setData(Qt.UserRole, row['id'])
                 name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
-                name_item.setIcon(QIcon(_dot((cat or {}).get('color') or '#a7ad9c')))
+                name_item.setIcon(QIcon(_dot((cat or {}).get('color') or (kit.ROMAINE if sub else '#a7ad9c'))))
                 if cat:
                     name_item.setToolTip(cat['name'])
+                elif sub:
+                    name_item.setToolTip('Sub-recipe: its ingredients count in every recipe of this format')
                 qty_item = QTableWidgetItem(_fmt_qty(row['quantity']))
                 qty_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 qty_item.setToolTip('Double-click to change')
@@ -546,9 +549,10 @@ class TemplatesEditor(QWidget):
         tag = self._current_tag()
         if not tag:
             return
-        # Ingredients only: a sub-recipe in a template creates a cycle as
-        # soon as a recipe in its subtree is tagged with this format.
-        dlg = RecipeComponentAddDialog(0, f"Format: {tag['name']}", parent=self, ingredients_only=True)
+        # Sub-recipes too (a packaging kit), except ones that are this
+        # format or contain one: applying those would loop.
+        dlg = RecipeComponentAddDialog(0, f"Format: {tag['name']}", parent=self,
+                                       exclude_recipes=db.template_blocked_recipes(tag['id']))
         if dlg.exec() != QDialog.Accepted or not dlg.selected:
             return
         child_id, mode, _name, _unit, *_ = dlg.selected

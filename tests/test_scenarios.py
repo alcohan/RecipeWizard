@@ -74,6 +74,11 @@ def test_substitution_scoped_to_format(lib, menu):
     assert cells[menu['wrap']]['cost'] == pytest.approx(1.40)
     assert cells[menu['wrap']]['applied'] == []
     assert cells[menu['salad']]['applied'][0]['delta'] == pytest.approx(0.20)
+    parts = dict(sc.ingredient_changes(cells[menu['salad']]))      # old bowl out, new bowl in
+    assert set(parts) == {menu['salad_bowl'], menu['air_salad']}
+    assert parts[menu['air_salad']] + parts[menu['salad_bowl']] == pytest.approx(0.20)
+    assert parts[menu['salad_bowl']] < 0 < parts[menu['air_salad']]
+    assert sc.ingredient_changes(cells[menu['wrap']]) == []
 
 
 def test_substitution_ratio(lib, menu):
@@ -391,10 +396,10 @@ def test_matrix_view_rows_and_export(lib, menu, qapp):
     view.refresh()
     assert view.body.isVisibleTo(view)
     assert len(view.scenario_ids()) == 2                     # all chosen by default
-    assert view.table.columnCount() == 3 + 2 * 3
+    assert view.table.columnCount() == 3 + 2 * 4
     assert view.table.rowCount() == 3 + 1                    # recipes + average row
     view.set_chosen(view.scenario_ids()[1], False)
-    assert view.scenario_ids() == [sid] and view.table.columnCount() == 6
+    assert view.scenario_ids() == [sid] and view.table.columnCount() == 7
 
     view.changed_only.setChecked(True)
     assert {r['id'] for r in view.visible_recipes()} == {menu['salad'], menu['bowl']}
@@ -403,6 +408,10 @@ def test_matrix_view_rows_and_export(lib, menu, qapp):
     assert [r['id'] for r in view.visible_recipes()] == [menu['salad']]
     tip = view.table.item(0, 3).toolTip()
     assert 'Swap Salad Bowl 32oz → Airport Salad Bowl' in tip and '+$0.20' in tip
+    change = view.table.item(0, 4)                            # Cost change, with its ingredients
+    assert change.text() == '+$0.20'
+    assert 'Salad Bowl 32oz' in change.toolTip() and 'Airport Salad Bowl' in change.toolTip()
+    assert 'Net' in change.toolTip()
 
     rows = view.csv_rows()
     assert [r[2] for r in rows[1:]] == ['Baseline', 'SeaTac']
@@ -414,9 +423,9 @@ def test_matrix_view_left_out_spans(lib, menu, qapp):
     sc.set_scenario_exclusions(sid, [menu['Wrap']])
     view = ScenarioMatrix()
     view.refresh()
-    row = next(i for i, r in enumerate(view._shown) if r['id'] == menu['wrap'])
+    row = next(i for i, r in enumerate(view._table_rows) if r and r['id'] == menu['wrap'])
     assert view.table.item(row, 3).text() == 'Left out'
-    assert view.table.columnSpan(row, 3) == 3
+    assert view.table.columnSpan(row, 3) == 4
 
 
 # --- the rest of the app ---------------------------------------------------

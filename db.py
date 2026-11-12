@@ -182,6 +182,14 @@ def set_ingredient_allergens(ingredient_id, allergen_ids, facility_ids=()):
               (ingredient_id, aid))
 
 
+def _nutrition_params(values):
+    '''The nutrition values in column order, a blank field as NULL (not
+    '', which reads as text where a number belongs).'''
+    return tuple(None if str(values[k] if values[k] is not None else '').strip() == '' else values[k]
+                 for k in ('Calories', 'TTLFatGrams', 'SatFatGrams', 'CholesterolMilligrams', 'SodiumMilligrams',
+                           'CarbGrams', 'FiberGrams', 'SugarGrams', 'ProteinGrams'))
+
+
 def update_ingredient(id, values):
     '''
     Updates ingredient Id with new values
@@ -192,15 +200,7 @@ def update_ingredient(id, values):
         values['Portion'],
         values['Weight'],
         sub(r'[^\d.]', '', values['Cost']),
-        values['Calories'],
-        values['TTLFatGrams'],
-        values['SatFatGrams'],
-        values['CholesterolMilligrams'],
-        values['SodiumMilligrams'],
-        values['CarbGrams'],
-        values['FiberGrams'],
-        values['SugarGrams'],
-        values['ProteinGrams'],
+        *_nutrition_params(values),
         values.get('ImageFilename') or None,
     )
     result = query_from_file('sql\\update_ingredient_info.sql',params,filter = f'WHERE Id={id}')
@@ -218,15 +218,7 @@ def create_ingredient( values):
         values['Portion'],
         values['Weight'],
         sub(r'[^\d.]', '', values['Cost']),
-        values['Calories'],
-        values['TTLFatGrams'],
-        values['SatFatGrams'],
-        values['CholesterolMilligrams'],
-        values['SodiumMilligrams'],
-        values['CarbGrams'],
-        values['FiberGrams'],
-        values['SugarGrams'],
-        values['ProteinGrams'],
+        *_nutrition_params(values),
         values.get('ImageFilename') or None,
     )
     result = query_from_file('sql\\create_ingredient.sql',params)
@@ -406,6 +398,12 @@ def delete_recipe(id):
     Delete the Recipe Id
     Raises Exception if the recipe is included as an ingredient in any others
     '''
+    formats = [r['name'] for r in query(
+        'SELECT DISTINCT t.name FROM tag_components tc JOIN tags t ON t.id = tc.tag_id'
+        ' WHERE tc.child_recipe = ? ORDER BY t.name;', (id,))['data']]
+    if formats:
+        raise Exception(f"Unable to delete. Recipe is an item of the {', '.join(formats)} "
+                        f"format{'s' if len(formats) != 1 else ''}; remove it there first.")
     number_of_references = query(f'SELECT COUNT(*) AS Count FROM Connections WHERE ChildRecipe={id};', one=True)['Count']
 
     if number_of_references==0:
@@ -808,20 +806,55 @@ def get_tag_components(tag_id):
     return query(sql, (tag_id,))['data']
 
 
+# Recipes that are this format, or contain one (at any depth). A
+# template can't hold any of them as a sub-recipe: applying it would put
+# a recipe inside itself, and the recursive cost views never finish on
+# a cycle. UNION (not UNION ALL) also ends on a cycle already there.
+_FORMAT_AND_ANCESTORS = '''
+    WITH RECURSIVE up(id) AS (
+        SELECT recipe_id FROM recipe_tags_mapping WHERE tag_id = ?
+        UNION
+        SELECT c.ParentRecipe FROM Connections c JOIN up ON c.ChildRecipe = up.id
+    )
+    SELECT id FROM up'''
+
+
+def recipe_leaf_ingredient_ids(recipe_id):
+    '''Every ingredient inside a recipe, through its sub-recipes.'''
+    return [r['ingredient_id'] for r in query(
+        'SELECT DISTINCT ingredient_id FROM recipe_ingredients_expanded WHERE recipe_id = ?;',
+        (recipe_id,))['data']]
+
+
+def template_blocked_recipes(tag_id):
+    '''Ids of the recipes a format's template can't include as a
+    sub-recipe (see _FORMAT_AND_ANCESTORS).'''
+    return {r['id'] for r in query(_FORMAT_AND_ANCESTORS + ';', (tag_id,))['data']}
+
+
+def _contains(cur, recipe_id, other_id):
+    '''True if `other_id` is `recipe_id` or sits anywhere inside it.'''
+    cur.execute('''
+        WITH RECURSIVE down(id) AS (
+            SELECT ?
+            UNION
+            SELECT c.ChildRecipe FROM Connections c JOIN down ON c.ParentRecipe = down.id
+            WHERE c.ChildRecipe IS NOT NULL
+        )
+        SELECT 1 FROM down WHERE id = ? LIMIT 1;''', (recipe_id, other_id))
+    return cur.fetchone() is not None
+
+
 def add_tag_component(tag_id, mode, child_id, quantity=1.0):
-    '''Add an item to a template. `mode` must be 'ingredient' — sub-recipes
-    are intentionally rejected here, because a recipe tagged with this
-    template would gain itself as a Connections row during reconcile and
-    the recursive CTE in RecipesWithNutrition hangs forever on the cycle.
-    The schema still accepts `child_recipe` (legacy / forward-compat), but
-    the code never inserts one.'''
+    '''Add an item to a template: an ingredient, or a sub-recipe (e.g. a
+    packaging kit). A sub-recipe that is this format, or contains one,
+    is refused: applying it would put a recipe inside itself.'''
     if mode == 'ingredient':
         recipe, ingredient = None, child_id
     elif mode == 'recipe':
-        raise ValueError(
-            'Templates cannot contain sub-recipes — adding one risks a '
-            'cycle when the template is applied. Add ingredients only.'
-        )
+        if child_id in template_blocked_recipes(tag_id):
+            raise ValueError("That recipe is in this format, or contains one, so it can't be one of its items.")
+        recipe, ingredient = child_id, None
     else:
         raise ValueError(f'Invalid mode: {mode}')
     return query(
@@ -1320,13 +1353,16 @@ def apply_template_to_recipes(tag_id):
 
 
 def _template_items(cur, tag_id):
-    '''{ingredient_id: quantity} a template adds (ingredients only — see
-    add_tag_component on why sub-recipes are refused).'''
+    '''{('ingredient' | 'recipe', id): quantity} a template adds.'''
     if not tag_id:
         return {}
-    cur.execute('SELECT child_ingredient, quantity FROM tag_components'
-                ' WHERE tag_id = ? AND child_ingredient IS NOT NULL;', (tag_id,))
-    return {ing: (qty if qty is not None else 1.0) for ing, qty in cur.fetchall()}
+    cur.execute('SELECT child_ingredient, child_recipe, quantity FROM tag_components WHERE tag_id = ?;', (tag_id,))
+    items = {}
+    for ing, rec, qty in cur.fetchall():
+        key = ('recipe', rec) if rec is not None else ('ingredient', ing)
+        if key[1] is not None:
+            items[key] = qty if qty is not None else 1.0
+    return items
 
 
 def _reconcile_items(cur, recipe_id, tag_id, old_tag_id=None):
@@ -1337,25 +1373,31 @@ def _reconcile_items(cur, recipe_id, tag_id, old_tag_id=None):
     appended. Other hand-added rows are untouched.'''
     items = _template_items(cur, tag_id)
     attributed = {t for t in (tag_id, old_tag_id) if t}
-    cur.execute('SELECT rowid, ChildIngredient, Quantity, from_template_tag_id, portion_share'
+    cur.execute('SELECT rowid, ChildIngredient, ChildRecipe, Quantity, from_template_tag_id, portion_share'
                 ' FROM Connections WHERE ParentRecipe = ?;', (recipe_id,))
     present = set()
-    for rowid, ingredient, qty, template, share in cur.fetchall():
-        if ingredient in items:
-            present.add(ingredient)
-            if (template, qty, share) != (tag_id, items[ingredient], None):
+    for rowid, ingredient, child_recipe, qty, template, share in cur.fetchall():
+        key = ('recipe', child_recipe) if child_recipe is not None else ('ingredient', ingredient)
+        if key in items:
+            present.add(key)
+            if (template, qty, share) != (tag_id, items[key], None):
                 cur.execute('UPDATE Connections SET from_template_tag_id = ?, Quantity = ?,'
-                            ' portion_share = NULL WHERE rowid = ?;', (tag_id, items[ingredient], rowid))
+                            ' portion_share = NULL WHERE rowid = ?;', (tag_id, items[key], rowid))
         elif template is not None and template in attributed:
             cur.execute('DELETE FROM Connections WHERE rowid = ?;', (rowid,))
-    for ingredient, qty in items.items():
-        if ingredient in present:
+    for (kind, child), qty in items.items():
+        if (kind, child) in present:
+            continue
+        # Never put a recipe inside itself (it moved into the format of a
+        # sub-recipe that contains it): skip the item for this recipe.
+        if kind == 'recipe' and _contains(cur, child, recipe_id):
             continue
         cur.execute('SELECT COALESCE(MAX(SortOrder), 0) + 1 FROM Connections WHERE ParentRecipe = ?;',
                     (recipe_id,))
         cur.execute('INSERT INTO Connections (ParentRecipe, ChildRecipe, ChildIngredient, Quantity,'
-                    ' SortOrder, from_template_tag_id) VALUES (?, NULL, ?, ?, ?, ?);',
-                    (recipe_id, ingredient, qty, cur.fetchone()[0], tag_id))
+                    ' SortOrder, from_template_tag_id) VALUES (?, ?, ?, ?, ?, ?);',
+                    (recipe_id, child if kind == 'recipe' else None, child if kind == 'ingredient' else None,
+                     qty, cur.fetchone()[0], tag_id))
 
 
 def transition_recipe_format(recipe_id, old_tag_id, new_tag_id):
