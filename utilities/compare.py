@@ -29,6 +29,19 @@ NUTRIENTS = [
 _SUMMED = ('cost',) + tuple(k for k, _l, _u in NUTRIENTS)
 
 
+SUB_RECIPE_GROUP = 'Sub-recipes'
+
+
+def format_groups(rows, order, format_of):
+    '''[(format name, rows)] in Configure's format `order`, recipes with no
+    format ("Sub-recipes") last; rows keep their order inside a group.'''
+    rank = {name: i for i, name in enumerate(order)}
+    groups = {}
+    for r in rows:
+        groups.setdefault(format_of(r) or SUB_RECIPE_GROUP, []).append(r)
+    return sorted(groups.items(), key=lambda kv: (kv[0] == SUB_RECIPE_GROUP, rank.get(kv[0], 1e6), kv[0]))
+
+
 def fmt(value, unit, decimals=0):
     '''"$3.42", "1,340 mg", "640"; None is "—".'''
     if value is None:

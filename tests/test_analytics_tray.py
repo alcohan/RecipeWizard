@@ -64,8 +64,7 @@ def test_adding_narrows_to_the_tray_in_order_archived_included(lib, menu, qapp):
 
 def test_filters_narrow_tray_or_all(lib, menu, qapp):
     _m, tab = _tab()
-    salad = next(t['id'] for t in tab._formats if t['name'] == 'Salad')
-    tab.set_filter('format', salad)
+    tab.set_filters({'formats': ['Salad'], 'tags': []})
     assert set(tab.shown_ids()) == {menu['cobb'], menu['caesar']}
     tab.add_by_name('Teriyaki')
     assert tab.shown_ids() == []                        # tray ∩ filter
@@ -75,10 +74,10 @@ def test_filters_narrow_tray_or_all(lib, menu, qapp):
 def test_clear_all_resets_tray_and_filters(lib, menu, qapp):
     _m, tab = _tab()
     tab.add_by_name('Cobb')
-    tab.set_filter('format', tab._formats[0]['id'])
+    tab.set_filters({'formats': ['Salad'], 'tags': []})
     tab.clear_all()
-    assert tab.recipe_ids() == [] and tab.filters() == {'format': None, 'tag': None}
-    assert tab.format_combo.currentIndex() == 0
+    assert tab.recipe_ids() == [] and tab.facets.is_default()
+    assert tab.filters()['tags'] == [] and 'Sub-recipes' not in (tab.filters()['formats'] or ['Sub-recipes'])
     assert len(tab.shown_ids()) == 3
     tab.clear_all()                                      # clearing an empty tray still works
     assert len(tab.shown_ids()) == 3
@@ -123,12 +122,12 @@ def test_print_shown_emits_what_is_shown(lib, menu, qapp):
     got = []
     tab.printRequested.connect(lambda ids, portions: got.append((ids, portions)))
     tab.print_shown()
-    assert set(got[0][0]) == {menu['cobb'], menu['caesar'], menu['teriyaki']} and got[0][1] is True
+    assert set(got[0][0]) == {menu['cobb'], menu['caesar'], menu['teriyaki']} and got[0][1] is False
     tab.add_by_name('Cobb')
-    tab.print_shown(portions=False)
-    assert got[1] == ([menu['cobb']], False)
+    tab.print_shown(portions=True)
+    assert got[1] == ([menu['cobb']], True)
     assert tab.print_btn.isEnabled()
-    tab.set_filter('format', next(t['id'] for t in tab._formats if t['name'] == 'Bowl'))
+    tab.set_filters({'formats': ['Bowl'], 'tags': []})
     assert tab.print_shown() == [] and len(got) == 2 and not tab.print_btn.isEnabled()
 
 
@@ -136,13 +135,64 @@ def test_saved_comparison_keeps_tray_and_filters(lib, menu, qapp):
     _m, tab = _tab()
     tab.add_by_name('Cobb')
     tab.add_by_name('Teriyaki')
-    salad = next(t['id'] for t in tab._formats if t['name'] == 'Salad')
-    tab.set_filter('format', salad)
+    tab.set_filters({'formats': ['Salad'], 'tags': []})
     cid = tab.save_comparison('Salads')
     assert tab.active_saved() == cid
     tab.clear_all()
     assert tab.active_saved() is None
     tab.load_comparison(cid)
     assert tab.recipe_ids() == [menu['cobb'], menu['teriyaki']]
-    assert tab.filters()['format'] == salad and tab.shown_ids() == [menu['cobb']]
+    assert tab.filters()['formats'] == ['Salad'] and tab.shown_ids() == [menu['cobb']]
     assert tab.active_saved() == cid
+
+
+def test_sub_recipes_start_hidden_like_the_library(lib, menu, qapp):
+    ranch = lib.recipe('Ranch')                          # no format: a sub-recipe
+    _m, tab = _tab()
+    assert ranch not in tab.shown_ids()
+    boxes = tab.facets._groups['format']['boxes']
+    assert not boxes['__sub__'].isChecked() and boxes['Salad'].isChecked()
+    boxes['__sub__'].setChecked(True)
+    assert ranch in tab.shown_ids()
+    assert tab.save_btn.isEnabled()                      # a changed filter can be saved
+
+
+def test_tags_filter_with_checkboxes(lib, menu, qapp):
+    core = lib.sql("INSERT INTO tags (name, kind) VALUES ('Core', 'recipe_tag');")[1]
+    lib.sql('INSERT INTO recipe_tags_mapping (tag_id, recipe_id) VALUES (?, ?);', (core, menu['cobb']))
+    _m, tab = _tab()
+    tab.facets._groups['tag']['boxes'][core].setChecked(True)
+    assert tab.shown_ids() == [menu['cobb']]
+    tab.facets._groups['tag']['boxes'][None].setChecked(True)   # Untagged too
+    assert set(tab.shown_ids()) == {menu['cobb'], menu['caesar'], menu['teriyaki']}
+
+
+def test_filters_are_remembered(lib, menu, qapp):
+    _m, tab = _tab()
+    tab.set_filters({'formats': ['Bowl'], 'tags': []})
+    _m2, again = _tab()
+    assert again.shown_ids() == [menu['teriyaki']]
+
+
+def test_an_older_saved_comparison_still_opens(lib, menu, qapp):
+    import db
+    salad = lib.tag('Salad', 'recipe')
+    cid = db.create_saved_comparison('Old', [], {'format': salad, 'tag': 0, 'metric': 'cost'})
+    _m, tab = _tab()
+    tab.load_comparison(cid)
+    assert set(tab.shown_ids()) == {menu['cobb'], menu['caesar']}
+    assert tab.active_saved() == cid
+
+
+def test_rows_are_grouped_by_format_by_default(lib, menu, qapp):
+    _m, tab = _tab()
+    assert tab.group() == 'format'
+    rows = tab.pricing._table_rows
+    headings = [tab.pricing.table.item(i, 0).text() for i, r in enumerate(rows) if r is None]
+    assert [h.split()[0] for h in headings] == ['Salads', 'Bowls']        # Configure's format order
+    assert [r['name'] for r in rows if r] == ['Caesar', 'Cobb', 'Teriyaki']
+    tab.set_group('none')
+    assert None not in tab.pricing._table_rows and None not in tab.scenarios._table_rows
+    tab.set_group('format')
+    tab.pricing.sort_by('name', descending=True)           # sorting stays inside each group
+    assert [r['name'] for r in tab.pricing._table_rows if r] == ['Cobb', 'Caesar', 'Teriyaki']

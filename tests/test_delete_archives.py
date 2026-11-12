@@ -159,3 +159,55 @@ def test_inspector_archive_buttons_show_the_key(lib, menu, qapp):
     tab._select_id(menu['caesar'])
     tab._update_inspector()
     assert tab.inspector.archive_btn.text() == 'Archive   Del'
+
+
+def test_archiving_an_ingredient_selects_the_next_row(lib, menu, qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from gui.models.ingredients_model import IngredientsModel
+    from gui.tabs.ingredients_tab import IngredientsTab
+    extra = lib.ingredient('Zest', '1 oz', 'Greens')            # unused, so no question
+    tab = IngredientsTab(IngredientsModel(), context_actions=[])
+    _show(tab, qapp)
+    tab._set_view('table', persist=False)
+    qapp.processEvents()
+    order = [tab.source_model.id_at_row(tab.proxy.mapToSource(tab.proxy.index(r, 0)).row())
+             for r in range(tab.proxy.rowCount())]
+    target = menu['spare']
+    expected = order[order.index(target) + 1] if order.index(target) + 1 < len(order) else order[order.index(target) - 1]
+    tab._select_id(target)
+    qapp.processEvents()
+    tab.table.setFocus()
+    QTest.keyClick(tab.table, Qt.Key_Delete)
+    for _ in range(3):
+        qapp.processEvents()
+    assert tab._selected_id == expected
+    assert tab.table.currentIndex().row() == order.index(target)   # same place in the list
+    # The last row falls back to the one above; a lone row has none.
+    rows = [tab.source_model.id_at_row(tab.proxy.mapToSource(tab.proxy.index(r, 0)).row())
+            for r in range(tab.proxy.rowCount())]
+    assert tab._neighbor_id(rows[-1]) == rows[-2]
+    assert tab._neighbor_id(rows[0]) == rows[1]
+
+
+@pytest.mark.parametrize('view', ['table', 'gallery'])
+def test_archiving_a_recipe_selects_the_next_one(lib, menu, qapp, view):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    lib.recipe('Dill Salad', 'Salad')
+    tab = _recipes_tab(qapp)
+    tab._set_view(view, persist=False)
+    qapp.processEvents()
+    order = tab.gallery.visible_ids() if view == 'gallery' else tab.visible_ids()
+    order = list(dict.fromkeys(order))
+    target = menu['caesar']
+    i = order.index(target)
+    expected = order[i + 1] if i + 1 < len(order) else order[i - 1]
+    tab._select_id(target)
+    target_widget = tab.table if view == 'table' else tab.gallery.scroll
+    target_widget.setFocus()
+    QTest.keyClick(target_widget, Qt.Key_Delete)
+    for _ in range(3):
+        qapp.processEvents()
+    assert _status(lib, 'Recipes', target) == 'archived'
+    assert tab._selected_id == expected

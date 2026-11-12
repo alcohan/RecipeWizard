@@ -369,13 +369,25 @@ def migrateDB(path=None):
     # template produced a self-referential Connections row when the
     # template was reconciled, and the recursive CTE in
     # RecipesWithNutrition hangs forever on that cycle. Two-step repair:
-    cursor.execute(
-        'SELECT COUNT(*) FROM tag_components WHERE child_recipe IS NOT NULL;'
-    )
-    bad_components = cursor.fetchone()[0]
+    # Templates may hold sub-recipes again (a packaging kit), but never
+    # one that is the format or contains one: drop any such item (and any
+    # whose recipe is gone).
+    cursor.execute('SELECT id, tag_id, child_recipe FROM tag_components WHERE child_recipe IS NOT NULL;')
+    bad_components = []
+    for comp_id, tag_id, child in cursor.fetchall():
+        cursor.execute('''
+            WITH RECURSIVE up(id) AS (
+                SELECT recipe_id FROM recipe_tags_mapping WHERE tag_id = ?
+                UNION
+                SELECT c.ParentRecipe FROM Connections c JOIN up ON c.ChildRecipe = up.id
+            )
+            SELECT 1 FROM up WHERE id = ?
+            UNION ALL SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM Recipes WHERE Id = ?);''', (tag_id, child, child))
+        if cursor.fetchone() is not None:
+            bad_components.append(comp_id)
     if bad_components:
-        print(f'Migrating: removing {bad_components} recipe-typed tag_components row(s)')
-        cursor.execute('DELETE FROM tag_components WHERE child_recipe IS NOT NULL;')
+        print(f'Migrating: removing {len(bad_components)} looping or dangling template sub-recipe item(s)')
+        cursor.executemany('DELETE FROM tag_components WHERE id = ?;', [(i,) for i in bad_components])
     cursor.execute(
         'SELECT COUNT(*) FROM Connections WHERE ParentRecipe = ChildRecipe;'
     )
@@ -649,6 +661,16 @@ WHERE NOT EXISTS (SELECT 1 FROM RecipeAllergens ra
     # like an airport store's packaging or take-out vs in-store. Read
     # only by utilities/scenarios.py, which never writes recipe data.
     cursor.executescript(SCENARIO_TABLES)
+
+    cursor.execute('''CREATE TRIGGER IF NOT EXISTS tag_components_recipe_deleted AFTER DELETE ON Recipes BEGIN
+        DELETE FROM tag_components WHERE child_recipe = OLD.Id;
+    END;''')
+
+    # A blank nutrition field used to be saved as '' rather than NULL,
+    # which reads as text where a number is expected.
+    for col in ('Calories', 'TTLFatGrams', 'SatFatGrams', 'CholesterolMilligrams', 'SodiumMilligrams',
+                'CarbGrams', 'FiberGrams', 'SugarGrams', 'ProteinGrams'):
+        cursor.execute(f"UPDATE Ingredients SET {col} = NULL WHERE typeof({col}) = 'text' AND trim({col}) = ''")
 
     if not column_exists('vendor_items', 'grams_per_each'):
         cursor.execute('ALTER TABLE vendor_items ADD COLUMN grams_per_each REAL')

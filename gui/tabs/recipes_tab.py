@@ -324,6 +324,17 @@ class RecipesTab(QWidget):
         return [self.source_model.id_at_row(self.proxy.mapToSource(self.proxy.index(r, 0)).row())
                 for r in range(self.proxy.rowCount())]
 
+    def _neighbor_id(self, recipe_id):
+        '''The recipe after this one in the view on screen (gallery order
+        when it's showing), the one before when it's last; None if alone.'''
+        ids = self.gallery.visible_ids() if self.stack.currentWidget() is self.gallery else self.visible_ids()
+        ids = list(dict.fromkeys(ids))      # a recipe can sit in two gallery groups
+        if recipe_id not in ids:
+            return None
+        i = ids.index(recipe_id)
+        others = ids[i + 1:] + ids[:i][::-1]
+        return others[0] if others else None
+
     def is_archived(self, recipe_id):
         src_row = self.source_model.row_for_id(recipe_id)
         return src_row >= 0 and self.source_model.row_dict(src_row)['Archived']
@@ -338,6 +349,11 @@ class RecipesTab(QWidget):
         name = self.source_model.row_dict(src_row)['Name']
         if archived and not confirm_archive(self, recipe_id, name, always=ask):
             return
+        if archived and not self.proxy.includes_archived() and recipe_id == self._selected_id:
+            # It's about to disappear: land on the next recipe (the one
+            # before when it's last), not back at the top.
+            self._restore_id = self._neighbor_id(recipe_id)
+            self._selected_id = self._restore_id
         self.library_undo.push(SetRecipeStatusCommand(
             recipe_id, 'archived' if not archived else 'active',
             'archived' if archived else 'active', name))

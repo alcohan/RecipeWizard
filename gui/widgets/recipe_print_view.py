@@ -91,7 +91,7 @@ class RecipePrintView(QWidget):
         controls.addSpacing(8)
         controls.addWidget(_eyebrow('Show'))
         self.portions_check = QCheckBox('Portion tools')
-        self.portions_check.setChecked(True)
+        self.portions_check.setChecked(False)
         self.portions_check.toggled.connect(lambda _on: self._render_later())
         controls.addWidget(self.portions_check)
 

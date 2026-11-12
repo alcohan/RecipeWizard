@@ -3,8 +3,9 @@
 Pricing: ingredients (hover the ⓘ for the list), cost by ingredient
 category (collapsed by default), cost, menu price and food cost %.
 Nutrition: weight and the Nutrition Facts values, then allergens the
-recipe contains and facility-only ones. Click a header to sort; the
-Average row stays last. Fed by utilities.compare.build().
+recipe contains and facility-only ones. Rows sit under their format's
+heading like the Library (set_group); a header click sorts inside each
+group; the Average row stays last. Fed by utilities.compare.build().
 '''
 from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from gui.services import food_cost
 from gui.widgets import config_kit as kit
+from gui.widgets.recipe_gallery import group_title
 from utilities import compare
 
 
@@ -81,6 +83,9 @@ class RecipeMatrix(QWidget):
         self._rows = []
         self._columns = []
         self._sort = None           # (column key, descending)
+        self._group = 'none'          # the Analytics tab sets Format (its default)
+        self._format_order = []
+        self._table_rows = []       # the recipe on each table row; None for a group heading
         self._name_width = 0
         self._info = _info_icon()
         self._open = QSettings().value('analytics/categoriesOpen', False, type=bool)
@@ -154,6 +159,15 @@ class RecipeMatrix(QWidget):
         self.toggle.setText(('▾  ' if self._open else '▸  ') + 'Cost by category')
         self.toggle.setToolTip('Hide the category columns' if self._open else 'Show cost for each ingredient category')
 
+    def set_group(self, group, format_order=()):
+        '''"format": rows under their format's heading, in `format_order`
+        (sub-recipes last); "none": one list.'''
+        group = group if group in ('format', 'none') else 'format'
+        if (group, list(format_order)) == (self._group, self._format_order):
+            return
+        self._group, self._format_order = group, list(format_order)
+        self._rebuild()
+
     def sort_by(self, key, descending=False):
         self._sort = (key, descending) if key else None
         self._rebuild()
@@ -208,13 +222,22 @@ class RecipeMatrix(QWidget):
         if self._sort and self._sort[0] in keys:
             fn = cols[keys.index(self._sort[0])][3]
             rows.sort(key=fn, reverse=self._sort[1])
+        layout = list(rows)
+        if self._group == 'format' and rows:
+            groups = compare.format_groups(rows, self._format_order, lambda r: r['format'])
+            rows = [r for _name, members in groups for r in members]
+            layout = []
+            for name, members in groups:
+                layout.append((name, len(members)))
+                layout.extend(members)
         self._rows = rows
+        self._table_rows = [r if isinstance(r, dict) else None for r in layout]
 
         t = self.table
         t.clearSpans()
         t.clear()
         t.setColumnCount(len(cols))
-        t.setRowCount(len(rows) + (1 if rows else 0))
+        t.setRowCount(len(layout) + (1 if rows else 0))
         for c, (key, header, align, _s, _cell) in enumerate(cols):
             item = QTableWidgetItem(header)
             item.setTextAlignment(align)
@@ -223,12 +246,15 @@ class RecipeMatrix(QWidget):
             elif key == 'facility':
                 item.setToolTip('Made in a facility that also handles these')
             t.setHorizontalHeaderItem(c, item)
-        for i, r in enumerate(rows):
+        for i, r in enumerate(layout):
+            if not isinstance(r, dict):
+                self._group_row(i, *r)
+                continue
             for c, col in enumerate(cols):
                 t.setItem(i, c, col[4](r))
             t.setRowHeight(i, 30)
         if rows:
-            self._footer(len(rows))
+            self._footer(len(layout))
         hh = t.horizontalHeader()
         hh.setMinimumSectionSize(64)
         hh.setSectionResizeMode(QHeaderView.Interactive)
@@ -265,6 +291,24 @@ class RecipeMatrix(QWidget):
         super().resizeEvent(event)
         if self.table.columnCount():
             self._fit()
+
+    def _group_row(self, i, name, n):
+        '''A format heading ("Salads 6") across the whole row.'''
+        t = self.table
+        item = QTableWidgetItem(f'{group_title(name)}   {n}')
+        item.setTextAlignment(_LEFT)
+        bold = t.font()
+        bold.setBold(True)
+        item.setFont(bold)
+        item.setBackground(QColor(kit.BG))
+        item.setFlags(Qt.ItemIsEnabled)
+        t.setItem(i, 0, item)
+        for c in range(1, t.columnCount()):
+            filler = QTableWidgetItem('')
+            filler.setBackground(QColor(kit.BG))
+            t.setItem(i, c, filler)
+        t.setSpan(i, 0, 1, t.columnCount())
+        t.setRowHeight(i, 32)
 
     def _footer(self, row):
         t = self.table
@@ -363,9 +407,9 @@ class RecipeMatrix(QWidget):
 
     def _on_cell_entered(self, row, col):
         hover = (0 <= col < len(self._columns) and self._columns[col][0] == 'ingredients'
-                 and row < len(self._rows))
+                 and 0 <= row < len(self._table_rows) and self._table_rows[row] is not None)
         self.table.viewport().setCursor(Qt.WhatsThisCursor if hover else Qt.ArrowCursor)
 
     def _on_double_click(self, row, _col):
-        if 0 <= row < len(self._rows):
-            self.recipeActivated.emit(self._rows[row]['id'])
+        if 0 <= row < len(self._table_rows) and self._table_rows[row] is not None:
+            self.recipeActivated.emit(self._table_rows[row]['id'])

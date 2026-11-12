@@ -372,14 +372,14 @@ class RecipeEditWidget(QWidget):
         self.archive_btn.clicked.connect(self.toggle_archived)
         label_btn = QPushButton('Nutrition label')
         label_btn.clicked.connect(self._on_nutrition_label)
-        # Print, with the page without portions on the arrow.
+        # Print (no portions), with the portions page on the arrow.
         print_btn = QToolButton()
         print_btn.setText('Print')
         print_btn.setToolTip('Ctrl+P')
         print_btn.setPopupMode(QToolButton.MenuButtonPopup)
         print_btn.clicked.connect(lambda: self.print_recipe())
         print_menu = QMenu(print_btn)
-        print_menu.addAction('Print without portions…', lambda: self.print_recipe(portions=False))
+        print_menu.addAction('Print with portions…', lambda: self.print_recipe(portions=True))
         print_menu.addAction('Export PDF…', self._export_pdf)
         print_menu.addAction('Print settings', lambda: self._set_view('print'))
         print_btn.setMenu(print_menu)
@@ -1141,7 +1141,7 @@ class RecipeEditWidget(QWidget):
             return
         self.undo_stack.push(ReorderComponentsCommand(self.recipe_id, before, after))
 
-    def print_recipe(self, portions=True):
+    def print_recipe(self, portions=False):
         from gui.printing.print_dialog import print_recipes
         print_recipes(self, [self.recipe_id], portions=portions)
 

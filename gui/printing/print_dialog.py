@@ -22,7 +22,7 @@ from gui.printing.recipe_page import page_layout_for, paint_recipes
 from gui.services import print_branding
 
 
-def recipe_pages_data(recipe_ids, portions=True):
+def recipe_pages_data(recipe_ids, portions=False):
     datas = []
     for rid in recipe_ids:
         data = db.recipe_print_data(rid)
@@ -41,9 +41,10 @@ def save_pdf(path, datas, branding=None):
     paint_recipes(printer, datas, branding or print_branding.current())
 
 
-def print_recipes(parent, recipe_ids, portions=True):
+def print_recipes(parent, recipe_ids, portions=False):
     '''Ask where to print, then print. Returns True if pages were sent.
-    portions=False prints the page without portion tools or the scoop key.'''
+    By default the page has no portion tools or scoop key; portions=True
+    adds them.'''
     datas = recipe_pages_data(recipe_ids, portions)
     if not datas:
         QMessageBox.information(parent, 'Print', 'There’s no recipe to print.')
@@ -76,7 +77,7 @@ def print_recipes(parent, recipe_ids, portions=True):
     return True
 
 
-def export_pdf(parent, recipe_ids, portions=True):
+def export_pdf(parent, recipe_ids, portions=False):
     '''Ask where to save, then write the pages as a PDF. Returns the
     path, or None.'''
     datas = recipe_pages_data(recipe_ids, portions)

@@ -2,12 +2,15 @@
 the chosen scenarios — cost, food cost % and its change.
 
 Scenario chips pick the columns (Baseline always shows); the rows are
-the compare tray's recipes after its filters (set_recipe_ids), and
-"Changed only" keeps recipes a scenario moves.
-Hovering a cost lists the rules behind it; a price says where it came
-from. The footer averages food cost over the priced recipes shown.
+the compare tray's recipes after its filters (set_recipe_ids), under
+their format's heading when grouped (set_group), and "Changed only"
+keeps recipes a scenario moves.
+Hovering a cost lists the rules behind it; its Cost change lists the
+ingredients behind it; a price says where it came from. The footer averages food cost over the priced recipes shown.
 Numbers come from utilities.scenarios, which never writes.
 '''
+from html import escape
+
 from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -20,7 +23,8 @@ from gui.services import food_cost
 from gui.widgets import config_kit as kit
 from gui.widgets.flow_layout import FlowLayout
 from gui.widgets.text_fit import literal
-from utilities import scenarios
+from gui.widgets.recipe_gallery import group_title
+from utilities import compare, scenarios
 
 
 _ROW_LINE = '#f3ece0'
@@ -36,8 +40,16 @@ def _money(v, signed=False):
     return f'${v:,.2f}'
 
 
+def _cost_delta(v):
+    '''Signed dollars, or $0.00 when it doesn't move.'''
+    return '$0.00' if abs(v) < 0.005 else _money(v, signed=True)
+
+
 def _pct(v):
     return '—' if v is None else f'{v:.1f}%'
+
+
+_PER = 4    # columns per scenario: Cost, Cost change, Food cost, Change
 
 
 def _pts(v):
@@ -58,6 +70,9 @@ class ScenarioMatrix(QWidget):
         self._stale = True
         self.result = None
         self._shown = []
+        self._table_rows = []       # the recipe on each table row; None for a group heading
+        self._group = 'none'          # the Analytics tab sets Format (its default)
+        self._format_order = []
         settings = QSettings()
         self._chosen = {int(x) for x in (settings.value('analytics/scenarioIds', '', type=str) or '').split(',')
                         if x.strip().isdigit()}
@@ -163,6 +178,15 @@ class ScenarioMatrix(QWidget):
     def has_scenarios(self):
         return bool(self.result and self.result['scenarios'])
 
+    def set_group(self, group, format_order=()):
+        '''"format": rows under their format's heading, in `format_order`;
+        "none": one list.'''
+        group = group if group in ('format', 'none') else 'format'
+        if (group, list(format_order)) == (self._group, self._format_order):
+            return
+        self._group, self._format_order = group, list(format_order)
+        self._rebuild_table()
+
     def set_recipe_ids(self, recipe_ids):
         '''The rows to show, in order (None: every active recipe).'''
         ids = None if recipe_ids is None else list(recipe_ids)
@@ -247,7 +271,17 @@ class ScenarioMatrix(QWidget):
         if not self.result:
             return
         rows = self.visible_recipes()
+        layout = list(rows)
+        if self._group == 'format' and rows:
+            groups = compare.format_groups(rows, self._format_order,
+                                           lambda r: self._format_names.get(r['format_id']))
+            rows = [r for _name, members in groups for r in members]
+            layout = []
+            for name, members in groups:
+                layout.append((name, len(members)))
+                layout.extend(members)
         self._shown = rows
+        self._table_rows = [r if isinstance(r, dict) else None for r in layout]
         sids = self.scenario_ids()
         names = {s['id']: s['name'] for s in self.result['scenarios']}
         t = self.table
@@ -255,9 +289,10 @@ class ScenarioMatrix(QWidget):
         t.clear()
         heads = ['Recipe', 'Baseline\nCost', 'Baseline\nFood cost']
         for sid in sids:
-            heads += [f'{names[sid]}\nCost', f'{names[sid]}\nFood cost', f'{names[sid]}\nChange']
+            heads += [f'{names[sid]}\nCost', f'{names[sid]}\nCost change', f'{names[sid]}\nFood cost',
+                      f'{names[sid]}\nChange']
         t.setColumnCount(len(heads))
-        t.setRowCount(len(rows) + 1)
+        t.setRowCount(len(layout) + 1)
         for c, text in enumerate(heads):
             item = QTableWidgetItem(text)
             item.setTextAlignment((Qt.AlignLeft if c == 0 else Qt.AlignRight) | Qt.AlignVCenter)
@@ -265,7 +300,10 @@ class ScenarioMatrix(QWidget):
         bold = t.font()
         bold.setBold(True)
         muted = QColor(kit.MUTED)
-        for i, r in enumerate(rows):
+        for i, r in enumerate(layout):
+            if not isinstance(r, dict):
+                self._group_row(i, *r)
+                continue
             fmt = self._format_names.get(r['format_id'])
             label = QTableWidgetItem(r['name'])
             label.setData(_ID_ROLE, r['id'])
@@ -275,33 +313,29 @@ class ScenarioMatrix(QWidget):
             t.setItem(i, 1, self._num(_money(base['cost'])))
             t.setItem(i, 2, self._pct_item(base['pct'], base['price'], None))
             for k, sid in enumerate(sids):
-                col = 3 + k * 3
+                col = 3 + k * _PER
                 cell = r['cells'][sid]
                 if cell['excluded']:
                     item = QTableWidgetItem('Left out')
                     item.setForeground(muted)
                     item.setTextAlignment(Qt.AlignCenter)
                     t.setItem(i, col, item)
-                    t.setSpan(i, col, 1, 3)
+                    t.setSpan(i, col, 1, _PER)
                     continue
                 cost = self._num(_money(cell['cost']))
                 cost.setToolTip(self._cost_tip(r, cell))
                 if cell['applied'] and any(a['action'] != 'price_adjust' for a in cell['applied']):
                     cost.setFont(bold)
                 t.setItem(i, col, cost)
-                t.setItem(i, col + 1, self._pct_item(cell['pct'], cell['price'], self._price_tip(r, sid, cell)))
+                t.setItem(i, col + 1, self._cost_change_item(r, cell))
+                t.setItem(i, col + 2, self._pct_item(cell['pct'], cell['price'], self._price_tip(r, sid, cell)))
                 dpct = None if cell['pct'] is None or base['pct'] is None else cell['pct'] - base['pct']
                 change = self._num(_pts(dpct))
                 change.setToolTip('' if dpct is None else 'Food cost points vs baseline')
-                if dpct is not None and dpct >= 0.05:
-                    change.setForeground(QColor(kit.WARN))
-                elif dpct is not None and dpct <= -0.05:
-                    change.setForeground(QColor(kit.ROMAINE))
-                else:
-                    change.setForeground(muted)
-                t.setItem(i, col + 2, change)
+                self._tint(change, dpct, 0.05)
+                t.setItem(i, col + 3, change)
             t.setRowHeight(i, 30)
-        self._footer(len(rows), sids)
+        self._footer(len(layout), sids)
         hh = t.horizontalHeader()
         hh.setMinimumSectionSize(70)
         hh.setSectionResizeMode(QHeaderView.Interactive)
@@ -310,6 +344,23 @@ class ScenarioMatrix(QWidget):
         self._fit()
         n = len(rows)
         self.summary.setText(f"{n} recipe{'s' if n != 1 else ''}")
+
+    def _group_row(self, i, name, n):
+        '''A format heading ("Salads 6") across the whole row.'''
+        t = self.table
+        item = QTableWidgetItem(f'{group_title(name)}   {n}')
+        bold = t.font()
+        bold.setBold(True)
+        item.setFont(bold)
+        item.setBackground(QColor(kit.BG))
+        item.setFlags(Qt.ItemIsEnabled)
+        t.setItem(i, 0, item)
+        for c in range(1, t.columnCount()):
+            filler = QTableWidgetItem('')
+            filler.setBackground(QColor(kit.BG))
+            t.setItem(i, c, filler)
+        t.setSpan(i, 0, 1, t.columnCount())
+        t.setRowHeight(i, 32)
 
     def _fit(self):
         '''The card hugs the columns so the numbers sit next to the names;
@@ -337,9 +388,15 @@ class ScenarioMatrix(QWidget):
         label.setFont(f)
         cells = {0: label, 2: self._num(_pct(avg['base']))}
         for k, sid in enumerate(sids):
-            cells[3 + k * 3 + 1] = self._num(_pct(avg[sid]))
+            col = 3 + k * _PER
+            moves = [r['cells'][sid]['cost'] - r['base']['cost'] for r in self._shown
+                     if not r['cells'][sid]['excluded']]
+            if moves:
+                cells[col + 1] = self._num(_cost_delta(sum(moves) / len(moves)))
+                cells[col + 1].setToolTip('Average cost change')
+            cells[col + 2] = self._num(_pct(avg[sid]))
             if avg[sid] is not None and avg['base'] is not None:
-                cells[3 + k * 3 + 2] = self._num(_pts(avg[sid] - avg['base']))
+                cells[col + 3] = self._num(_pts(avg[sid] - avg['base']))
         for c in range(t.columnCount()):
             item = cells.get(c) or QTableWidgetItem('')
             item.setBackground(QColor(kit.BG))
@@ -353,6 +410,33 @@ class ScenarioMatrix(QWidget):
         item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
         if text in ('—', ''):
             item.setForeground(QColor(kit.MUTED))
+        return item
+
+    def _tint(self, item, value, step):
+        '''Up is warn, down is green, about zero is muted.'''
+        if value is not None and value >= step:
+            item.setForeground(QColor(kit.WARN))
+        elif value is not None and value <= -step:
+            item.setForeground(QColor(kit.ROMAINE))
+        else:
+            item.setForeground(QColor(kit.MUTED))
+
+    def _cost_change_item(self, r, cell):
+        '''Cost vs baseline in dollars; hover for the ingredients behind it.'''
+        delta = cell['cost'] - r['base']['cost']
+        item = self._num(_cost_delta(delta))
+        self._tint(item, delta, 0.005)
+        lines = scenarios.ingredient_changes(cell)
+        if lines:
+            rows = ''.join(
+                f'<tr><td>{escape(self._ingredient_names.get(ing, "Ingredient"))}</td>'
+                f'<td align="right" style="padding-left:16px">{_money(v, signed=True)}</td></tr>'
+                for ing, v in lines)
+            rows += ('<tr><td style="padding-top:4px"><b>Net</b></td><td align="right" '
+                     f'style="padding-left:16px; padding-top:4px"><b>{_money(delta, signed=True)}</b></td></tr>')
+            item.setToolTip(f'<table cellspacing="0">{rows}</table>')
+        elif abs(delta) >= 0.005:
+            item.setToolTip(f'Net {_money(delta, signed=True)}')
         return item
 
     def _pct_item(self, pct, price, tip):
@@ -390,8 +474,8 @@ class ScenarioMatrix(QWidget):
         return 'Set for this scenario'
 
     def _on_double_click(self, row, _col):
-        if 0 <= row < len(self._shown):
-            self.recipeActivated.emit(self._shown[row]['id'])
+        if 0 <= row < len(self._table_rows) and self._table_rows[row] is not None:
+            self.recipeActivated.emit(self._table_rows[row]['id'])
 
     # --- export ------------------------------------------------------------
 

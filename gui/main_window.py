@@ -209,8 +209,8 @@ class MainWindow(QMainWindow):
                 ('Open in tab', self._on_recipe_edit),
                 ('Duplicate', lambda r: self._duplicate_recipe(self.recipes_model.id_at_row(r))),
                 ('Print…', lambda r: self._print_recipes([self.recipes_model.id_at_row(r)])),
-                ('Print without portions…',
-                 lambda r: self._print_recipes([self.recipes_model.id_at_row(r)], portions=False)),
+                ('Print with portions…',
+                 lambda r: self._print_recipes([self.recipes_model.id_at_row(r)], portions=True)),
                 (ARCHIVE_ACTION, None),
                 (None, None),
                 ('Delete…', self._on_recipe_delete),
@@ -581,7 +581,7 @@ class MainWindow(QMainWindow):
         history_action = add(recipe_menu, '&Cost Over Time',
                              lambda: self._with_editor('show_cost_history'))
         add(recipe_menu, 'Pr&int Recipe…', self._on_print_current, 'Ctrl+P')
-        add(recipe_menu, 'Print &Without Portions…', lambda: self._on_print_current(portions=False), 'Ctrl+Shift+P')
+        add(recipe_menu, 'Print &With Portions…', lambda: self._on_print_current(portions=True), 'Ctrl+Shift+P')
         recipe_menu.addSeparator()
         add(recipe_menu, 'D&uplicate Recipe', self._on_duplicate_current, 'Ctrl+D')
         self.archive_action = add(recipe_menu, 'A&rchive Recipe', self._on_toggle_archive_current)
@@ -725,7 +725,7 @@ class MainWindow(QMainWindow):
         if rid is not None and self.stack.currentWidget() is self.recipes_tab:
             self._duplicate_recipe(rid)
 
-    def _on_print_current(self, portions=True):
+    def _on_print_current(self, portions=False):
         '''Ctrl+P: the recipe in the current tab, or the Library's
         selection.'''
         editor = self._current_editor()
@@ -736,7 +736,7 @@ class MainWindow(QMainWindow):
         if rid is not None and self.stack.currentWidget() is self.recipes_tab:
             self._print_recipes([rid], portions)
 
-    def _print_recipes(self, recipe_ids, portions=True):
+    def _print_recipes(self, recipe_ids, portions=False):
         print_recipes(self, [rid for rid in recipe_ids if rid is not None], portions=portions)
 
     def _sync_archive_action(self):
