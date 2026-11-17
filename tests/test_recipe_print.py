@@ -51,6 +51,16 @@ def test_scoop_resolution():
     assert text(0.75, '2 f.oz', 'Red') is None
 
 
+def test_own_tool_beats_a_same_size_tool():
+    # A new Green the same size as Grey: an ingredient set to Green prints Green.
+    tools = TOOLS + [Tool(8, 'Green', 'Disher', 4.0)]
+    use = rp.resolve_tool(1, '4 fl oz', 'Green', tools)
+    assert use.text == '1 Green' and use.tool.id == 8
+    assert rp.resolve_tool(1, '4 fl oz', 'Grey', tools).text == '1 Grey'
+    # Other tools still step in when the own one isn't one scoop.
+    assert rp.resolve_tool(0.5, '4 fl oz', 'Green', tools).text == '1 Red'
+
+
 def test_families_never_cross():
     # Slotted only has a 2 oz: half of one doesn't become a Yellow.
     assert text(0.5, '2 f.oz', 'Red slotted') is None
