@@ -10,7 +10,8 @@ Portion tools (table portion_tools): an ingredient links to a tool when
 its Portion text is the tool's name, ignoring case. A sized tool (a
 colored disher) is worked out again from the calculated amount, within
 the tool's family only:
-  - one scoop of any tool in the family that is exactly the amount
+  - one scoop of the ingredient's own tool, or else of any tool in the
+    family, that is exactly the amount
   - else a whole number of the ingredient's own tool ("2 × Grey")
   - else a whole number of another tool in the family, fewest scoops
   - else nothing: a blank beats a misleading scoop.
@@ -150,6 +151,9 @@ def resolve_tool(quantity, unit_text, portion_text, tools):
         # Not a volume: only the one-unit case is safe to name.
         return ToolUse(1, tool, f'1 {tool.name}') if abs(qty - 1) < 1e-6 else None
     family = [t for t in tools if t.sized and t.family.casefold() == tool.family.casefold()] or [tool]
+    # The ingredient's own tool first, so a same-size tool earlier in the
+    # list (Grey and Green both 4 fl oz) doesn't take its place.
+    family = [tool] + [t for t in family if t.id != tool.id]
     for t in family:
         if _whole(amt.floz / t.size_floz) == 1:
             return ToolUse(1, t, f'1 {t.name}')
